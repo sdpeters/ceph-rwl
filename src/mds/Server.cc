@@ -3279,38 +3279,38 @@ void Server::handle_client_setdirlayout(MDRequest *mdr)
     return;
 
   // validate layout
-  default_file_layout *layout = new default_file_layout;
-  if (cur->get_projected_dir_layout())
-    layout->layout = *cur->get_projected_dir_layout();
+  inode_t *pi = cur->get_projected_inode();
+  ceph_file_layout layout;
+  if (pi->has_layout())
+    layout = pi->layout;
   else if (dir_layout)
-    layout->layout = *dir_layout;
+    layout = *dir_layout;
   else
-    layout->layout = mds->mdcache->default_file_layout;
+    layout = mds->mdcache->default_file_layout;
 
   if (req->head.args.setlayout.layout.fl_object_size > 0)
-    layout->layout.fl_object_size = req->head.args.setlayout.layout.fl_object_size;
+    layout.fl_object_size = req->head.args.setlayout.layout.fl_object_size;
   if (req->head.args.setlayout.layout.fl_stripe_unit > 0)
-    layout->layout.fl_stripe_unit = req->head.args.setlayout.layout.fl_stripe_unit;
+    layout.fl_stripe_unit = req->head.args.setlayout.layout.fl_stripe_unit;
   if (req->head.args.setlayout.layout.fl_stripe_count > 0)
-    layout->layout.fl_stripe_count=req->head.args.setlayout.layout.fl_stripe_count;
+    layout.fl_stripe_count=req->head.args.setlayout.layout.fl_stripe_count;
   if (req->head.args.setlayout.layout.fl_cas_hash > 0)
-    layout->layout.fl_cas_hash = req->head.args.setlayout.layout.fl_cas_hash;
+    layout.fl_cas_hash = req->head.args.setlayout.layout.fl_cas_hash;
   if (req->head.args.setlayout.layout.fl_object_stripe_unit > 0)
-    layout->layout.fl_object_stripe_unit = req->head.args.setlayout.layout.fl_object_stripe_unit;
+    layout.fl_object_stripe_unit = req->head.args.setlayout.layout.fl_object_stripe_unit;
   if (req->head.args.setlayout.layout.fl_pg_preferred != (__le32)-1)
-    layout->layout.fl_pg_preferred = req->head.args.setlayout.layout.fl_pg_preferred;
+    layout.fl_pg_preferred = req->head.args.setlayout.layout.fl_pg_preferred;
   if (req->head.args.setlayout.layout.fl_pg_pool > 0)
-    layout->layout.fl_pg_pool = req->head.args.setlayout.layout.fl_pg_pool;
-  if (!ceph_file_layout_is_valid(&layout->layout)) {
+    layout.fl_pg_pool = req->head.args.setlayout.layout.fl_pg_pool;
+  if (!ceph_file_layout_is_valid(&layout)) {
     dout(10) << "bad layout" << dendl;
     reply_request(mdr, -EINVAL);
-    delete layout;
     return;
   }
 
-  cur->project_inode();
-  cur->get_projected_node()->dir_layout = layout;
-  cur->get_projected_inode()->version = cur->pre_dirty();
+  pi = cur->project_inode();
+  pi->layout = layout;
+  pi->version = cur->pre_dirty();
 
   // log + wait
   mdr->ls = mdlog->get_current_segment();

@@ -67,7 +67,6 @@ public:
     string symlink;
     bufferlist snapbl;
     bool dirty;
-    struct default_file_layout *dir_layout;
 
     bufferlist _enc;
 
@@ -77,11 +76,13 @@ public:
     fullbit(const string& d, snapid_t df, snapid_t dl, 
 	    version_t v, inode_t& i, fragtree_t &dft, 
 	    map<string,bufferptr> &xa, const string& sym,
-	    bufferlist &sbl, bool dr, default_file_layout *defl = NULL) :
+	    bufferlist &sbl, bool dr) :
       //dn(d), dnfirst(df), dnlast(dl), dnv(v), 
       //inode(i), dirfragtree(dft), xattrs(xa), symlink(sym), snapbl(sbl), dirty(dr) 
-      dir_layout(NULL), _enc(1024)
+      _enc(1024)
     {
+      __u8 struct_v = 3;
+      ::encode(struct_v, _enc);
       ::encode(d, _enc);
       ::encode(df, _enc);
       ::encode(dl, _enc);
@@ -93,21 +94,13 @@ public:
       if (i.is_dir()) {
 	::encode(dft, _enc);
 	::encode(sbl, _enc);
-	::encode((defl ? true : false), _enc);
-	if (defl)
-	  ::encode(*defl, _enc);
       }
       ::encode(dr, _enc);      
     }
-    fullbit(bufferlist::iterator &p) : dir_layout(NULL) { decode(p); }
-    fullbit() : dir_layout(NULL) {}
-    ~fullbit() {
-      delete dir_layout;
-    }
+    fullbit(bufferlist::iterator &p) { decode(p); }
+    fullbit() {}
 
     void encode(bufferlist& bl) const {
-      __u8 struct_v = 2;
-      ::encode(struct_v, bl);
       assert(_enc.length());
       bl.append(_enc); 
     }
@@ -125,12 +118,12 @@ public:
       if (inode.is_dir()) {
 	::decode(dirfragtree, bl);
 	::decode(snapbl, bl);
-	if (struct_v >= 2) {
+	if (struct_v == 2) {
 	  bool dir_layout_exists;
 	  ::decode(dir_layout_exists, bl);
 	  if (dir_layout_exists) {
-	    dir_layout = new default_file_layout;
-	    ::decode(*dir_layout, bl);
+	    ::decode(struct_v, bl);
+	    ::decode(inode.layout, bl);
 	  }
 	}
       }
@@ -544,11 +537,6 @@ private:
     //cout << "journaling " << in->inode.ino << " at " << my_offset << std::endl;
 
     inode_t *pi = in->get_projected_inode();
-    default_file_layout *default_layout = NULL;
-    if (in->is_dir())
-      default_layout = (in->get_projected_node() ?
-                           in->get_projected_node()->dir_layout :
-                           in->default_layout);
 
     bufferlist snapbl;
     sr_t *sr = in->get_projected_srnode();
@@ -562,7 +550,7 @@ private:
 									 *pi, in->dirfragtree,
 									 *in->get_projected_xattrs(),
 									 in->symlink, snapbl,
-									 dirty, default_layout)));
+									 dirty)));
     if (pi)
       lump.get_dfull().back()->inode = *pi;
     return &lump.get_dfull().back()->inode;
@@ -595,12 +583,6 @@ private:
     if (!pdft) pdft = &in->dirfragtree;
     if (!px) px = &in->xattrs;
 
-    default_file_layout *default_layout = NULL;
-    if (in->is_dir())
-      default_layout = (in->get_projected_node() ?
-                           in->get_projected_node()->dir_layout :
-                           in->default_layout);
-
     bufferlist snapbl;
     if (psnapbl)
       snapbl = *psnapbl;
@@ -614,7 +596,7 @@ private:
 		       0,
 		       *pi, *pdft, *px,
 		       in->symlink, snapbl,
-		       dirty, default_layout);
+		       dirty);
     return &root->inode;
   }
   
