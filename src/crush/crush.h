@@ -45,6 +45,10 @@ enum {
 	CRUSH_RULE_EMIT = 4,          /* no args */
 	CRUSH_RULE_CHOOSE_LEAF_FIRSTN = 6,
 	CRUSH_RULE_CHOOSE_LEAF_INDEP = 7,
+	CRUSH_RULE_PUSH = 8,          /* front of w to top of stack */
+	CRUSH_RULE_UNSHIFT = 9,       /* front of w to bottom of stack */
+	CRUSH_RULE_POP = 10,          /* top of stack to end of w */
+	CRUSH_RULE_SHIFT = 11,        /* bottom of stack to end of w */
 };
 
 /*

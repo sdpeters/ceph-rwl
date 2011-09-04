@@ -475,6 +475,8 @@ int crush_do_rule(struct crush_map *map,
 	struct crush_rule *rule;
 	__u32 step;
 	int i, j;
+	int stack[CRUSH_MAX_SET];
+	int stacksize = 0;
 	int numrep;
 	int firstn;
 	int rc = -1;
@@ -593,6 +595,78 @@ int crush_do_rule(struct crush_map *map,
 			wsize = osize;
 			break;
 
+		case CRUSH_RULE_PUSH:
+			/* if arg1 is <= 0, it is relative to wsize */
+			if (curstep->arg1 <= 0)
+				numrep = wsize - curstep->arg1;
+			else
+				numrep = curstep->arg1;
+			if (numrep < 0)
+				numrep = 0;
+			if (numrep > wsize)
+				numrep = wsize;
+
+			for (i = 0; i < numrep; i++)
+				stack[stacksize++] = w[i];
+			for ( ; i < wsize; i++)
+				w[i - numrep] = w[i];
+			wsize -= numrep;
+			break;
+
+		case CRUSH_RULE_UNSHIFT:
+			/* if arg1 is <= 0, it is relative to wsize */
+			if (curstep->arg1 <= 0)
+				numrep = wsize - curstep->arg1;
+			else
+				numrep = curstep->arg1;
+			if (numrep < 0)
+				numrep = 0;
+			if (numrep > wsize)
+				numrep = wsize;
+
+			stacksize += numrep;
+			for (i = 0; i < stacksize; i++)
+				stack[i + numrep] = stack[i];
+			for (i = 0; i < numrep; i++)
+				stack[i] = w[i];
+			for ( ; i < wsize; i++)
+				w[i - numrep] = w[i];
+			wsize -= numrep;
+			break;
+
+		case CRUSH_RULE_POP:
+			/* if arg1 is <= 0, it is relative to stack size */
+			if (curstep->arg1 <= 0)
+				numrep = stacksize - curstep->arg1;
+			else
+				numrep = curstep->arg1;
+			if (numrep < 0)
+				numrep = 0;
+			if (numrep > stacksize)
+				numrep = stacksize;
+
+			for (i = 0; i < numrep; i++, stacksize--)
+				w[wsize++] = stack[stacksize-1];
+			break;
+
+		case CRUSH_RULE_SHIFT:
+			/* if arg1 is <= 0, it is relative to stack size */
+			if (curstep->arg1 <= 0)
+				numrep = stacksize - curstep->arg1;
+			else
+				numrep = curstep->arg1;
+			if (numrep < 0)
+				numrep = 0;
+			if (numrep > stacksize)
+				numrep = stacksize;
+
+			for (i = 0; i < numrep; i++)
+				w[wsize++] = stack[i];
+
+			for ( ; i < stacksize; i++)
+				stack[i - numrep] = stack[i];
+			stacksize -= numrep;
+			break;
 
 		case CRUSH_RULE_EMIT:
 			for (i = 0; i < wsize && result_len < result_max; i++) {
