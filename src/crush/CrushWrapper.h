@@ -409,12 +409,29 @@ public:
     return bl.write_file(fn);
   }
 
+  void calc_features() {
+    // see if we have any rules that use push|pop|shift|unshift
+    for (unsigned i=0; i<crush->max_rules; ++i) {
+      crush_rule *r = crush->rules[i];
+      if (r == NULL)
+	continue;
+      for (unsigned j=0; j<r->len; ++j) {
+	if (r->steps[j].op == CRUSH_RULE_PUSH ||
+	    r->steps[j].op == CRUSH_RULE_POP ||
+	    r->steps[j].op == CRUSH_RULE_SHIFT ||
+	    r->steps[j].op == CRUSH_RULE_UNSHIFT)
+	  crush->features |= CRUSH_FEATURE_PUSHPOP;
+      }
+    }
+  }
+
   void encode(bufferlist &bl, bool lean=false) {
     if (!crush) create();  // duh.
 
     __u16 struct_v = 1;
     ::encode(struct_v, bl);
 
+    calc_features();
     ::encode(crush->features, bl);
 
     ::encode(crush->max_buckets, bl);
