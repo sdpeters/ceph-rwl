@@ -412,8 +412,10 @@ public:
   void encode(bufferlist &bl, bool lean=false) {
     if (!crush) create();  // duh.
 
-    __u32 magic = CRUSH_MAGIC;
-    ::encode(magic, bl);
+    __u16 struct_v = 1;
+    ::encode(struct_v, bl);
+
+    ::encode(crush->features, bl);
 
     ::encode(crush->max_buckets, bl);
     ::encode(crush->max_rules, bl);
@@ -487,10 +489,12 @@ public:
   {
     create();
 
-    __u32 magic;
-    ::decode(magic, blp);
-    if (magic != CRUSH_MAGIC)
-      throw buffer::malformed_input("bad magic number");
+    __u16 struct_v;
+    ::decode(struct_v, blp);
+    if (struct_v > 1)
+      throw buffer::malformed_input("unsupported encoding");
+    
+    ::decode(crush->features, blp);
 
     ::decode(crush->max_buckets, blp);
     ::decode(crush->max_rules, blp);

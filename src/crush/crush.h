@@ -17,7 +17,6 @@
  */
 
 
-#define CRUSH_MAGIC 0x00010000ul   /* for detecting algorithm revisions */
 
 
 #define CRUSH_MAX_DEPTH 10  /* max crush hierarchy depth */
@@ -151,6 +150,8 @@ struct crush_bucket_straw {
  * CRUSH map includes all buckets, rules, etc.
  */
 struct crush_map {
+	__u16 features;
+
 	struct crush_bucket **buckets;
 	struct crush_rule **rules;
 

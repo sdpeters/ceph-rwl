@@ -4,6 +4,7 @@
 # include <linux/slab.h>
 # include <linux/bug.h>
 # include <linux/kernel.h>
+# include <linux/errno.h>
 # ifndef dprintk
 #  define dprintk(args...)
 # endif
@@ -12,6 +13,7 @@
 # include <stdio.h>
 # include <stdlib.h>
 # include <assert.h>
+# include <errno.h>
 # define BUG_ON(x) assert(!(x))
 # define dprintk(args...) /* printf(args) */
 # define kmalloc(x, f) malloc(x)
@@ -677,7 +679,7 @@ int crush_do_rule(struct crush_map *map,
 			break;
 
 		default:
-			BUG_ON(1);
+			return -EOPNOTSUPP;
 		}
 	}
 	rc = result_len;
