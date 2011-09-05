@@ -1,12 +1,8 @@
 
-#ifdef __KERNEL__
-# include <linux/slab.h>
-#else
-# include <stdlib.h>
-# include <assert.h>
-# define kfree(x) do { if (x) free(x); } while (0)
-# define BUG_ON(x) assert(!(x))
-#endif
+#include <stdlib.h>
+#include <assert.h>
+#define kfree(x) do { if (x) free(x); } while (0)
+#define BUG_ON(x) assert(!(x))
 
 #include "crush.h"
 
