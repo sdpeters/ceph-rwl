@@ -1,21 +1,29 @@
 #ifndef __LIBRADOSGW_HPP
 #define __LIBRADOSGW_HPP
 
+#include <string>
+#include <map>
+
+#include "rados/librados.hpp"
+
+
 namespace libradosgw {
 
+  using std::string;
+  using librados::Rados;
   using ceph::bufferlist;
 
   enum RGWPerm {
-    PERM_READ      = 0x01;
-    PERM_WRITE     = 0x02;
-    PERM_READ_ACP  = 0x04;
-    PERM_WRITE_ACP = 0x08;
+    PERM_READ      = 0x01,
+    PERM_WRITE     = 0x02,
+    PERM_READ_ACP  = 0x04,
+    PERM_WRITE_ACP = 0x08,
   };
 
   enum RGWGroup {
-    GROUP_NOT_GROUP     = 0;
-    GROUP_ANONYMOUS     = 1;
-    GROUP_AUTHENTICATED = 2;
+    GROUP_NOT_GROUP     = 0,
+    GROUP_ANONYMOUS     = 1,
+    GROUP_AUTHENTICATED = 2,
   };
 
   class User {
@@ -34,12 +42,12 @@ namespace libradosgw {
 
   struct ACLs {
     User owner;
-    map<User, int> acl_map;
+    std::map<User, int> acl_map;
   };
 
 
   struct Attrs {
-    map<string, ceph::bufferlist> meta_map;
+    std::map<string, ceph::bufferlist> meta_map;
   };
 
   struct BucketInfo {
@@ -117,8 +125,8 @@ namespace libradosgw {
   public:
     Bucket();
 
-    BucketIterator objects_begin(const char *delim = NULL, const char *marker = NULL);
-    BucketIterator objects_find(char *marker, int max = 0, const char *delim = NULL, const char *marker = NULL);
+    BucketIterator objects_begin(const char *prefix = NULL, const char *delim = NULL);
+    BucketIterator objects_find(char *marker, int max = 0, const char *prefix = NULL, const char *delim = NULL);
 
     BucketMultipartIterator multipart_uploads_begin();
     const BucketMultipartIterator& multipart_uploads_end();
@@ -127,11 +135,11 @@ namespace libradosgw {
     
     int open(string& name, Object& obj);
     int stat(string&name, ObjectInfo& info);
-    int create(string& name, Object& obj, ACLS *acls = NULL);
+    int create(string& name, Object& obj, ACLs *acls = NULL);
     int remove(string& name);
 
-    int create_multipart(string& name, MultipartObject& obj, ACLS *acls = NULL);
-    int create_manifest(string& name, ManifestObject& obj, ACLS *acls = NULL);
+    int create_multipart(string& name, MultipartObject& obj, ACLs *acls = NULL);
+    int create_manifest(string& name, ManifestObject& obj, ACLs *acls = NULL);
 
     int cancel_multipart_upload(MultipartObject& obj);
 

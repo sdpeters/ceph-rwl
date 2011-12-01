@@ -33,6 +33,8 @@
 #include "rgw_log.h"
 #include "rgw_tools.h"
 
+#include "libradosgw.hpp"
+
 #include <map>
 #include <string>
 #include <vector>
