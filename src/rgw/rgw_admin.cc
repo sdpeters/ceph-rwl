@@ -14,16 +14,17 @@ using namespace std;
 
 #include "common/armor.h"
 #include "rgw_user.h"
-#include "rgw_access.h"
 #include "rgw_acl.h"
 #include "rgw_log.h"
 #include "rgw_formats.h"
+#include "rgw_rados.h"
 #include "auth/Crypto.h"
 
 #define DOUT_SUBSYS rgw
 
 #define SECRET_KEY_LEN 40
 #define PUBLIC_ID_LEN 20
+
 
 void _usage() 
 {
@@ -484,7 +485,6 @@ int main(int argc, char **argv)
   uint32_t perm_mask = 0;
   uint64_t auid = -1;
   RGWUserInfo info;
-  RGWAccess *store;
   int opt_cmd = OPT_NO_CMD;
   bool need_more;
   int gen_secret = false;
@@ -645,9 +645,8 @@ int main(int argc, char **argv)
                     opt_cmd == OPT_SUBUSER_CREATE || opt_cmd == OPT_SUBUSER_RM ||
                     opt_cmd == OPT_KEY_CREATE || opt_cmd == OPT_KEY_RM || opt_cmd == OPT_USER_RM);
 
-  RGWStoreManager store_manager;
-  store = store_manager.init("rados", g_ceph_context);
-  if (!store) {
+  libradosgw::Store store;
+   if (store.init(g_ceph_context) < 0) {
     cerr << "couldn't init storage provider" << std::endl;
     return 5; //EIO
   }
@@ -885,7 +884,7 @@ int main(int argc, char **argv)
   if (opt_cmd == OPT_POLICY) {
     bufferlist bl;
     rgw_obj obj(bucket, object);
-    int ret = store->get_attr(NULL, obj, RGW_ATTR_ACL, bl);
+    int ret = rgwstore->get_attr(NULL, obj, RGW_ATTR_ACL, bl);
 
     RGWAccessControlPolicy policy;
     if (ret >= 0) {
@@ -920,11 +919,11 @@ int main(int argc, char **argv)
         }
       }
     } else {
-      if (store->list_buckets_init(&handle) < 0) {
+      if (rgwstore->list_buckets_init(&handle) < 0) {
         cerr << "list buckets: no buckets found" << std::endl;
       } else {
         RGWObjEnt obj;
-        while (store->list_buckets_next(obj, &handle) >= 0) {
+        while (rgwstore->list_buckets_next(obj, &handle) >= 0) {
           formatter->dump_string("bucket", obj.name);
         }
       }
@@ -987,7 +986,7 @@ int main(int argc, char **argv)
       cerr << "date wasn't specified" << std::endl;
       return usage();
     }
-    int r = store->remove_temp_objects(date, time);
+    int r = rgwstore->remove_temp_objects(date, time);
     if (r < 0) {
       cerr << "failure removing temp objects: " << cpp_strerror(r) << std::endl;
       return 1;
@@ -1004,7 +1003,7 @@ int main(int argc, char **argv)
     formatter->reset();
     formatter->open_array_section("logs");
     RGWAccessHandle h;
-    int r = store->log_list_init(date, &h);
+    int r = rgwstore->log_list_init(date, &h);
     if (r == -ENOENT) {
       // no logs.
     } else {
@@ -1014,7 +1013,7 @@ int main(int argc, char **argv)
       }
       while (true) {
 	string name;
-	int r = store->log_list_next(h, &name);
+	int r = rgwstore->log_list_next(h, &name);
 	if (r == -ENOENT)
 	  break;
 	if (r < 0) {
@@ -1050,7 +1049,7 @@ int main(int argc, char **argv)
     if (opt_cmd == OPT_LOG_SHOW) {
       RGWAccessHandle h;
 
-      int r = store->log_show_init(oid, &h);
+      int r = rgwstore->log_show_init(oid, &h);
       if (r < 0) {
 	cerr << "error opening log " << oid << ": " << cpp_strerror(-r) << std::endl;
 	return -r;
@@ -1062,7 +1061,7 @@ int main(int argc, char **argv)
       struct rgw_log_entry entry;
       
       // peek at first entry to get bucket metadata
-      r = store->log_show_next(h, &entry);
+      r = rgwstore->log_show_next(h, &entry);
       if (r < 0) {
 	cerr << "error reading log " << oid << ": " << cpp_strerror(-r) << std::endl;
 	return -r;
@@ -1114,7 +1113,7 @@ int main(int argc, char **argv)
 	  formatter->flush(cout);
         }
 next:
-	r = store->log_show_next(h, &entry);
+	r = rgwstore->log_show_next(h, &entry);
       } while (r > 0);
 
       if (r < 0) {
@@ -1136,7 +1135,7 @@ next:
       formatter->flush(cout);
     }
     if (opt_cmd == OPT_LOG_RM) {
-      int r = store->log_remove(oid);
+      int r = rgwstore->log_remove(oid);
       if (r < 0) {
 	cerr << "error removing log " << oid << ": " << cpp_strerror(-r) << std::endl;
 	return -r;

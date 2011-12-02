@@ -3,7 +3,6 @@
 #include "common/Formatter.h"
 #include "common/utf8.h"
 #include "rgw_common.h"
-#include "rgw_access.h"
 #include "rgw_formats.h"
 #include "rgw_op.h"
 #include "rgw_rest.h"

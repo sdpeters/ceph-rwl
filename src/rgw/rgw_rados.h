@@ -3,9 +3,9 @@
 
 #include "include/rados/librados.hpp"
 #include "include/Context.h"
-#include "rgw_access.h"
 #include "rgw_common.h"
 #include "rgw_cls_api.h"
+#include "rgw_log.h"
 
 class RGWWatcher;
 class SafeTimer;
@@ -75,7 +75,20 @@ struct RGWRadosCtx {
   }
 };
   
-class RGWRados  : public RGWAccess
+class RGWAccessListFilter {
+public:
+  virtual ~RGWAccessListFilter() {}
+  virtual bool filter(string& name, string& key) = 0;
+};
+
+struct RGWCloneRangeInfo {
+  rgw_obj src;
+  off_t src_ofs;
+  off_t dst_ofs;
+  uint64_t len;
+};
+
+class RGWRados
 {
   /** Open the pool used as root for this gateway */
   int open_root_pool_ctx();
@@ -138,6 +151,7 @@ class RGWRados  : public RGWAccess
 
 public:
   RGWRados() : lock("rados_timer_lock"), timer(NULL), watcher(NULL), watch_handle(0) {}
+  virtual ~RGWRados() {}
 
   void tick();
 
@@ -185,6 +199,17 @@ public:
               map<std::string, bufferlist>* rmattrs);
   virtual int put_obj_data(void *ctx, rgw_obj& obj, const char *data,
               off_t ofs, size_t len);
+
+  /* note that put_obj doesn't set category on an object, only use it for none user objects */
+  int put_obj(void *ctx, rgw_obj& obj, const char *data, size_t len,
+              time_t *mtime, map<std::string, bufferlist>& attrs) {
+    int ret = put_obj_data(ctx, obj, data, -1, len);
+    if (ret >= 0) {
+      ret = put_obj_meta(ctx, obj, len, mtime, attrs, RGW_OBJ_CATEGORY_NONE, false, NULL);
+    }
+    return ret;
+  }
+
   virtual int aio_put_obj_data(void *ctx, rgw_obj& obj, const char *data,
                                off_t ofs, size_t len, void **handle);
   virtual int aio_wait(void *handle);
@@ -224,6 +249,21 @@ public:
     return clone_objs(ctx, dst_obj, v, attrs, category, pmtime, truncate_dest, exclusive, xattr_cond);
   }
 
+  virtual int clone_obj(void *ctx, rgw_obj& dst_obj, off_t dst_ofs,
+                          rgw_obj& src_obj, off_t src_ofs,
+                          uint64_t size, time_t *pmtime,
+                          map<string, bufferlist> attrs,
+                          RGWObjCategory category) {
+    RGWCloneRangeInfo info;
+    vector<RGWCloneRangeInfo> v;
+    info.src = src_obj;
+    info.src_ofs = src_ofs;
+    info.dst_ofs = dst_ofs;
+    info.len = size;
+    v.push_back(info);
+    return clone_objs(ctx, dst_obj, v, attrs, category, pmtime, true, false);
+  }
+
   /** Copy an object, with many extra options */
   virtual int copy_obj(void *ctx, rgw_obj& dest_obj,
                rgw_obj& src_obj,
@@ -242,7 +282,7 @@ public:
   virtual int bucket_suspended(rgw_bucket& bucket, bool *suspended);
 
   /** Delete an object.*/
-  virtual int delete_obj(void *ctx, rgw_obj& src_obj, bool sync);
+  virtual int delete_obj(void *ctx, rgw_obj& src_obj, bool sync = true);
 
   /** Get the attributes for an object.*/
   virtual int get_attr(void *ctx, rgw_obj& obj, const char *name, bufferlist& dest);
@@ -286,6 +326,7 @@ public:
   virtual void finalize_watch();
   virtual int distribute(bufferlist& bl);
   virtual int watch_cb(int opcode, uint64_t ver, bufferlist& bl) { return 0; }
+  virtual void finalize() {}
 
   void *create_context(void *user_ctx) {
     RGWRadosCtx *rctx = new RGWRadosCtx();
@@ -362,5 +403,7 @@ public:
                 bool *is_truncated, string *last_entry);
 
 };
+
+extern RGWRados *rgwstore;
 
 #endif

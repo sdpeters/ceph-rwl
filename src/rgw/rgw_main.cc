@@ -24,7 +24,7 @@
 #include "common/WorkQueue.h"
 #include "common/Timer.h"
 #include "rgw_common.h"
-#include "rgw_access.h"
+#include "rgw_rados.h"
 #include "rgw_acl.h"
 #include "rgw_user.h"
 #include "rgw_op.h"

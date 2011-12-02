@@ -1,6 +1,5 @@
 #include "libradosgw.hpp"
 
-#include "rgw_access.h"
 #include "rgw_rados.h"
 #include "rgw_cache.h"
 
@@ -8,7 +7,7 @@
 namespace libradosgw {
 
   class StoreImpl {
-    RGWAccess *rados;
+    RGWRados *rados;
   public:
 
     StoreImpl() : rados(NULL) {}

@@ -9,13 +9,13 @@
 #include "common/mime.h"
 #include "common/utf8.h"
 
-#include "rgw_access.h"
 #include "rgw_op.h"
 #include "rgw_rest.h"
 #include "rgw_acl.h"
 #include "rgw_user.h"
 #include "rgw_log.h"
 #include "rgw_multi.h"
+#include "rgw_rados.h"
 
 #define DOUT_SUBSYS rgw
 

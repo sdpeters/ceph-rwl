@@ -4,7 +4,6 @@
 
 #include "common/errno.h"
 
-#include "rgw_access.h"
 #include "rgw_rados.h"
 #include "rgw_acl.h"
 
@@ -29,6 +28,9 @@ using namespace librados;
 #define DOUT_SUBSYS rgw
 
 using namespace std;
+
+#warning rgwstore should be removed
+RGWRados *rgwstore;
 
 Rados *rados = NULL;
 
@@ -827,7 +829,7 @@ int RGWRados::copy_obj(void *ctx,
   if (mtime)
     obj_stat(ctx, tmp_obj, NULL, mtime, NULL);
 
-  r = rgwstore->delete_obj(ctx, tmp_obj, false);
+  r = delete_obj(ctx, tmp_obj, false);
   if (r < 0)
     dout(0) << "ERROR: could not remove " << tmp_obj << dendl;
 
@@ -835,7 +837,7 @@ int RGWRados::copy_obj(void *ctx,
 
   return ret;
 done_err:
-  rgwstore->delete_obj(ctx, tmp_obj, false);
+  delete_obj(ctx, tmp_obj, false);
   finish_get_obj(&handle);
   return r;
 }
@@ -921,7 +923,7 @@ int RGWRados::set_buckets_enabled(vector<rgw_bucket>& buckets, bool enabled)
 int RGWRados::bucket_suspended(rgw_bucket& bucket, bool *suspended)
 {
   RGWBucketInfo bucket_info;
-  int ret = rgwstore->get_bucket_info(NULL, bucket.name, bucket_info);
+  int ret = get_bucket_info(NULL, bucket.name, bucket_info);
   if (ret < 0) {
     return ret;
   }
@@ -2376,9 +2378,9 @@ int RGWRados::remove_temp_objects(string date, string time)
   bool is_truncated;
   IntentLogNameFilter filter(date.c_str(), &tm);
   do {
-    int r = store->list_objects(bucket, max, prefix, delim, marker,
-				objs, common_prefixes, false, ns,
-				&is_truncated, &filter);
+    int r = list_objects(bucket, max, prefix, delim, marker,
+			 objs, common_prefixes, false, ns,
+		         &is_truncated, &filter);
     if (r == -ENOENT)
       break;
     if (r < 0) {
@@ -2436,7 +2438,7 @@ int RGWRados::process_intent_log(rgw_bucket& bucket, string& oid,
           complete = false;
           break;
         }
-        r = rgwstore->delete_obj(NULL, entry.obj);
+        r = delete_obj(NULL, entry.obj);
         if (r < 0 && r != -ENOENT) {
           cerr << "failed to remove obj: " << entry.obj << std::endl;
           complete = false;

@@ -331,11 +331,9 @@ my_libradosgw_src = \
 	rgw/libradosgw.cc
 
 my_radosgw_src = \
-	rgw/rgw_fs.cc \
 	rgw/rgw_rados.cc \
 	rgw/rgw_tools.cc \
 	rgw/rgw_user.cc \
-	rgw/rgw_access.cc \
 	rgw/rgw_op.cc \
 	rgw/rgw_rest.cc \
 	rgw/rgw_rest_swift.cc \
@@ -1390,14 +1388,12 @@ noinst_HEADERS = \
         osdc/Objecter.h\
         perfglue/cpu_profiler.h\
         perfglue/heap_profiler.h\
-	rgw/rgw_access.h\
 	rgw/rgw_acl.h\
 	rgw/rgw_xml.h\
 	rgw/rgw_cache.h\
 	rgw/rgw_cls_api.h\
 	rgw/rgw_common.h\
 	rgw/rgw_formats.h\
-	rgw/rgw_fs.h\
 	rgw/rgw_log.h\
 	rgw/rgw_multi.h\
 	rgw/rgw_op.h\

@@ -1,11 +1,11 @@
 #ifndef CEPH_RGWCACHE_H
 #define CEPH_RGWCACHE_H
 
-#include "rgw_access.h"
 #include <string>
 #include <map>
 #include "include/types.h"
 #include "include/utime.h"
+#include "rgw_rados.h"
 
 enum {
   UPDATE_OBJ,
