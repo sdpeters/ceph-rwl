@@ -14,24 +14,24 @@
 
 static map<string, string> ext_mime_map;
 
-int rgw_put_obj(string& uid, rgw_bucket& bucket, string& oid, const char *data, size_t size)
+int rgw_put_obj(RGWAccess *access, string& uid, rgw_bucket& bucket, string& oid, const char *data, size_t size)
 {
   map<string,bufferlist> attrs;
 
   rgw_obj obj(bucket, oid);
 
-  int ret = rgwstore->put_obj(NULL, obj, data, size, NULL, attrs);
+  int ret = access->put_obj(NULL, obj, data, size, NULL, attrs);
 
   if (ret == -ENOENT) {
-    ret = rgwstore->create_bucket(uid, bucket, attrs, true); //all callers are using system buckets
+    ret = access->create_bucket(uid, bucket, attrs, true); //all callers are using system buckets
     if (ret >= 0)
-      ret = rgwstore->put_obj(NULL, obj, data, size, NULL, attrs);
+      ret = access->put_obj(NULL, obj, data, size, NULL, attrs);
   }
 
   return ret;
 }
 
-int rgw_get_obj(void *ctx, rgw_bucket& bucket, string& key, bufferlist& bl)
+int rgw_get_obj(RGWAccess *access, void *ctx, rgw_bucket& bucket, string& key, bufferlist& bl)
 {
   int ret;
   char *data = NULL;
@@ -40,13 +40,13 @@ int rgw_get_obj(void *ctx, rgw_bucket& bucket, string& key, bufferlist& bl)
   bufferlist::iterator iter;
   int request_len = READ_CHUNK_LEN;
   rgw_obj obj(bucket, key);
-  ret = rgwstore->prepare_get_obj(ctx, obj, NULL, NULL, NULL, NULL,
+  ret = access->prepare_get_obj(ctx, obj, NULL, NULL, NULL, NULL,
                                   NULL, NULL, NULL, NULL, NULL, NULL, &handle, &err);
   if (ret < 0)
     return ret;
 
   do {
-    ret = rgwstore->get_obj(ctx, &handle, obj, &data, 0, request_len - 1);
+    ret = access->get_obj(ctx, &handle, obj, &data, 0, request_len - 1);
     if (ret < 0)
       goto done;
     if (ret < request_len)
@@ -60,7 +60,7 @@ int rgw_get_obj(void *ctx, rgw_bucket& bucket, string& key, bufferlist& bl)
 
   ret = 0;
 done:
-  rgwstore->finish_get_obj(&handle);
+  access->finish_get_obj(&handle);
   return ret;
 }
 

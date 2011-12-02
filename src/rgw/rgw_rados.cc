@@ -491,14 +491,14 @@ int RGWRados::store_bucket_info(RGWBucketInfo& info)
   bufferlist bl;
   ::encode(info, bl);
 
-  int ret = rgw_put_obj(info.owner, pi_buckets_rados, info.bucket.name, bl.c_str(), bl.length());
+  int ret = rgw_put_obj(this, info.owner, pi_buckets_rados, info.bucket.name, bl.c_str(), bl.length());
   if (ret < 0)
     return ret;
 
   char bucket_char[16];
   snprintf(bucket_char, sizeof(bucket_char), ".%lld", (long long unsigned)info.bucket.bucket_id);
   string bucket_id_string(bucket_char);
-  ret = rgw_put_obj(info.owner, pi_buckets_rados, bucket_id_string, bl.c_str(), bl.length());
+  ret = rgw_put_obj(this, info.owner, pi_buckets_rados, bucket_id_string, bl.c_str(), bl.length());
 
   dout(0) << "store_bucket_info: bucket=" << info.bucket << " owner " << info.owner << dendl;
   return 0;
@@ -1791,7 +1791,7 @@ int RGWRados::get_bucket_info(void *ctx, string& bucket_name, RGWBucketInfo& inf
 {
   bufferlist bl;
 
-  int ret = rgw_get_obj(ctx, pi_buckets_rados, bucket_name, bl);
+  int ret = rgw_get_obj(this, ctx, pi_buckets_rados, bucket_name, bl);
   if (ret < 0) {
     if (ret != -ENOENT)
       return ret;
@@ -1822,7 +1822,7 @@ int RGWRados::put_bucket_info(string& bucket_name, RGWBucketInfo& info)
 
   string unused;
 
-  int ret = rgw_put_obj(unused, pi_buckets_rados, bucket_name, bl.c_str(), bl.length());
+  int ret = rgw_put_obj(this, unused, pi_buckets_rados, bucket_name, bl.c_str(), bl.length());
 
   return ret;
 }

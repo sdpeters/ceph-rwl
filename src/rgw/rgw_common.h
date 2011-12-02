@@ -33,6 +33,8 @@
 #include "include/types.h"
 #include "include/utime.h"
 
+#include "libradosgw.hpp"
+
 using namespace std;
 
 namespace ceph {
@@ -510,6 +512,7 @@ struct RGWEnv;
 /** Store all the state necessary to complete and respond to an HTTP request*/
 struct req_state {
    FCGX_Request *fcgx;
+   libradosgw::Store *store;
    http_op op;
    bool content_started;
    int format;

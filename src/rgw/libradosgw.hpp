@@ -177,7 +177,7 @@ namespace libradosgw {
   public:
     Store() : impl(NULL) {}
 
-    int init(librados::Rados *r);
+    int init(CephContext *cct);
     void shutdown();
 
     int get_account(string& name, Account& account);

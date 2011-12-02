@@ -69,6 +69,7 @@ static void godown_alarm(int signum)
 class RGWProcess {
   deque<FCGX_Request *> m_fcgx_queue;
   ThreadPool m_tp;
+  libradosgw::Store *store;
 
   struct RGWWQ : public ThreadPool::WorkQueue<FCGX_Request> {
     RGWProcess *process;
@@ -120,8 +121,9 @@ class RGWProcess {
   } req_wq;
 
 public:
-  RGWProcess(CephContext *cct, int num_threads)
+  RGWProcess(CephContext *cct, int num_threads, libradosgw::Store *s)
     : m_tp(cct, "RGWProcess::m_tp", num_threads),
+      store(s),
       req_wq(this, g_conf->rgw_op_thread_timeout,
 	     g_conf->rgw_op_thread_suicide_timeout, &m_tp) {}
   void run();
@@ -178,8 +180,12 @@ void RGWProcess::handle_request(FCGX_Request *fcgx)
   rgw_env.init(fcgx->envp);
 
   struct req_state *s = new req_state(&rgw_env);
-  s->obj_ctx = rgwstore->create_context(s);
-  rgwstore->set_intent_cb(s->obj_ctx, call_log_intent);
+  // s->obj_ctx = rgwstore->create_context(s);
+
+  s->store = store;
+
+#warning FIXME call_log_intent
+  // rgwstore->set_intent_cb(s->obj_ctx, call_log_intent);
 
   RGWOp *op = NULL;
   int init_error = 0;
@@ -229,7 +235,7 @@ done:
   int http_ret = s->err.http_ret;
 
   handler->put_op(op);
-  rgwstore->destroy_context(s->obj_ctx);
+  // rgwstore->destroy_context(s->obj_ctx);
   delete s;
   FCGX_Finish_r(fcgx);
   delete fcgx;
@@ -292,21 +298,24 @@ int main(int argc, const char **argv)
   
   FCGX_Init();
   
-  RGWStoreManager store_manager;
-  
-  if (!store_manager.init("rados", g_ceph_context)) {
-    derr << "Couldn't init storage provider (RADOS)" << dendl;
-    return EIO;
+  libradosgw::Store store;
+
+  int r = store.init(g_ceph_context);
+  if (r < 0) {
+    derr << "Couldn't init storage (r=" << r << ")" << dendl;
+    return 1;
   }
   
-  int r = rgw_perf_start(g_ceph_context);
+  r = rgw_perf_start(g_ceph_context);
   if (r < 0)
     return 1;
 
-  RGWProcess process(g_ceph_context, g_conf->rgw_thread_pool_size);
+  RGWProcess process(g_ceph_context, g_conf->rgw_thread_pool_size, &store);
   process.run();
 
+
   rgw_perf_stop(g_ceph_context);
+  store.shutdown();
 
   return 0;
 }

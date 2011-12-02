@@ -328,9 +328,7 @@ endif
 
 if WITH_RADOSGW
 my_libradosgw_src = \
-	rgw/librgw.cc \
-	rgw/rgw_acl.cc \
-	rgw/rgw_xml.cc
+	rgw/libradosgw.cc
 
 my_radosgw_src = \
 	rgw/rgw_fs.cc \
@@ -349,7 +347,9 @@ my_radosgw_src = \
 	rgw/rgw_formats.cc \
 	rgw/rgw_log.cc \
 	rgw/rgw_multi.cc \
-	rgw/rgw_env.cc
+	rgw/rgw_env.cc \
+	rgw/rgw_acl.cc \
+	rgw/rgw_xml.cc
 
 my_radosgw_ldadd = \
 	libglobal.la librgw.la librados.la -lfcgi -lcurl -lexpat \
