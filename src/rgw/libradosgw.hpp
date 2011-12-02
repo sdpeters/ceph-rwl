@@ -13,6 +13,9 @@ namespace libradosgw {
   using librados::Rados;
   using ceph::bufferlist;
 
+  class StoreImpl;
+  class AccountImpl;
+
   enum RGWPerm {
     PERM_READ      = 0x01,
     PERM_WRITE     = 0x02,
@@ -156,6 +159,10 @@ namespace libradosgw {
   };
 
   class Account {
+    AccountImpl *account;
+  public:
+    Account();
+
     AccountIterator buckets_begin();
     const AccountIterator& buckets_end();
 
@@ -166,17 +173,18 @@ namespace libradosgw {
 
 
   class Store {
+    StoreImpl *impl;
   public:
-    Store();
+    Store() : impl(NULL) {}
 
     int init(librados::Rados *r);
     void shutdown();
 
-    Account get_account(string& name);
+    int get_account(string& name, Account& account);
 
-    User user_by_name(string& name);
-    User user_by_email(string& email);
-    User user_by_access_key(string& access_key);
+    int user_by_name(string& name, User& user);
+    int user_by_email(string& email, User& user);
+    int user_by_access_key(string& access_key, User& user);
   };
 }
 
