@@ -56,7 +56,7 @@ static int encode_token(string& swift_user, string& key, bufferlist& bl)
   return ret;
 }
 
-int rgw_swift_verify_signed_token(const char *token, RGWUserInfo& info)
+int rgw_swift_verify_signed_token(const char *token, libradosgw::Account& info)
 {
   if (strncmp(token, "AUTH_rgwtk", 10) != 0)
     return -EINVAL;

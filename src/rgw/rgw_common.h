@@ -318,101 +318,6 @@ struct RGWSubUser {
 };
 WRITE_CLASS_ENCODER(RGWSubUser);
 
-
-struct RGWUserInfo
-{
-  uint64_t auid;
-  string user_id;
-  string display_name;
-  string user_email;
-  map<string, RGWAccessKey> access_keys;
-  map<string, RGWAccessKey> swift_keys;
-  map<string, RGWSubUser> subusers;
-  __u8 suspended;
-
-  RGWUserInfo() : auid(0), suspended(0) {}
-
-  void encode(bufferlist& bl) const {
-     __u32 ver = USER_INFO_VER;
-     ::encode(ver, bl);
-     ::encode(auid, bl);
-     string access_key;
-     string secret_key;
-     if (!access_keys.empty()) {
-       map<string, RGWAccessKey>::const_iterator iter = access_keys.begin();
-       const RGWAccessKey& k = iter->second;
-       access_key = k.id;
-       secret_key = k.key;
-     }
-     ::encode(access_key, bl);
-     ::encode(secret_key, bl);
-     ::encode(display_name, bl);
-     ::encode(user_email, bl);
-     string swift_name;
-     string swift_key;
-     if (!swift_keys.empty()) {
-       map<string, RGWAccessKey>::const_iterator iter = swift_keys.begin();
-       const RGWAccessKey& k = iter->second;
-       swift_name = k.id;
-       swift_key = k.key;
-     }
-     ::encode(swift_name, bl);
-     ::encode(swift_key, bl);
-     ::encode(user_id, bl);
-     ::encode(access_keys, bl);
-     ::encode(subusers, bl);
-     ::encode(suspended, bl);
-     ::encode(swift_keys, bl);
-  }
-  void decode(bufferlist::iterator& bl) {
-     __u32 ver;
-    ::decode(ver, bl);
-     if (ver >= 2) ::decode(auid, bl);
-     else auid = CEPH_AUTH_UID_DEFAULT;
-     string access_key;
-     string secret_key;
-    ::decode(access_key, bl);
-    ::decode(secret_key, bl);
-    if (ver < 6) {
-      RGWAccessKey k;
-      k.id = access_key;
-      k.key = secret_key;
-      access_keys[access_key] = k;
-    }
-    ::decode(display_name, bl);
-    ::decode(user_email, bl);
-    string swift_name;
-    string swift_key;
-    if (ver >= 3) ::decode(swift_name, bl);
-    if (ver >= 4) ::decode(swift_key, bl);
-    if (ver >= 5)
-      ::decode(user_id, bl);
-    else
-      user_id = access_key;
-    if (ver >= 6) {
-      ::decode(access_keys, bl);
-      ::decode(subusers, bl);
-    }
-    suspended = 0;
-    if (ver >= 7) {
-      ::decode(suspended, bl);
-    }
-    if (ver >= 8) {
-      ::decode(swift_keys, bl);
-    }
-  }
-
-  void clear() {
-    user_id.clear();
-    display_name.clear();
-    user_email.clear();
-    auid = CEPH_AUTH_UID_DEFAULT;
-    access_keys.clear();
-    suspended = 0;
-  }
-};
-WRITE_CLASS_ENCODER(RGWUserInfo)
-
 struct rgw_bucket {
   std::string name;
   std::string pool;
@@ -551,7 +456,7 @@ struct req_state {
    map<string, string> x_meta_map;
    bool has_bad_meta;
 
-   RGWUserInfo user; 
+   libradosgw::User user; 
    RGWAccessControlPolicy *acl;
 
    string canned_acl;

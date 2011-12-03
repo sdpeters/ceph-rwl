@@ -9,12 +9,74 @@
 
 namespace libradosgw {
 
+  struct RefCountedObject {
+    int nref;
+    RefCountedObject() : nref(1) {}
+    virtual ~RefCountedObject() {}
+  
+    RefCountedObject *get() {
+      ++nref;
+      return this;
+    }
+    void put() {
+      if (--nref == 0)
+        delete this;
+    }
+  };
+
+
+  template <class T, class S>
+  class ObjRef {
+    T *obj;
+  public:
+    ObjRef(T *o = NULL) : obj(o) {}
+
+    ObjRef(ObjRef<T, S>& src) {
+    obj = src;
+    if (obj)
+      obj->get();
+    }
+
+    ~ObjRef() {
+      if (obj)
+	obj->put();
+    }
+
+    ObjRef<T, S>& operator=(ObjRef<T, S> &src) {
+      if (this == &src)
+        return *this;
+
+      if (src.obj)
+        src.obj->get();
+
+      if (obj)
+	obj->put();
+ 
+      obj = src.obj;
+      return *this;
+    }
+
+    T *operator=(T *o) {
+      if (obj)
+	obj->put();
+
+      obj = o;
+      return obj;
+    }
+
+    S *operator->() {
+      return obj;
+    }
+  };
+
+
   using std::string;
   using librados::Rados;
   using ceph::bufferlist;
 
   class StoreImpl;
   class AccountImpl;
+  class UserImpl;
 
   enum RGWPerm {
     PERM_READ      = 0x01,
@@ -29,18 +91,49 @@ namespace libradosgw {
     GROUP_AUTHENTICATED = 2,
   };
 
-  class User {
-    int group;
+  struct AccessKey {
+    string id;
+    string key;
+    string subuser;
+  };
+
+  struct SubUser {
     string name;
+    uint32_t perm_mask;
+  };
+
+  class ImplContainer {
+  protected:
+    void *impl;
+
+  public:
+    ImplContainer() : impl(NULL) {}
+    virtual ~ImplContainer();
+
+    ImplContainer& operator=(ImplContainer& c);
+  };
+
+  class User {
+  friend class UserImpl;
+  friend class AccountImpl;
+  
+  protected:
+    UserImpl *account;
+    
+    int group;
+    string uid;
     string display_name;
     string email;
+    uint64_t auid;
+
   public:
-    
+    int get_group() { return group; }
     void set_group(int g) { group = g; }
 
     bool is_anonymous() { return (group & GROUP_ANONYMOUS) != 0; }
-    int get_group() { return group; }
-    const string& get_name() { return name; }
+    const string& get_uid() { return uid; }
+
+    int store_info();
   };
 
   struct ACLs {
@@ -159,9 +252,22 @@ namespace libradosgw {
   };
 
   class Account {
-    AccountImpl *account;
+    friend class AccountImpl;
+    friend class StoreImpl;
+
+  protected:
+    ObjRef<RefCountedObject, AccountImpl> impl;
+
+    User user;
+    std::map<string, AccessKey> access_keys;
+    std::map<string, AccessKey> swift_keys;
+    std::map<string, SubUser> subusers;
+
+    uint64_t auid;
+    bool suspended;
   public:
     Account();
+    ~Account();
 
     AccountIterator buckets_begin();
     const AccountIterator& buckets_end();
@@ -173,18 +279,23 @@ namespace libradosgw {
 
 
   class Store {
-    StoreImpl *impl;
+  protected:
+    ObjRef<RefCountedObject, StoreImpl> impl;
   public:
     Store() : impl(NULL) {}
 
     int init(CephContext *cct);
     void shutdown();
 
-    int get_account(string& name, Account& account);
+    int account_by_name(string& name, Account& account);
+    int account_by_email(string& email, Account& account);
+    int account_by_access_key(string& access_key, Account& account);
+    int account_by_subuser(string& subuser, Account& account);
 
     int user_by_name(string& name, User& user);
     int user_by_email(string& email, User& user);
     int user_by_access_key(string& access_key, User& user);
+    int user_by_subuser(string& subuser, User& user);
   };
 }
 

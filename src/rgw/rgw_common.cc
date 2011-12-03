@@ -345,7 +345,7 @@ bool verify_permission(RGWAccessControlPolicy *policy, string& uid, int user_per
 
 bool verify_permission(struct req_state *s, int perm)
 {
-  return verify_permission(s->acl, s->user.user_id, s->perm_mask, perm);
+  return verify_permission(s->acl, s->user.uid, s->perm_mask, perm);
 }
 
 static char hex_to_num(char c)

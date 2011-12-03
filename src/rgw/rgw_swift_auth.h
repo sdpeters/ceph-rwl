@@ -1,11 +1,12 @@
 #ifndef CEPH_RGW_SWIFT_AUTH_H
 #define CEPH_RGW_SWIFT_AUTH_H
 
+#include "libradosgw.hpp"
 #include "rgw_op.h"
 
 #define RGW_SWIFT_TOKEN_EXPIRATION (15 * 60)
 
-extern int rgw_swift_verify_signed_token(const char *token, RGWUserInfo& info);
+extern int rgw_swift_verify_signed_token(const char *token, libradosgw::Account& info);
 
 class RGW_SWIFT_Auth_Get : public RGWOp {
 public:

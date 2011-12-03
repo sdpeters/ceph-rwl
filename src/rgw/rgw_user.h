@@ -32,44 +32,6 @@ struct RGWUID
 WRITE_CLASS_ENCODER(RGWUID)
 
 /**
- * Get the anonymous (ie, unauthenticated) user info.
- */
-extern void rgw_get_anon_user(RGWUserInfo& info);
-
-/**
- * verify that user is an actual user, and not the anonymous user
- */
-extern bool rgw_user_is_authenticated(RGWUserInfo& info);
-/**
- * Save the given user information to storage.
- * Returns: 0 on success, -ERR# on failure.
- */
-extern int rgw_store_user_info(RGWUserInfo& info);
-/**
- * Given an email, finds the user info associated with it.
- * returns: 0 on success, -ERR# on failure (including nonexistence)
- */
-extern int rgw_get_user_info_by_uid(string& user_id, RGWUserInfo& info);
-/**
- * Given an swift username, finds the user info associated with it.
- * returns: 0 on success, -ERR# on failure (including nonexistence)
- */
-extern int rgw_get_user_info_by_email(string& email, RGWUserInfo& info);
-/**
- * Given an swift username, finds the user info associated with it.
- * returns: 0 on success, -ERR# on failure (including nonexistence)
- */
-extern int rgw_get_user_info_by_swift(string& swift_name, RGWUserInfo& info);
-/**
- * Given an access key, finds the user info associated with it.
- * returns: 0 on success, -ERR# on failure (including nonexistence)
- */
-extern int rgw_get_user_info_by_access_key(string& access_key, RGWUserInfo& info);
-/**
- * Given an RGWUserInfo, deletes the user and its bucket ACLs.
- */
-extern int rgw_delete_user(RGWUserInfo& user);
-/**
  * Store a list of the user's buckets, with associated functinos.
  */
 class RGWUserBuckets
@@ -137,7 +99,7 @@ extern int rgw_read_user_buckets(string user_id, RGWUserBuckets& buckets, bool n
 extern int rgw_write_buckets_attr(string user_id, RGWUserBuckets& buckets);
 
 extern int rgw_add_bucket(string user_id, rgw_bucket& bucket);
-extern int rgw_remove_user_bucket_info(string user_id, rgw_bucket& bucket);
+extern int rgw_unlink_bucket(string user_id, rgw_bucket& bucket);
 
 /*
  * remove the different indexes
