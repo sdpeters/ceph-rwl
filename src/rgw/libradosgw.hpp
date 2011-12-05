@@ -25,13 +25,13 @@ namespace libradosgw {
   };
 
 
-  template <class T, class S>
+  template <class T>
   class ObjRef {
-    T *obj;
+    RefCountedObject *obj;
   public:
-    ObjRef(T *o = NULL) : obj(o) {}
+    ObjRef(RefCountedObject *o = NULL) : obj(o) {}
 
-    ObjRef(ObjRef<T, S>& src) {
+    ObjRef(ObjRef<T>& src) {
     obj = src;
     if (obj)
       obj->get();
@@ -42,7 +42,7 @@ namespace libradosgw {
 	obj->put();
     }
 
-    ObjRef<T, S>& operator=(ObjRef<T, S> &src) {
+    ObjRef<T>& operator=(ObjRef<T> &src) {
       if (this == &src)
         return *this;
 
@@ -56,7 +56,7 @@ namespace libradosgw {
       return *this;
     }
 
-    T *operator=(T *o) {
+    RefCountedObject *operator=(RefCountedObject *o) {
       if (obj)
 	obj->put();
 
@@ -64,8 +64,8 @@ namespace libradosgw {
       return obj;
     }
 
-    S *operator->() {
-      return obj;
+    T *operator->() {
+      return (T *)obj;
     }
   };
 
@@ -256,7 +256,7 @@ namespace libradosgw {
     friend class StoreImpl;
 
   protected:
-    ObjRef<RefCountedObject, AccountImpl> impl;
+    ObjRef<AccountImpl> impl;
 
     User user;
     std::map<string, AccessKey> access_keys;
@@ -280,7 +280,7 @@ namespace libradosgw {
 
   class Store {
   protected:
-    ObjRef<RefCountedObject, StoreImpl> impl;
+    ObjRef<StoreImpl> impl;
   public:
     Store() : impl(NULL) {}
 

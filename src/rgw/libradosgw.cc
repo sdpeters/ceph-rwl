@@ -376,10 +376,4 @@ namespace libradosgw {
     return ret;
   }
 
-
-  Account::~Account() {
-    if (impl)
-      impl->put();
-  }
-
 }
