@@ -308,7 +308,7 @@ bool RGWAccessControlList::xml_end(const char *el) {
   return true;
 }
 
-int RGWAccessControlList::get_perm(CephContext *cct, string& id, int perm_mask) {
+int RGWAccessControlList::get_perm(CephContext *cct, const string& id, int perm_mask) {
   ldout(cct, 5) << "Searching permissions for uid=" << id << " mask=" << perm_mask << dendl;
   if (!user_map_initialized)
     init_user_map();
@@ -379,7 +379,7 @@ bool RGWAccessControlPolicy::xml_end(const char *el) {
   return true;
 }
 
-int RGWAccessControlPolicy::get_perm(CephContext *cct, string& id, int perm_mask) {
+int RGWAccessControlPolicy::get_perm(CephContext *cct, const string& id, int perm_mask) {
   int perm = acl.get_perm(cct, id, perm_mask);
 
   if (perm == perm_mask)

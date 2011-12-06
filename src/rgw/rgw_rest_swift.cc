@@ -505,7 +505,7 @@ RGWOp *RGWHandler_REST_SWIFT::get_copy_op()
 
 int RGWHandler_REST_SWIFT::authorize()
 {
-  bool authorized = rgw_verify_os_token(s);
+  bool authorized = rgw_verify_swift_token(s);
   if (!authorized)
     return -EPERM;
 

@@ -29,7 +29,7 @@ static size_t read_http_header(void *ptr, size_t size, size_t nmemb, void *_info
     }
     if (*s == '\n') {
       *p = '\0';
-      dout(10) << "os_auth:" << line << dendl;
+      dout(10) << "swift_auth:" << line << dendl;
       // TODO: fill whatever data required here
       char *l = line;
       char *tok = strsep(&l, " \t:");
@@ -81,13 +81,13 @@ static int rgw_swift_validate_token(const char *token, struct rgw_swift_auth_inf
   return 0;
 }
 
-bool rgw_verify_os_token(req_state *s)
+bool rgw_verify_swift_token(req_state *s)
 {
-  if (!s->os_auth_token)
+  if (!s->swift_auth_token)
     return false;
 
-  if (strncmp(s->os_auth_token, "AUTH_rgwtk", 10) == 0) {
-    int ret = rgw_swift_verify_signed_token(s->os_auth_token, s->user);
+  if (strncmp(s->swift_auth_token, "AUTH_rgwtk", 10) == 0) {
+    int ret = rgw_swift_verify_signed_token(s->swift_auth_token, s->user);
     if (ret < 0)
       return false;
 
@@ -100,7 +100,7 @@ bool rgw_verify_os_token(req_state *s)
 
   info.status = 401; // start with access denied, validate_token might change that
 
-  int ret = rgw_swift_validate_token(s->os_auth_token, &info);
+  int ret = rgw_swift_validate_token(s->swift_auth_token, &info);
   if (ret < 0)
     return ret;
 
@@ -109,19 +109,19 @@ bool rgw_verify_os_token(req_state *s)
     return false;
   }
 
-  s->os_user = info.user;
-  s->os_groups = info.auth_groups;
+  s->swift_user = info.user;
+  s->swift_groups = info.auth_groups;
 
-  string swift_user = s->os_user;
+  string swift_user = s->swift_user;
 
-  dout(10) << "swift user=" << s->os_user << dendl;
+  dout(10) << "swift user=" << s->swift_user << dendl;
 
-  if (rgw_get_user_info_by_swift(swift_user, s->user) < 0) {
+  if (s->store.user_by_subuser(swift_user, s->user) < 0) {
     dout(0) << "couldn't map swift user" << dendl;
     return false;
   }
 
-  dout(10) << "user_id=" << s->user.user_id << dendl;
+  dout(10) << "user_id=" << s->user.uid << dendl;
 
   return true;
 }

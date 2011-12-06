@@ -69,7 +69,7 @@ static void godown_alarm(int signum)
 class RGWProcess {
   deque<FCGX_Request *> m_fcgx_queue;
   ThreadPool m_tp;
-  libradosgw::Store *store;
+  libradosgw::Store store;
 
   struct RGWWQ : public ThreadPool::WorkQueue<FCGX_Request> {
     RGWProcess *process;
@@ -121,7 +121,7 @@ class RGWProcess {
   } req_wq;
 
 public:
-  RGWProcess(CephContext *cct, int num_threads, libradosgw::Store *s)
+  RGWProcess(CephContext *cct, int num_threads, libradosgw::Store& s)
     : m_tp(cct, "RGWProcess::m_tp", num_threads),
       store(s),
       req_wq(this, g_conf->rgw_op_thread_timeout,
@@ -310,7 +310,7 @@ int main(int argc, const char **argv)
   if (r < 0)
     return 1;
 
-  RGWProcess process(g_ceph_context, g_conf->rgw_thread_pool_size, &store);
+  RGWProcess process(g_ceph_context, g_conf->rgw_thread_pool_size, store);
   process.run();
 
 

@@ -98,7 +98,7 @@ void RGWListBuckets_REST_S3::send_response()
   dump_start(s);
 
   list_all_buckets_start(s);
-  dump_owner(s, s->user.user_id, s->user.display_name);
+  dump_owner(s, s->user.uid, s->user.display_name);
 
   map<string, RGWBucketEnt>& m = buckets.get_buckets();
   map<string, RGWBucketEnt>::iterator iter;
@@ -433,8 +433,8 @@ void RGWListBucketMultiparts_REST_S3::send_response()
       s->formatter->open_array_section("Upload");
       s->formatter->dump_format("Key", mp.get_key().c_str());
       s->formatter->dump_format("UploadId", mp.get_upload_id().c_str());
-      dump_owner(s, s->user.user_id, s->user.display_name, "Initiator");
-      dump_owner(s, s->user.user_id, s->user.display_name);
+      dump_owner(s, s->user.uid, s->user.display_name, "Initiator");
+      dump_owner(s, s->user.uid, s->user.display_name);
       s->formatter->dump_format("StorageClass", "STANDARD");
       dump_time(s, "Initiated", &iter->obj.mtime);
       s->formatter->close_section();

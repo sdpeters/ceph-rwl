@@ -12,7 +12,7 @@ struct rgw_swift_auth_info {
   long long ttl;
 };
 
-bool rgw_verify_os_token(req_state *s);
+bool rgw_verify_swift_token(req_state *s);
 
 
 #endif

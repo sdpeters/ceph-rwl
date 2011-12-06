@@ -163,7 +163,7 @@ void dump_time(struct req_state *s, const char *name, time_t *t)
   s->formatter->dump_format(name, buf); 
 }
 
-void dump_owner(struct req_state *s, string& id, string& name, const char *section)
+void dump_owner(struct req_state *s, const string& id, const string& name, const char *section)
 {
   if (!section)
     section = "Owner";

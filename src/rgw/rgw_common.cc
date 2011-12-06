@@ -85,7 +85,7 @@ is_err() const
 }
 
 
-req_state::req_state(struct RGWEnv *e) : acl(NULL), os_auth_token(NULL), os_user(NULL), os_groups(NULL), env(e)
+req_state::req_state(struct RGWEnv *e) : acl(NULL), swift_auth_token(NULL), swift_user(NULL), swift_groups(NULL), env(e)
 {
   should_log = env->conf->should_log;
   content_started = false;
@@ -93,9 +93,9 @@ req_state::req_state(struct RGWEnv *e) : acl(NULL), os_auth_token(NULL), os_user
   acl = new RGWAccessControlPolicy;
   expect_cont = false;
 
-  os_auth_token = NULL;
-  os_user = NULL;
-  os_groups = NULL;
+  swift_auth_token = NULL;
+  swift_user = NULL;
+  swift_groups = NULL;
   time = ceph_clock_now(g_ceph_context);
   perm_mask = 0;
   content_length = 0;
@@ -106,8 +106,8 @@ req_state::req_state(struct RGWEnv *e) : acl(NULL), os_auth_token(NULL), os_user
 
 req_state::~req_state() {
   delete formatter;
-  free(os_user);
-  free(os_groups);
+  free(swift_user);
+  free(swift_groups);
   free((void *)object);
   free((void *)bucket_name);
 }
@@ -330,7 +330,7 @@ string& XMLArgs::get(const char *name)
   return get(s);
 }
 
-bool verify_permission(RGWAccessControlPolicy *policy, string& uid, int user_perm_mask, int perm)
+bool verify_permission(RGWAccessControlPolicy *policy, const string& uid, int user_perm_mask, int perm)
 {
    if (!policy)
      return false;

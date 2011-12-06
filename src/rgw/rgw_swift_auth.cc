@@ -56,7 +56,7 @@ static int encode_token(string& swift_user, string& key, bufferlist& bl)
   return ret;
 }
 
-int rgw_swift_verify_signed_token(const char *token, libradosgw::Account& info)
+int rgw_swift_verify_signed_token(libradosgw::Store& store, const char *token, libradosgw::User& user)
 {
   if (strncmp(token, "AUTH_rgwtk", 10) != 0)
     return -EINVAL;
@@ -96,13 +96,17 @@ int rgw_swift_verify_signed_token(const char *token, libradosgw::Account& info)
     return -EPERM;
   }
 
-  if ((ret = rgw_get_user_info_by_swift(swift_user, info)) < 0)
+  libradosgw::Account account;
+
+  if ((ret = store.account_by_subuser(swift_user, account)) < 0)
     return ret;
 
   dout(10) << "swift_user=" << swift_user << dendl;
 
-  map<string, RGWAccessKey>::iterator siter = info.swift_keys.find(swift_user);
-  if (siter == info.swift_keys.end())
+  map<string, RGWAccessKey>& swift_keys = account.get_swift_keys();
+
+  map<string, RGWAccessKey>::iterator siter = swift_keys.find(swift_user);
+  if (siter == account.swift_keys.end())
     return -EPERM;
   RGWAccessKey& swift_key = siter->second;
 

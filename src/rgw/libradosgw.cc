@@ -54,12 +54,21 @@ namespace libradosgw {
 
   struct AccountImpl : public RefCountedObject
   {
-    Account *account;
     StoreImpl *store;
 
-    AccountImpl(Account *a, StoreImpl *s) : account(a), store(s) {}
+    AccountImpl(StoreImpl *s) : store(s) {
+      if (store)
+	store->get();
+    }
 
-    int store_info();
+    ~AccountImpl() {
+      if (store)
+	store->put();
+    }
+
+
+
+    int store_info(Account *account);
 
     void encode(bufferlist& bl) const {
       __u32 ver = USER_INFO_VER;
@@ -249,7 +258,7 @@ namespace libradosgw {
     try {
       ::decode(uid, iter);
       if (!iter.end()) {
-	impl = new AccountImpl(&account, this);
+	impl = new AccountImpl(this);
         impl->decode(iter);
 	account.impl = impl;
       }
@@ -305,7 +314,7 @@ namespace libradosgw {
   }
 
 
-  int AccountImpl::store_info()
+  int AccountImpl::store_info(Account *account)
   {
     bufferlist bl;
     encode(bl);
@@ -374,6 +383,10 @@ namespace libradosgw {
     }
 
     return ret;
+  }
+
+  int Account::store_info() {
+    return impl->store_info(this);
   }
 
 }

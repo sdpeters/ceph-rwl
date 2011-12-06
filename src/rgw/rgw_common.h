@@ -417,7 +417,7 @@ struct RGWEnv;
 /** Store all the state necessary to complete and respond to an HTTP request*/
 struct req_state {
    FCGX_Request *fcgx;
-   libradosgw::Store *store;
+   libradosgw::Store store;
    http_op op;
    bool content_started;
    int format;
@@ -465,9 +465,9 @@ struct req_state {
 
    int prot_flags;
 
-   const char *os_auth_token;
-   char *os_user;
-   char *os_groups;
+   const char *swift_auth_token;
+   char *swift_user;
+   char *swift_groups;
 
    utime_t time;
 

@@ -113,27 +113,14 @@ namespace libradosgw {
     ImplContainer& operator=(ImplContainer& c);
   };
 
-  class User {
-  friend class UserImpl;
-  friend class AccountImpl;
-  
-  protected:
-    UserImpl *account;
-    
+  struct User {
     int group;
     string uid;
     string display_name;
     string email;
     uint64_t auid;
 
-  public:
-    int get_group() { return group; }
-    void set_group(int g) { group = g; }
-
     bool is_anonymous() { return (group & GROUP_ANONYMOUS) != 0; }
-    const string& get_uid() { return uid; }
-
-    int store_info();
   };
 
   struct ACLs {
@@ -275,6 +262,10 @@ namespace libradosgw {
     int remove_bucket(string& name);
     int get_bucket(string& name, Bucket& bucket);
     int create_bucket(string& name, ACLs *acls = NULL);
+
+    std::map<string, AccessKey>& get_access_keys() { return access_keys; }
+    std::map<string, AccessKey> get_swift_keys() { return swift_keys; }
+    std::map<string, SubUser> get_subusers() { return subusers; }
   };
 
 
