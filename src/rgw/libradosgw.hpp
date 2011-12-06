@@ -215,6 +215,9 @@ namespace libradosgw {
   };
 
   class Bucket {
+  protected:
+    ObjRef<BucketImpl> impl;
+
   public:
     Bucket();
 

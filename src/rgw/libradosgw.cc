@@ -21,7 +21,6 @@ namespace libradosgw {
 
   rgw_bucket rgw_root_bucket(RGW_ROOT_BUCKET);
 
-
   void encode(const AccessKey& k, bufferlist& bl) {
      __u32 ver = 1;
     ::encode(ver, bl);
@@ -51,6 +50,9 @@ namespace libradosgw {
      ::decode(s.name, bl);
      ::decode(s.perm_mask, bl);
   }
+
+  struct BucketImpl {
+  };
 
   struct AccountImpl : public RefCountedObject
   {
@@ -173,14 +175,51 @@ namespace libradosgw {
     int put_complete_obj(string& uid, rgw_bucket& bucket, string& oid, const char *data, size_t size);
     int get_complete_obj(void *ctx, rgw_bucket& bucket, string& key, bufferlist& bl);
 
-    int account_by_uid(string& name, Account& account) {}
-    int account_by_email(string& email, Account& account) {}
-    int account_by_access_key(string& access_key, Account& account) {}
-    int account_by_subuser(string& subuser, Account& account) {}
-    int user_by_uid(string& name, User& user) {}
-    int user_by_email(string& email, User& user) {}
-    int user_by_access_key(string& access_key, User& user) {}
-    int user_by_subuser(string& subuser, User& user) {}
+    int account_by_uid(string& name, Account& account) {
+      return account_from_index(name, ui_uid_bucket, account);
+    }
+    int account_by_email(string& email, Account& account) {
+      return account_from_index(email, ui_email_bucket, account);
+    }
+    int account_by_access_key(string& access_key, Account& account) {
+      return account_from_index(access_key, ui_key_bucket, account);
+    }
+    int account_by_subuser(string& subuser, Account& account) {
+      return account_from_index(subuser, ui_swift_bucket, account);
+    }
+
+    int user_by_uid(string& name, User& user) {
+      Account account;
+      int r = account_by_uid(name, account);
+      if (r < 0)
+	return r;
+      user = account.user;
+      return 0;
+    }
+    int user_by_email(string& email, User& user) {
+      Account account;
+      int r = account_by_email(email, account);
+      if (r < 0)
+	return r;
+      user = account.user;
+      return 0;
+    }
+    int user_by_access_key(string& access_key, User& user) {
+      Account account;
+      int r = account_by_access_key(access_key, account);
+      if (r < 0)
+	return r;
+      user = account.user;
+      return 0;
+    }
+    int user_by_subuser(string& subuser, User& user) {
+       Account account;
+      int r = account_by_subuser(subuser, account);
+      if (r < 0)
+	return r;
+      user = account.user;
+      return 0;
+    }
   };
 
   int StoreImpl::put_complete_obj(string& uid, rgw_bucket& bucket, string& oid, const char *data, size_t size)
@@ -391,4 +430,89 @@ namespace libradosgw {
     return impl->store_info(this);
   }
 
+  int Account::fetch_buckets(RGWUserBuckets& buckets, bool need_stats)
+  {
+    int ret;
+    buckets.clear();
+    string buckets_obj_id;
+    get_buckets_obj(user.uid, buckets_obj_id);
+    bufferlist bl;
+#define LARGE_ENOUGH_LEN (4096 * 1024)
+    size_t len = LARGE_ENOUGH_LEN;
+    rgw_obj obj(ui_uid_bucket, buckets_obj_id);
+
+    do {
+      ret = rgwstore->read(NULL, obj, 0, len, bl);
+      if (ret < 0)
+        return ret;
+
+      if ((size_t)ret != len)
+        break;
+
+      len *= 2;
+    } while (1);
+
+    bufferlist::iterator p = bl.begin();
+    bufferlist header;
+    map<string,bufferlist> m;
+    try {
+      ::decode(header, p);
+      ::decode(m, p);
+      for (map<string,bufferlist>::iterator q = m.begin(); q != m.end(); q++) {
+        bufferlist::iterator iter = q->second.begin();
+        RGWBucketEnt bucket;
+        ::decode(bucket, iter);
+        buckets.add(bucket);
+      }
+    } catch (buffer::error& err) {
+      dout(0) << "ERROR: failed to decode bucket information, caught buffer::error" << dendl;
+      return -EIO;
+    }
+
+  done:
+    list<string> buckets_list;
+
+    if (need_stats) {
+     map<string, RGWBucketEnt>& m = buckets.get_buckets();
+     int r = rgwstore->update_containers_stats(m);
+     if (r < 0)
+       dout(0) << "could not get stats for buckets" << dendl;
+
+    }
+    return 0;
+  }
+
+  class AccoutIteratorImpl : public RefCountedObject {
+    AccountImpl *account;
+    map<string, BucketInfo> buckets;
+    map<string, BucketInfo>::iterator iter;
+  public:
+    AccountIteratorImpl(AccountImpl *a) {
+      a = account;
+      if (account)
+	account->get();
+    }
+    ~AccountIteratorImpl() {
+      if (account)
+	account->put();
+    }
+    int init() {
+
+    }
+    bool next(BucketInfo& bucket) {
+    }
+  };
+
+  AccountIterator& AccountIterator::operator++() {
+   (*impl)++;
+   return *this;
+  }
+  const BucketInfo& operator*() const {
+
+  }
+
+  AccountIterator Account::buckets_begin() {
+    AccountIterator iter(impl);
+
+  }
 }
