@@ -32,7 +32,7 @@ namespace libradosgw {
     ObjRef(RefCountedObject *o = NULL) : obj(o) {}
 
     ObjRef(ObjRef<T>& src) {
-    obj = src;
+    obj = src.obj;
     if (obj)
       obj->get();
     }
@@ -120,7 +120,17 @@ namespace libradosgw {
     string email;
     uint64_t auid;
 
+    User(bool anon = false) {
+      group = 0;
+      if (anon) {
+	group |= GROUP_ANONYMOUS;
+      }
+    }
+
     bool is_anonymous() { return (group & GROUP_ANONYMOUS) != 0; }
+    bool is_authenticated() { return !is_anonymous(); }
+
+    static User Anonymous;
   };
 
   struct ACLs {
@@ -245,7 +255,6 @@ namespace libradosgw {
   protected:
     ObjRef<AccountImpl> impl;
 
-    User user;
     std::map<string, AccessKey> access_keys;
     std::map<string, AccessKey> swift_keys;
     std::map<string, SubUser> subusers;
@@ -256,6 +265,8 @@ namespace libradosgw {
     Account();
     ~Account();
 
+    User user;
+
     AccountIterator buckets_begin();
     const AccountIterator& buckets_end();
 
@@ -263,9 +274,13 @@ namespace libradosgw {
     int get_bucket(string& name, Bucket& bucket);
     int create_bucket(string& name, ACLs *acls = NULL);
 
+    bool is_suspended() { return suspended; }
+
     std::map<string, AccessKey>& get_access_keys() { return access_keys; }
-    std::map<string, AccessKey> get_swift_keys() { return swift_keys; }
-    std::map<string, SubUser> get_subusers() { return subusers; }
+    std::map<string, AccessKey>& get_swift_keys() { return swift_keys; }
+    std::map<string, SubUser>& get_subusers() { return subusers; }
+
+    int store_info();
   };
 
 
@@ -278,12 +293,12 @@ namespace libradosgw {
     int init(CephContext *cct);
     void shutdown();
 
-    int account_by_name(string& name, Account& account);
+    int account_by_uid(string& uid, Account& account);
     int account_by_email(string& email, Account& account);
     int account_by_access_key(string& access_key, Account& account);
     int account_by_subuser(string& subuser, Account& account);
 
-    int user_by_name(string& name, User& user);
+    int user_by_uid(string& uid, User& user);
     int user_by_email(string& email, User& user);
     int user_by_access_key(string& access_key, User& user);
     int user_by_subuser(string& subuser, User& user);

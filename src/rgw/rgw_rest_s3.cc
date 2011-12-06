@@ -98,7 +98,7 @@ void RGWListBuckets_REST_S3::send_response()
   dump_start(s);
 
   list_all_buckets_start(s);
-  dump_owner(s, s->user.uid, s->user.display_name);
+  dump_owner(s, s->account.user.uid, s->account.user.display_name);
 
   map<string, RGWBucketEnt>& m = buckets.get_buckets();
   map<string, RGWBucketEnt>::iterator iter;
@@ -433,8 +433,8 @@ void RGWListBucketMultiparts_REST_S3::send_response()
       s->formatter->open_array_section("Upload");
       s->formatter->dump_format("Key", mp.get_key().c_str());
       s->formatter->dump_format("UploadId", mp.get_upload_id().c_str());
-      dump_owner(s, s->user.uid, s->user.display_name, "Initiator");
-      dump_owner(s, s->user.uid, s->user.display_name);
+      dump_owner(s, s->account.user.uid, s->account.user.display_name, "Initiator");
+      dump_owner(s, s->account.user.uid, s->account.user.display_name);
       s->formatter->dump_format("StorageClass", "STANDARD");
       dump_time(s, "Initiated", &iter->obj.mtime);
       s->formatter->close_section();
@@ -684,7 +684,7 @@ int RGWHandler_REST_S3::authorize()
       qsr = true;
     } else {
       /* anonymous access */
-      rgw_get_anon_user(s->user);
+      s->account.user = libradosgw::User::Anonymous;
       s->perm_mask = RGW_PERM_FULL_CONTROL;
       return 0;
     }
@@ -701,7 +701,7 @@ int RGWHandler_REST_S3::authorize()
   }
 
   /* first get the user info */
-  if (rgw_get_user_info_by_access_key(auth_id, s->user) < 0) {
+  if (s->store.account_by_access_key(auth_id, s->account) < 0) {
     dout(5) << "error reading user info, uid=" << auth_id << " can't authenticate" << dendl;
     return -EPERM;
   }
@@ -723,22 +723,24 @@ int RGWHandler_REST_S3::authorize()
     return -ERR_REQUEST_TIME_SKEWED;
   }
 
-  map<string, RGWAccessKey>::iterator iter = s->user.access_keys.find(auth_id);
-  if (iter == s->user.access_keys.end()) {
+  const map<string, libradosgw::AccessKey>& access_keys = s->account.get_access_keys();
+  map<string, libradosgw::AccessKey>::const_iterator iter = access_keys.find(auth_id);
+  if (iter == access_keys.end()) {
     dout(0) << "ERROR: access key not encoded in user info" << dendl;
     return -EPERM;
   }
-  RGWAccessKey& k = iter->second;
+  const libradosgw::AccessKey& k = iter->second;
   const char *key = k.key.c_str();
   int key_len = k.key.size();
 
   if (!k.subuser.empty()) {
-    map<string, RGWSubUser>::iterator uiter = s->user.subusers.find(k.subuser);
-    if (uiter == s->user.subusers.end()) {
+    const map<string, libradosgw::SubUser>& subusers = s->account.get_subusers();
+    map<string, libradosgw::SubUser>::const_iterator uiter = subusers.find(k.subuser);
+    if (uiter == subusers.end()) {
       dout(0) << "ERROR: could not find subuser: " << k.subuser << dendl;
       return -EPERM;
     }
-    RGWSubUser& subuser = uiter->second;
+    const libradosgw::SubUser& subuser = uiter->second;
     s->perm_mask = subuser.perm_mask;
   } else
     s->perm_mask = RGW_PERM_FULL_CONTROL;

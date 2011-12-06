@@ -6,7 +6,7 @@
 
 #define RGW_SWIFT_TOKEN_EXPIRATION (15 * 60)
 
-extern int rgw_swift_verify_signed_token(const char *token, libradosgw::User& user);
+extern int rgw_swift_verify_signed_token(const char *token, libradosgw::Account& account);
 
 class RGW_SWIFT_Auth_Get : public RGWOp {
 public:

@@ -14,7 +14,7 @@ using namespace ceph::crypto;
 
 static RGW_SWIFT_Auth_Get rgw_swift_auth_get;
 
-static int build_token(string& swift_user, string& key, uint64_t nonce, utime_t& expiration, bufferlist& bl)
+static int build_token(const string& swift_user, const string& key, uint64_t nonce, utime_t& expiration, bufferlist& bl)
 {
   ::encode(swift_user, bl);
   ::encode(nonce, bl);
@@ -56,7 +56,7 @@ static int encode_token(string& swift_user, string& key, bufferlist& bl)
   return ret;
 }
 
-int rgw_swift_verify_signed_token(libradosgw::Store& store, const char *token, libradosgw::User& user)
+int rgw_swift_verify_signed_token(libradosgw::Store& store, const char *token, libradosgw::Account& account)
 {
   if (strncmp(token, "AUTH_rgwtk", 10) != 0)
     return -EINVAL;
@@ -96,19 +96,17 @@ int rgw_swift_verify_signed_token(libradosgw::Store& store, const char *token, l
     return -EPERM;
   }
 
-  libradosgw::Account account;
-
   if ((ret = store.account_by_subuser(swift_user, account)) < 0)
     return ret;
 
   dout(10) << "swift_user=" << swift_user << dendl;
 
-  map<string, RGWAccessKey>& swift_keys = account.get_swift_keys();
+  const map<string, libradosgw::AccessKey>& swift_keys = account.get_swift_keys();
 
-  map<string, RGWAccessKey>::iterator siter = swift_keys.find(swift_user);
-  if (siter == account.swift_keys.end())
+  map<string, libradosgw::AccessKey>::const_iterator siter = swift_keys.find(swift_user);
+  if (siter == swift_keys.end())
     return -EPERM;
-  RGWAccessKey& swift_key = siter->second;
+  const libradosgw::AccessKey& swift_key = siter->second;
 
   bufferlist tok;
   ret = build_token(swift_user, swift_key.key, nonce, expiration, tok);
@@ -140,10 +138,11 @@ void RGW_SWIFT_Auth_Get::execute()
   const char *user = s->env->get("HTTP_X_AUTH_USER");
 
   string user_str;
-  RGWUserInfo info;
+  libradosgw::Account account;
   bufferlist bl;
-  RGWAccessKey *swift_key;
-  map<string, RGWAccessKey>::iterator siter;
+  libradosgw::AccessKey *swift_key;
+  map<string, libradosgw::AccessKey> *swift_keys;
+  map<string, libradosgw::AccessKey>::iterator siter;
 
   string swift_url = g_conf->rgw_swift_url;
   string swift_prefix = g_conf->rgw_swift_url_prefix;
@@ -185,11 +184,12 @@ void RGW_SWIFT_Auth_Get::execute()
 
   user_str = user;
 
-  if ((ret = rgw_get_user_info_by_swift(user_str, info)) < 0)
+  if ((ret = s->store.account_by_subuser(user_str, account)) < 0)
     goto done;
 
-  siter = info.swift_keys.find(user_str);
-  if (siter == info.swift_keys.end()) {
+  swift_keys = &account.get_swift_keys();
+  siter = swift_keys->find(user_str);
+  if (siter == swift_keys->end()) {
     ret = -EPERM;
     goto done;
   }

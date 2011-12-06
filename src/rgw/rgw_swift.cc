@@ -87,7 +87,7 @@ bool rgw_verify_swift_token(req_state *s)
     return false;
 
   if (strncmp(s->swift_auth_token, "AUTH_rgwtk", 10) == 0) {
-    int ret = rgw_swift_verify_signed_token(s->swift_auth_token, s->user);
+    int ret = rgw_swift_verify_signed_token(s->swift_auth_token, s->account);
     if (ret < 0)
       return false;
 
@@ -116,12 +116,12 @@ bool rgw_verify_swift_token(req_state *s)
 
   dout(10) << "swift user=" << s->swift_user << dendl;
 
-  if (s->store.user_by_subuser(swift_user, s->user) < 0) {
+  if (s->store.account_by_subuser(swift_user, s->account) < 0) {
     dout(0) << "couldn't map swift user" << dendl;
     return false;
   }
 
-  dout(10) << "user_id=" << s->user.uid << dendl;
+  dout(10) << "user_id=" << s->account.user.uid << dendl;
 
   return true;
 }

@@ -56,21 +56,13 @@ namespace libradosgw {
   {
     StoreImpl *store;
 
-    AccountImpl(StoreImpl *s) : store(s) {
-      if (store)
-	store->get();
-    }
-
-    ~AccountImpl() {
-      if (store)
-	store->put();
-    }
-
+    AccountImpl(StoreImpl *s);
+    ~AccountImpl();
 
 
     int store_info(Account *account);
 
-    void encode(bufferlist& bl) const {
+    void encode(Account *account, bufferlist& bl) const {
       __u32 ver = USER_INFO_VER;
 
       User& user = account->user;
@@ -105,7 +97,7 @@ namespace libradosgw {
       ::encode(account->suspended, bl);
       ::encode(account->swift_keys, bl);
     }
-    void decode(bufferlist::iterator& bl) {
+    void decode(Account *account, bufferlist::iterator& bl) {
        __u32 ver;
       ::decode(ver, bl);
 
@@ -146,7 +138,6 @@ namespace libradosgw {
       }
     }
   };
-  WRITE_CLASS_ENCODER(AccountImpl)
 
   class StoreImpl : public RefCountedObject {
     RGWRados *access;
@@ -182,11 +173,11 @@ namespace libradosgw {
     int put_complete_obj(string& uid, rgw_bucket& bucket, string& oid, const char *data, size_t size);
     int get_complete_obj(void *ctx, rgw_bucket& bucket, string& key, bufferlist& bl);
 
-    int account_by_name(string& name, Account& account) {}
+    int account_by_uid(string& name, Account& account) {}
     int account_by_email(string& email, Account& account) {}
     int account_by_access_key(string& access_key, Account& account) {}
     int account_by_subuser(string& subuser, Account& account) {}
-    int user_by_name(string& name, User& user) {}
+    int user_by_uid(string& name, User& user) {}
     int user_by_email(string& email, User& user) {}
     int user_by_access_key(string& access_key, User& user) {}
     int user_by_subuser(string& subuser, User& user) {}
@@ -259,7 +250,7 @@ namespace libradosgw {
       ::decode(uid, iter);
       if (!iter.end()) {
 	impl = new AccountImpl(this);
-        impl->decode(iter);
+        impl->decode(&account, iter);
 	account.impl = impl;
       }
     } catch (buffer::error& err) {
@@ -281,8 +272,8 @@ namespace libradosgw {
     impl->put();
   }
 
-  int Store::account_by_name(string& name, Account& account) {
-    return impl->account_by_name(name, account);
+  int Store::account_by_uid(string& name, Account& account) {
+    return impl->account_by_uid(name, account);
   }
 
   int Store::account_by_email(string& email, Account& account) {
@@ -297,8 +288,8 @@ namespace libradosgw {
     return impl->account_by_subuser(access_key, account);
   }
 
-  int Store::user_by_name(string& name, User& user) {
-    return impl->user_by_name(name, user);
+  int Store::user_by_uid(string& name, User& user) {
+    return impl->user_by_uid(name, user);
   }
 
   int Store::user_by_email(string& email, User& user) {
@@ -313,11 +304,20 @@ namespace libradosgw {
     return impl->user_by_subuser(access_key, user);
   }
 
+  AccountImpl::AccountImpl(StoreImpl *s) : store(s) {
+    if (store)
+      store->get();
+  }
+
+  AccountImpl::~AccountImpl() {
+      if (store)
+	store->put();
+  }
 
   int AccountImpl::store_info(Account *account)
   {
     bufferlist bl;
-    encode(bl);
+    encode(account, bl);
     string md5;
     int ret;
     map<string,bufferlist> attrs;
@@ -352,7 +352,7 @@ namespace libradosgw {
 
     bufferlist uid_bl;
     ::encode(user.uid, uid_bl);
-    encode(uid_bl);
+    encode(account, uid_bl);
 
     ret = store->put_complete_obj(user.uid, ui_uid_bucket, user.uid, uid_bl.c_str(), uid_bl.length());
     if (ret < 0)
@@ -384,6 +384,8 @@ namespace libradosgw {
 
     return ret;
   }
+
+  User User::Anonymous(true);
 
   int Account::store_info() {
     return impl->store_info(this);

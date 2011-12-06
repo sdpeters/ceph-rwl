@@ -14,64 +14,6 @@
 
 using namespace std;
 
-int rgw_get_user_info_from_index(string& key, rgw_bucket& bucket, RGWUserInfo& info)
-{
-  bufferlist bl;
-  RGWUID uid;
-
-  int ret = rgw_get_obj(rgwstore, NULL, bucket, key, bl);
-  if (ret < 0)
-    return ret;
-
-  bufferlist::iterator iter = bl.begin();
-  try {
-    ::decode(uid, iter);
-    if (!iter.end())
-      info.decode(iter);
-  } catch (buffer::error& err) {
-    dout(0) << "ERROR: failed to decode user info, caught buffer::error" << dendl;
-    return -EIO;
-  }
-
-  return 0;
-}
-
-/**
- * Given an email, finds the user info associated with it.
- * returns: 0 on success, -ERR# on failure (including nonexistence)
- */
-int rgw_get_user_info_by_uid(string& uid, RGWUserInfo& info)
-{
-  return rgw_get_user_info_from_index(uid, ui_uid_bucket, info);
-}
-
-/**
- * Given an email, finds the user info associated with it.
- * returns: 0 on success, -ERR# on failure (including nonexistence)
- */
-int rgw_get_user_info_by_email(string& email, RGWUserInfo& info)
-{
-  return rgw_get_user_info_from_index(email, ui_email_bucket, info);
-}
-
-/**
- * Given an swift username, finds the user_info associated with it.
- * returns: 0 on success, -ERR# on failure (including nonexistence)
- */
-extern int rgw_get_user_info_by_swift(string& swift_name, RGWUserInfo& info)
-{
-  return rgw_get_user_info_from_index(swift_name, ui_swift_bucket, info);
-}
-
-/**
- * Given an access key, finds the user info associated with it.
- * returns: 0 on success, -ERR# on failure (including nonexistence)
- */
-extern int rgw_get_user_info_by_access_key(string& access_key, RGWUserInfo& info)
-{
-  return rgw_get_user_info_from_index(access_key, ui_key_bucket, info);
-}
-
 static void get_buckets_obj(string& user_id, string& buckets_obj_id)
 {
     buckets_obj_id = user_id;

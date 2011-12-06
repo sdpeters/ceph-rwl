@@ -226,7 +226,7 @@ static int read_acls(struct req_state *s, RGWBucketInfo& bucket_info, RGWAccessC
     if (ret < 0)
       return ret;
 
-    if (!verify_permission(&bucket_policy, s->user.user_id, s->perm_mask, RGW_PERM_READ))
+    if (!verify_permission(&bucket_policy, s->account.user.uid, s->perm_mask, RGW_PERM_READ))
       ret = -EACCES;
     else
       ret = -ENOENT;
@@ -373,11 +373,11 @@ void RGWListBuckets::execute()
   if (ret < 0)
     goto done;
 
-  ret = rgw_read_user_buckets(s->user.user_id, buckets, !!(s->prot_flags & RGW_REST_SWIFT));
+  ret = rgw_read_user_buckets(s->account.user.uid, buckets, !!(s->prot_flags & RGW_REST_SWIFT));
   if (ret < 0) {
     /* hmm.. something wrong here.. the user was authenticated, so it
        should exist, just try to recreate */
-    dout(10) << "WARNING: failed on rgw_get_user_buckets uid=" << s->user.user_id << dendl;
+    dout(10) << "WARNING: failed on rgw_get_user_buckets uid=" << s->account.user.uid << dendl;
 
     /*
 
@@ -402,11 +402,11 @@ void RGWStatAccount::execute()
 {
   RGWUserBuckets buckets;
 
-  ret = rgw_read_user_buckets(s->user.user_id, buckets, true);
+  ret = rgw_read_user_buckets(s->account.user.uid, buckets, true);
   if (ret < 0) {
     /* hmm.. something wrong here.. the user was authenticated, so it
        should exist, just try to recreate */
-    dout(10) << "WARNING: failed on rgw_get_user_buckets uid=" << s->user.user_id << dendl;
+    dout(10) << "WARNING: failed on rgw_get_user_buckets uid=" << s->account.user.uid << dendl;
 
     /*
 
@@ -505,7 +505,7 @@ done:
 
 int RGWCreateBucket::verify_permission()
 {
-  if (!rgw_user_is_authenticated(s->user))
+  if (!s->account.user.is_authenticated())
     return -EACCES;
 
   return 0;
@@ -521,16 +521,16 @@ void RGWCreateBucket::execute()
 
   rgw_obj obj(rgw_root_bucket, s->bucket_name_str);
 
-  s->bucket_owner = s->user.user_id;
+  s->bucket_owner = s->account.user.uid;
 
   int r = get_policy_from_attr(s->obj_ctx, &old_policy, obj);
   if (r >= 0)  {
-    if (old_policy.get_owner().get_id().compare(s->user.user_id) != 0) {
+    if (old_policy.get_owner().get_id().compare(s->account.user.uid) != 0) {
       ret = -EEXIST;
       goto done;
     }
   }
-  pol_ret = policy.create_canned(s->user.user_id, s->user.display_name, s->canned_acl);
+  pol_ret = policy.create_canned(s->account.user.uid, s->account.user.display_name, s->canned_acl);
   if (!pol_ret) {
     ret = -EINVAL;
     goto done;
@@ -540,8 +540,8 @@ void RGWCreateBucket::execute()
   attrs[RGW_ATTR_ACL] = aclbl;
 
   s->bucket.name = s->bucket_name_str;
-  ret = rgwstore->create_bucket(s->user.user_id, s->bucket, attrs, false,
-                                true, s->user.auid);
+  ret = rgwstore->create_bucket(s->account.user.uid, s->bucket, attrs, false,
+                                true, s->account.user.auid);
   /* continue if EEXIST and create_bucket will fail below.  this way we can recover
    * from a partial create by retrying it. */
   dout(0) << "rgw_create_bucket returned ret=" << ret << " bucket=" << s->bucket << dendl;
@@ -551,9 +551,9 @@ void RGWCreateBucket::execute()
 
   existed = (ret == -EEXIST);
 
-  ret = rgw_add_bucket(s->user.user_id, s->bucket);
+  ret = rgw_add_bucket(s->account.user.uid, s->bucket);
   if (ret && !existed && ret != -EEXIST)   /* if it exists (or previously existed), don't remove it! */
-    rgw_unlink_bucket(s->user.user_id, s->bucket);
+    rgw_unlink_bucket(s->account.user.uid, s->bucket);
 
   if (ret == -EEXIST)
     ret = -ERR_BUCKET_EXISTS;
@@ -578,7 +578,7 @@ void RGWDeleteBucket::execute()
     ret = rgwstore->delete_bucket(s->bucket);
 
     if (ret == 0) {
-      ret = rgw_unlink_bucket(s->user.user_id, s->bucket);
+      ret = rgw_unlink_bucket(s->account.user.uid, s->bucket);
       if (ret < 0) {
         dout(0) << "WARNING: failed to remove bucket: ret=" << ret << dendl;
       }
@@ -667,7 +667,7 @@ void RGWPutObj::execute()
 
     RGWAccessControlPolicy policy;
 
-    ret = policy.create_canned(s->user.user_id, s->user.display_name, s->canned_acl);
+    ret = policy.create_canned(s->account.user.uid, s->account.user.display_name, s->canned_acl);
     if (!ret) {
        ret = -EINVAL;
        goto done;
@@ -976,7 +976,7 @@ int RGWCopyObj::verify_permission()
   if (ret < 0)
     return ret;
 
-  if (!::verify_permission(&src_policy, s->user.user_id, s->perm_mask, RGW_PERM_READ))
+  if (!::verify_permission(&src_policy, s->account.user.uid, s->perm_mask, RGW_PERM_READ))
     return -EACCES;
 
   RGWAccessControlPolicy dest_bucket_policy;
@@ -986,13 +986,13 @@ int RGWCopyObj::verify_permission()
   if (ret < 0)
     return ret;
 
-  if (!::verify_permission(&dest_bucket_policy, s->user.user_id, s->perm_mask, RGW_PERM_WRITE))
+  if (!::verify_permission(&dest_bucket_policy, s->account.user.uid, s->perm_mask, RGW_PERM_WRITE))
     return -EACCES;
 
   /* build a polict for the target object */
   RGWAccessControlPolicy dest_policy;
 
-  ret = dest_policy.create_canned(s->user.user_id, s->user.display_name, s->canned_acl);
+  ret = dest_policy.create_canned(s->account.user.uid, s->account.user.display_name, s->canned_acl);
   if (!ret)
      return -EINVAL;
 
@@ -1075,7 +1075,7 @@ void RGWGetACLs::execute()
   send_response();
 }
 
-static int rebuild_policy(ACLOwner *owner, RGWAccessControlPolicy& src, RGWAccessControlPolicy& dest)
+static int rebuild_policy(libradosgw::Store& store, ACLOwner *owner, RGWAccessControlPolicy& src, RGWAccessControlPolicy& dest)
 {
   if (!owner)
     return -EINVAL;
@@ -1085,8 +1085,8 @@ static int rebuild_policy(ACLOwner *owner, RGWAccessControlPolicy& src, RGWAcces
     return -EPERM;
   }
 
-  RGWUserInfo owner_info;
-  if (rgw_get_user_info_by_uid(owner->get_id(), owner_info) < 0) {
+  libradosgw::User owner_info;
+  if (store.user_by_uid(owner->get_id(), owner_info) < 0) {
     dout(10) << "owner info does not exist" << dendl;
     return -EINVAL;
   }
@@ -1107,24 +1107,24 @@ static int rebuild_policy(ACLOwner *owner, RGWAccessControlPolicy& src, RGWAcces
     ACLGrant new_grant;
     bool grant_ok = false;
     string uid;
-    RGWUserInfo grant_user;
+    libradosgw::User grant_user;
     switch (type.get_type()) {
     case ACL_TYPE_EMAIL_USER:
       {
         string email = src_grant->get_id();
         dout(10) << "grant user email=" << email << dendl;
-        if (rgw_get_user_info_by_email(email, grant_user) < 0) {
+        if (store.user_by_email(email, grant_user) < 0) {
           dout(10) << "grant user email not found or other error" << dendl;
           return -ERR_UNRESOLVABLE_EMAIL;
         }
-        uid = grant_user.user_id;
+        uid = grant_user.uid;
       }
     case ACL_TYPE_CANON_USER:
       {
         if (type.get_type() == ACL_TYPE_CANON_USER)
           uid = src_grant->get_id();
     
-        if (grant_user.user_id.empty() && rgw_get_user_info_by_uid(uid, grant_user) < 0) {
+        if (grant_user.uid.empty() && store.user_by_uid(uid, grant_user) < 0) {
           dout(10) << "grant user does not exist:" << uid << dendl;
           return -EINVAL;
         } else {
@@ -1194,8 +1194,8 @@ void RGWPutACLs::execute()
        ret = -ENOMEM;
        goto done;
      }
-     owner.set_id(s->user.user_id);
-     owner.set_name(s->user.display_name);
+     owner.set_id(s->account.user.uid);
+     owner.set_name(s->account.user.display_name);
   } else {
      owner = s->acl->get_owner();
   }
@@ -1239,7 +1239,7 @@ void RGWPutACLs::execute()
     *_dout << dendl;
   }
 
-  ret = rebuild_policy(&owner, *policy, new_policy);
+  ret = rebuild_policy(s->store, &owner, *policy, new_policy);
   if (ret < 0)
     goto done;
 
@@ -1283,7 +1283,7 @@ void RGWInitMultipart::execute()
   if (!s->object)
     goto done;
 
-  ret = policy.create_canned(s->user.user_id, s->user.display_name, s->canned_acl);
+  ret = policy.create_canned(s->account.user.uid, s->account.user.display_name, s->canned_acl);
   if (!ret) {
      ret = -EINVAL;
      goto done;

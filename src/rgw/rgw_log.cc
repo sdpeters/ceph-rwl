@@ -119,7 +119,7 @@ int rgw_log_op(struct req_state *s)
   set_param_str(s, "REQUEST_URI", entry.uri);
   set_param_str(s, "REQUEST_METHOD", entry.op);
 
-  entry.user = s->user.user_id;
+  entry.user = s->account.user.uid;
   if (s->acl)
     entry.object_owner = s->acl->get_owner().get_id();
   entry.bucket_owner = s->bucket_owner;

@@ -164,8 +164,8 @@ class RGWHandler_SWIFT_Auth;
 class RGWHandler_REST_S3;
 
 class RGWRESTMgr {
-  RGWHandler_REST_SWIFT *m_os_handler;
-  RGWHandler_SWIFT_Auth *m_os_auth_handler;
+  RGWHandler_REST_SWIFT *m_swift_handler;
+  RGWHandler_SWIFT_Auth *m_swift_auth_handler;
   RGWHandler_REST_S3 *m_s3_handler;
 
 public:

@@ -456,7 +456,7 @@ struct req_state {
    map<string, string> x_meta_map;
    bool has_bad_meta;
 
-   libradosgw::User user; 
+   libradosgw::Account account; 
    RGWAccessControlPolicy *acl;
 
    string canned_acl;

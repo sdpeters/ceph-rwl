@@ -500,7 +500,7 @@ static int init_entities_from_header(struct req_state *s)
 
     next_tok(req, ver, '/');
     dout(10) << "ver=" << ver << dendl;
-    s->os_auth_token = s->env->get("HTTP_X_AUTH_TOKEN");
+    s->swift_auth_token = s->env->get("HTTP_X_AUTH_TOKEN");
     next_tok(req, first, '/');
 
     dout(10) << "ver=" << ver << " first=" << first << " req=" << req << dendl;
@@ -884,15 +884,15 @@ RGWOp *RGWHandler_REST::get_op()
 
 RGWRESTMgr::RGWRESTMgr()
 {
-  m_os_handler = new RGWHandler_REST_SWIFT;
-  m_os_auth_handler = new RGWHandler_SWIFT_Auth;
+  m_swift_handler = new RGWHandler_REST_SWIFT;
+  m_swift_auth_handler = new RGWHandler_SWIFT_Auth;
   m_s3_handler = new RGWHandler_REST_S3;
 }
 
 RGWRESTMgr::~RGWRESTMgr()
 {
-  delete m_os_handler;
-  delete m_os_auth_handler;
+  delete m_swift_handler;
+  delete m_swift_auth_handler;
   delete m_s3_handler;
 }
 
@@ -904,9 +904,9 @@ RGWHandler *RGWRESTMgr::get_handler(struct req_state *s, FCGX_Request *fcgx,
   *init_error = RGWHandler_REST::preprocess(s, fcgx);
 
   if (s->prot_flags & RGW_REST_SWIFT)
-    handler = m_os_handler;
+    handler = m_swift_handler;
   else if (s->prot_flags & RGW_REST_SWIFT_AUTH)
-    handler = m_os_auth_handler;
+    handler = m_swift_auth_handler;
   else
     handler = m_s3_handler;
 

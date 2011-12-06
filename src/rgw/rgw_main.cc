@@ -208,8 +208,8 @@ void RGWProcess::handle_request(FCGX_Request *fcgx)
     abort_early(s, ret);
     goto done;
   }
-  if (s->user.suspended) {
-    dout(10) << "user is suspended, uid=" << s->user.user_id << dendl;
+  if (s->account.is_suspended()) {
+    dout(10) << "user is suspended, uid=" << s->account.user.uid << dendl;
     abort_early(s, -ERR_USER_SUSPENDED);
     goto done;
   }
