@@ -1995,6 +1995,16 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
  	ctx->delta_stats.num_wr++;
       }
       break;
+
+    case CEPH_OSD_OP_SET_EXPIRATION:
+      {
+	bufferlist expire_bl;
+	bp.copy(op.xattr.value_len, expire_bl);
+        string attr = "expiration";
+        t.setattr(coll, soid, attr, expire_bl);
+ 	ctx->delta_stats.num_wr++;
+      }
+      break;
     
 
       // -- fancy writers --
