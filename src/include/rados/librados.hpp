@@ -168,6 +168,7 @@ namespace librados
     void zero(uint64_t off, uint64_t len);
     void rmxattr(const char *name);
     void setxattr(const char *name, const bufferlist& bl);
+    void set_expiration(time_t t);
     void tmap_update(const bufferlist& cmdbl);
     void clone_range(uint64_t dst_off,
                      const std::string& src_oid, uint64_t src_off,
@@ -248,6 +249,7 @@ namespace librados
     int getxattrs(const std::string& oid, std::map<std::string, bufferlist>& attrset);
     int setxattr(const std::string& oid, const char *name, bufferlist& bl);
     int rmxattr(const std::string& oid, const char *name);
+    int set_expiration(const std::string& oid, time_t t);
     int stat(const std::string& oid, uint64_t *psize, time_t *pmtime);
     int exec(const std::string& oid, const char *cls, const char *method,
 	     bufferlist& inbl, bufferlist& outbl);
