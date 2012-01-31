@@ -103,6 +103,13 @@ struct ObjectOperation {
       osd_op.indata.append(name);
     osd_op.indata.append(data);
   }
+  void add_expiration(int op, const bufferlist& data) {
+    OSDOp& osd_op = add_op(op);
+    osd_op.op.op = op;
+    osd_op.op.xattr.name_len = 0;
+    osd_op.op.xattr.value_len = data.length();
+    osd_op.indata.append(data);
+  }
   void add_xattr_cmp(int op, const char *name, uint8_t cmp_op, uint8_t cmp_mode, const bufferlist& data) {
     OSDOp& osd_op = add_op(op);
     osd_op.op.op = op;
@@ -321,6 +328,11 @@ struct ObjectOperation {
     bufferlist bl;
     ::encode(attrs, bl);
     add_xattr(CEPH_OSD_OP_RESETXATTRS, prefix, bl);
+  }
+  void set_expiration(utime_t t) {
+    bufferlist bl;
+    ::encode(t, bl);
+    add_expiration(CEPH_OSD_OP_SET_EXPIRATION, bl);
   }
   
   // trivialmap
