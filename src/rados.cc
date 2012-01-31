@@ -63,6 +63,8 @@ void usage(ostream& out)
 "   put <obj-name> [infile]          write object\n"
 "   create <obj-name> [category]     create object\n"
 "   rm <obj-name>                    remove object\n"
+"   expire <obj-name> <seconds>      set expiration time (from now) on an object\n"
+"   unexpire <obj-name>              unset object expiration\n"
 "   listxattr <obj-name>\n"
 "   getxattr <obj-name> attr\n"
 "   setxattr <obj-name> attr val\n"
@@ -1043,7 +1045,38 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
       return 1;
     }
   }
-  else if (strcmp(nargs[0], "create") == 0) {
+  else if (strcmp(nargs[0], "expire") == 0) {
+    if (!pool_name || nargs.size() < 3)
+      usage_exit();
+    string oid(nargs[1]);
+    long long seconds = strtoll(nargs[2], NULL, 10);
+    int err = errno;
+    if (err) {
+      cerr << "bad expiration time, errno=" << err << std::endl;
+      return 1;
+    }
+    utime_t t = ceph_clock_now(g_ceph_context);
+    t += seconds;
+
+    ret = io_ctx.set_expiration(oid, t);
+    if (ret < 0) {
+      cerr << "error expiring " << pool_name << "/" << oid << ": " << strerror_r(-ret, buf, sizeof(buf)) << std::endl;
+      return 1;
+    }
+  }
+   else if (strcmp(nargs[0], "unexpire") == 0) {
+    if (!pool_name || nargs.size() < 2)
+      usage_exit();
+    string oid(nargs[1]);
+    utime_t t(0, 0);
+
+    ret = io_ctx.set_expiration(oid, t);
+    if (ret < 0) {
+      cerr << "error removing expiration from " << pool_name << "/" << oid << ": " << strerror_r(-ret, buf, sizeof(buf)) << std::endl;
+      return 1;
+    }
+  }
+ else if (strcmp(nargs[0], "create") == 0) {
     if (!pool_name || nargs.size() < 2)
       usage_exit();
     string oid(nargs[1]);
