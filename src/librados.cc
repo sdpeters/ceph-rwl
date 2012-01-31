@@ -273,7 +273,15 @@ void librados::ObjectWriteOperation::rmxattr(const char *name)
 void librados::ObjectWriteOperation::set_expiration(time_t t)
 {
   ::ObjectOperation *o = (::ObjectOperation *)impl;
-  utime_t ut(t, 0);
+  time_t utc;
+  if (t > 0) {
+    struct tm bdt;
+    gmtime_r(&t, &bdt);
+    utc = mktime(&bdt);
+  } else {
+    utc = 0;
+  }
+  utime_t ut(utc, 0);
   o->set_expiration(ut);
 }
 
@@ -2372,7 +2380,15 @@ int librados::RadosClient::set_expiration(IoCtxImpl& io, const object_t& oid, ti
 
   Context *onack = new C_SafeCond(&mylock, &cond, &done, &r);
 
-  utime_t expire(t, 0);
+  time_t utc;
+  if (t > 0) {
+    struct tm bdt;
+    gmtime_r(&t, &bdt);
+    utc = mktime(&bdt);
+  } else {
+    utc = 0;
+  }
+  utime_t expire(utc, 0);
   ::ObjectOperation o;
   o.set_expiration(expire);
 
@@ -2937,6 +2953,12 @@ int librados::IoCtx::set_expiration(const std::string& oid, time_t t)
 {
   object_t obj(oid);
   return io_ctx_impl->client->set_expiration(*io_ctx_impl, obj, t);
+}
+
+int librados::IoCtx::remove_expiration(const std::string& oid)
+{
+  object_t obj(oid);
+  return io_ctx_impl->client->set_expiration(*io_ctx_impl, obj, 0);
 }
 
 int librados::IoCtx::stat(const std::string& oid, uint64_t *psize, time_t *pmtime)
@@ -3987,6 +4009,13 @@ extern "C" int rados_set_expiration(rados_ioctx_t io, const char *o, time_t t)
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
   object_t oid(o);
   return ctx->client->set_expiration(*ctx, oid, t);
+}
+
+extern "C" int rados_remove_expiration(rados_ioctx_t io, const char *o)
+{
+  librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+  object_t oid(o);
+  return ctx->client->set_expiration(*ctx, oid, 0);
 }
 
 extern "C" int rados_stat(rados_ioctx_t io, const char *o, uint64_t *psize, time_t *pmtime)

@@ -1068,9 +1068,8 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
     if (!pool_name || nargs.size() < 2)
       usage_exit();
     string oid(nargs[1]);
-    utime_t t(0, 0);
 
-    ret = io_ctx.set_expiration(oid, t);
+    ret = io_ctx.remove_expiration(oid);
     if (ret < 0) {
       cerr << "error removing expiration from " << pool_name << "/" << oid << ": " << strerror_r(-ret, buf, sizeof(buf)) << std::endl;
       return 1;

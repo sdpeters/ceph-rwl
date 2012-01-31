@@ -927,6 +927,15 @@ int rados_rmxattr(rados_ioctx_t io, const char *o, const char *name);
 int rados_set_expiration(rados_ioctx_t io, const char *o, time_t t);
 
 /**
+ * Removes object expiration
+ *
+ * @param io the context in which to delete the xattr
+ * @param o the name of the object
+ * @returns 0 on success, negative error code on failure
+ */
+int rados_remove_expiration(rados_ioctx_t io, const char *o);
+
+/**
  * Start iterating over xattrs on an object.
  *
  * @post iter is a valid iterator
