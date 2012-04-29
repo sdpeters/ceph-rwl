@@ -1232,8 +1232,141 @@ void OSD::load_pgs()
     pg->unlock();
   }
   dout(10) << "load_pgs done" << dendl;
+
+  if (g_conf->osd_hack_parallel_past_intervals)
+    hack_build_past_intervals();
 }
- 
+
+
+/*
+ * kludge to build past_intervals efficiently on old, degraded, and
+ * buried clusters.
+ */
+struct pistate {
+  epoch_t stop, last_epoch;
+  vector<int> up, acting;
+  OSDMapRef lastmap;
+};
+
+void OSD::hack_build_past_intervals()
+{
+  // HACK: generate past intervals for all pgs in parallel... bleh
+  map<pg_t,pistate> pis;
+  
+  for (hash_map<pg_t, PG*>::iterator i = pg_map.begin();
+       i != pg_map.end();
+       i++) {
+    PG *pg = i->second;
+    epoch_t stop = MAX(pg->info.history.epoch_created, pg->info.history.last_epoch_clean);
+    if (stop < superblock.oldest_map)
+      stop = superblock.oldest_map;   // this is a lower bound on last_epoch_clean cluster-wide.     
+    epoch_t last_epoch = pg->info.history.same_interval_since - 1;
+
+    if (last_epoch < stop) {
+      continue;
+    }
+    
+    // Do we already have the intervals we want?
+    map<epoch_t,pg_interval_t>::const_iterator pif = pg->past_intervals.begin();
+    if (pif != pg->past_intervals.end()) {
+      if (pif->first <= stop) {
+	continue;
+      }
+      last_epoch = pif->first - 1;
+    }
+    
+    dout(0) << pg->info.pgid << " needs " << stop << "-" << last_epoch << dendl;
+    pistate& p = pis[i->first];
+    //p.orig.swap(pg->past_intervals);
+    p.stop = stop;
+    p.last_epoch = last_epoch;
+  }
+
+  if (pis.size()) {
+    for (epoch_t e = superblock.newest_map;
+	 e >= superblock.oldest_map;
+	 e--) {
+      dout(0) << "EPOCH " << e << dendl;
+      OSDMapRef m = get_map(e);
+
+      for (map<pg_t,pistate>::iterator i = pis.begin(); i != pis.end(); ++i) {
+	pistate& pi = i->second;
+	PG *pg = pg_map[i->first];
+
+	if (e < pi.stop-1)
+	  continue;
+	if (e > pi.last_epoch)
+	  continue;
+	if (e == pi.last_epoch) {
+	  m->pg_to_up_acting_osds(i->first, pi.up, pi.acting);
+	  pi.lastmap = m;
+	  dout(0) << pg->info.pgid << " last_epoch with " << pi.up << " " << pi.acting << dendl;
+	  continue;
+	}
+
+	vector<int> tup, tacting;
+	if (e >= pg->info.history.epoch_created)
+	  m->pg_to_up_acting_osds(i->first, tup, tacting);
+	if (tacting != pi.acting || tup != pi.up || e == pi.stop-1) {
+  	  pg_interval_t &i = pg->past_intervals[e+1];
+	  i.first = e+1;
+	  i.last = pi.last_epoch;
+	  i.up.swap(pi.up);
+	  i.acting.swap(pi.acting);
+	  if (i.acting.size()) {
+	    if (pi.lastmap->get_up_thru(i.acting[0]) >= i.first &&
+		pi.lastmap->get_up_from(i.acting[0]) <= i.first) {
+	      i.maybe_went_rw = true;
+	      dout(10) << pg->info.pgid << " " << i
+		       << " : primary up " << pi.lastmap->get_up_from(i.acting[0])
+		       << "-" << pi.lastmap->get_up_thru(i.acting[0])
+		       << dendl;
+	    } else if (pg->info.history.last_epoch_clean >= i.first &&
+		       pg->info.history.last_epoch_clean <= i.last) {
+	      // If the last_epoch_clean is included in this interval, then
+	      // the pg must have been rw (for recovery to have completed).
+	      // This is important because we won't know the _real_
+	      // first_epoch because we stop at last_epoch_clean, and we
+	      // don't want the oldest interval to randomly have
+	      // maybe_went_rw false depending on the relative up_thru vs
+	      // last_epoch_clean timing.
+	      i.maybe_went_rw = true;
+	      dout(10) << pg->info.pgid << " " << i
+		       << " : includes last_epoch_clean " << pg->info.history.last_epoch_clean
+		       << " and presumed to have been rw"
+		       << dendl;
+	    } else {
+	      i.maybe_went_rw = false;
+	      dout(10) << pg->info.pgid << " " << i
+		       << " : primary up " << pi.lastmap->get_up_from(i.acting[0])
+		       << "-" << pi.lastmap->get_up_thru(i.acting[0])
+		       << " does not include interval"
+		       << dendl;
+	    }
+	  } else {
+	    i.maybe_went_rw = false;
+	    dout(10) << pg->info.pgid << " " << i << " : empty" << dendl;
+	  }
+
+	  // prep for next
+	  pi.last_epoch = e;
+	  pi.up = tup;
+	  pi.acting = tacting;
+	  pi.lastmap = m;
+	}
+      }
+    }
+
+    ObjectStore::Transaction *t = new ObjectStore::Transaction;
+    for (map<pg_t,pistate>::iterator i = pis.begin(); i != pis.end(); ++i) {
+      PG *pg = pg_map[i->first];
+      //dout(0) << *pg << " orig " << i->second.orig << dendl;
+      dout(0) << *pg << "  new " << pg->past_intervals << dendl;
+      pg->write_info(*t);
+    }
+    store->apply_transaction(*t);
+  }
+}
 
 /*
  * look up a pg.  if we have it, great.  if not, consider creating it IF the pg mapping
