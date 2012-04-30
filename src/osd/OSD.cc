@@ -3472,7 +3472,10 @@ void OSD::advance_map(ObjectStore::Transaction& t, C_Contexts *tfin)
     
     if (pi->get_snap_epoch() == osdmap->get_epoch()) {
       pi->build_removed_snaps(pool->newly_removed_snaps);
-      pool->newly_removed_snaps.subtract(pool->cached_removed_snaps);
+      interval_set<snapid_t> intersection;
+      intersection.intersection_of(pool->cached_removed_snaps,
+				   pool->newly_removed_snaps);
+      pool->newly_removed_snaps.subtract(intersection);
       pool->cached_removed_snaps.union_of(pool->newly_removed_snaps);
       dout(10) << " pool " << p->first << " removed_snaps " << pool->cached_removed_snaps
 	       << ", newly so are " << pool->newly_removed_snaps << ")"
