@@ -97,6 +97,34 @@ namespace librbd {
     virtual void finish(int r);
   };
 
+  struct CacheCtx {
+    CephContext *cct;
+    Mutex cache_lock; // used as client_lock for the ObjectCacher
+    ObjectCacher *object_cacher;
+
+    CacheCtx(CephContext *cct, string name)
+      : cct(cct), cache_lock("librbd::CacheCtx::cache_lock"),
+	object_cacher(NULL)
+    {
+      Mutex::Locker l(cache_lock);
+      object_cacher = new ObjectCacher(cct, name, cache_lock, NULL, NULL);
+      object_cacher->set_max_size(cct->_conf->rbd_cache_size);
+      object_cacher->set_max_dirty(cct->_conf->rbd_cache_max_dirty);
+      object_cacher->set_target_dirty(cct->_conf->rbd_cache_target_dirty);
+    };
+
+    ~CacheCtx() {
+      delete object_cacher;
+    }
+
+    void start() {
+      object_cacher->start();
+    }
+    void stop() {
+      object_cacher->stop();
+    }
+  };
+
   struct ImageCtx {
     CephContext *cct;
     PerfCounters *perfcounter;
@@ -113,13 +141,13 @@ namespace librbd {
     bool needs_refresh;
     Mutex refresh_lock;
     Mutex lock; // protects access to snapshot and header information
-    Mutex cache_lock; // used as client_lock for the ObjectCacher
 
-    ObjectCacher *object_cacher;
+    CacheCtx *cache;
+    bool own_cache;
     LibrbdWriteback *writeback_handler;
     ObjectCacher::ObjectSet *object_set;
 
-    ImageCtx(std::string imgname, const char *snap, IoCtx& p)
+    ImageCtx(std::string imgname, const char *snap, IoCtx& p, CacheCtx *cctx)
       : cct((CephContext*)p.cct()),
 	perfcounter(NULL),
 	snapid(CEPH_NOSNAP),
@@ -128,8 +156,7 @@ namespace librbd {
 	needs_refresh(true),
 	refresh_lock("librbd::ImageCtx::refresh_lock"),
 	lock("librbd::ImageCtx::lock"),
-	cache_lock("librbd::ImageCtx::cache_lock"),
-	object_cacher(NULL), writeback_handler(NULL), object_set(NULL)
+	cache(cctx), own_cache(false), writeback_handler(NULL), object_set(NULL)
     {
       md_ctx.dup(p);
       data_ctx.dup(p);
@@ -140,27 +167,27 @@ namespace librbd {
 	pname += "@";
 	pname += snapname;
       }
-      perf_start(pname);
 
-      if (cct->_conf->rbd_cache) {
-	Mutex::Locker l(cache_lock);
-	ldout(cct, 20) << "enabling writback caching..." << dendl;
-	writeback_handler = new LibrbdWriteback(data_ctx, cache_lock);
-	object_cacher = new ObjectCacher(cct, pname, cache_lock,
-					 NULL, NULL);
-	object_cacher->set_max_size(cct->_conf->rbd_cache_size);
-	object_cacher->set_max_dirty(cct->_conf->rbd_cache_max_dirty);
-	object_cacher->set_target_dirty(cct->_conf->rbd_cache_target_dirty);
-	object_set = new ObjectCacher::ObjectSet(NULL, data_ctx.get_id(), 0, writeback_handler);
-	object_cacher->start();
+      if (!cache && cct->_conf->rbd_cache) {
+	cache = new CacheCtx(cct, pname);
+	cache->start();
+	own_cache = true;
       }
+      if (cache) {
+	writeback_handler = new LibrbdWriteback(data_ctx, cache->cache_lock);
+	object_set = new ObjectCacher::ObjectSet(NULL, data_ctx.get_id(), 0, writeback_handler);
+      }
+
+      perf_start(pname);
     }
 
     ~ImageCtx() {
       perf_stop();
-      if (object_cacher) {
-	delete object_cacher;
-	object_cacher = NULL;
+      if (cache) {
+	if (own_cache) {
+	  delete cache;
+	}
+	cache = NULL;
       }
       if (writeback_handler) {
 	delete writeback_handler;
@@ -267,31 +294,31 @@ namespace librbd {
     void aio_read_from_cache(object_t o, bufferlist *bl, size_t len,
 			     uint64_t off, Context *onfinish) {
       lock.Lock();
-      ObjectCacher::OSDRead *rd = object_cacher->prepare_read(snapid, bl, 0);
+      ObjectCacher::OSDRead *rd = cache->object_cacher->prepare_read(snapid, bl, 0);
       lock.Unlock();
       ObjectExtent extent(o, off, len);
       extent.oloc.pool = data_ctx.get_id();
       extent.buffer_extents[0] = len;
       rd->extents.push_back(extent);
-      cache_lock.Lock();
-      int r = object_cacher->readx(rd, object_set, onfinish);
-      cache_lock.Unlock();
+      cache->cache_lock.Lock();
+      int r = cache->object_cacher->readx(rd, object_set, onfinish);
+      cache->cache_lock.Unlock();
       if (r > 0)
 	onfinish->complete(r);
     }
 
     void write_to_cache(object_t o, bufferlist& bl, size_t len, uint64_t off) {
       lock.Lock();
-      ObjectCacher::OSDWrite *wr = object_cacher->prepare_write(snapc, bl,
-								utime_t(), 0);
+      ObjectCacher::OSDWrite *wr = cache->object_cacher->prepare_write(snapc, bl,
+								       utime_t(), 0);
       lock.Unlock();
       ObjectExtent extent(o, off, len);
       extent.oloc.pool = data_ctx.get_id();
       extent.buffer_extents[0] = len;
       wr->extents.push_back(extent);
       {
-	Mutex::Locker l(cache_lock);
-	object_cacher->writex(wr, object_set, cache_lock);
+	Mutex::Locker l(cache->cache_lock);
+	cache->object_cacher->writex(wr, object_set, cache->cache_lock);
       }
     }
 
@@ -315,9 +342,9 @@ namespace librbd {
       Cond cond;
       bool done;
       Context *onfinish = new C_SafeCond(&mylock, &cond, &done, &r);
-      cache_lock.Lock();
-      bool already_flushed = object_cacher->commit_set(object_set, onfinish);
-      cache_lock.Unlock();
+      cache->cache_lock.Lock();
+      bool already_flushed = cache->object_cacher->commit_set(object_set, onfinish);
+      cache->cache_lock.Unlock();
       if (!already_flushed) {
 	mylock.Lock();
 	while (!done) {
@@ -333,20 +360,21 @@ namespace librbd {
       lock.Lock();
       invalidate_cache();
       lock.Unlock();
-      object_cacher->stop();
+      if (cache && own_cache)
+	cache->stop();
     }
 
     void invalidate_cache() {
       assert(lock.is_locked());
-      if (!object_cacher)
+      if (!cache)
 	return;
-      cache_lock.Lock();
-      object_cacher->release_set(object_set);
-      cache_lock.Unlock();
+      cache->cache_lock.Lock();
+      cache->object_cacher->release_set(object_set);
+      cache->cache_lock.Unlock();
       flush_cache();
-      cache_lock.Lock();
-      bool unclean = object_cacher->release_set(object_set);
-      cache_lock.Unlock();
+      cache->cache_lock.Lock();
+      bool unclean = cache->object_cacher->release_set(object_set);
+      cache->cache_lock.Unlock();
       assert(!unclean);
     }
   };
@@ -1093,7 +1121,7 @@ int resize(ImageCtx *ictx, uint64_t size, ProgressContext& prog_ctx)
     return r;
 
   Mutex::Locker l(ictx->lock);
-  if (size < ictx->header.image_size && ictx->object_cacher) {
+  if (size < ictx->header.image_size && ictx->cache) {
     // need to invalidate since we're deleting objects, and
     // ObjectCacher doesn't track non-existent objects
     ictx->invalidate_cache();
@@ -1389,7 +1417,7 @@ int copy(ImageCtx& ictx, IoCtx& dest_md_ctx, const char *destname,
     return r;
   }
 
-  cp.destictx = new librbd::ImageCtx(destname, NULL, dest_md_ctx);
+  cp.destictx = new librbd::ImageCtx(destname, NULL, dest_md_ctx, NULL);
   cp.src_size = src_size;
   r = open_image(cp.destictx);
   if (r < 0) {
@@ -1456,7 +1484,7 @@ int open_image(ImageCtx *ictx)
 void close_image(ImageCtx *ictx)
 {
   ldout(ictx->cct, 20) << "close_image " << ictx << dendl;
-  if (ictx->object_cacher)
+  if (ictx->cache)
     ictx->shutdown_cache(); // implicitly flushes
   else
     flush(ictx);
@@ -1500,7 +1528,7 @@ int64_t read_iterate(ImageCtx *ictx, uint64_t off, size_t len,
     uint64_t read_len = min(block_size - block_ofs, left);
     uint64_t bytes_read;
 
-    if (ictx->object_cacher) {
+    if (ictx->cache) {
       r = ictx->read_from_cache(oid, &bl, read_len, block_ofs);
       if (r < 0 && r != -ENOENT)
 	return r;
@@ -1589,7 +1617,7 @@ ssize_t write(ImageCtx *ictx, uint64_t off, size_t len, const char *buf)
     ictx->lock.Unlock();
     uint64_t write_len = min(block_size - block_ofs, left);
     bl.append(buf + total_write, write_len);
-    if (ictx->object_cacher) {
+    if (ictx->cache) {
       ictx->write_to_cache(oid, bl, write_len, block_ofs);
     } else {
       r = ictx->data_ctx.write(oid, bl, write_len, block_ofs);
@@ -1631,7 +1659,7 @@ int discard(ImageCtx *ictx, uint64_t off, uint64_t len)
   uint64_t left = len;
 
   vector<ObjectExtent> v;
-  if (ictx->object_cacher)
+  if (ictx->cache)
     v.reserve(end_block - start_block + 1);
 
   for (uint64_t i = start_block; i <= end_block; i++) {
@@ -1641,7 +1669,7 @@ int discard(ImageCtx *ictx, uint64_t off, uint64_t len)
     ictx->lock.Unlock();
     uint64_t write_len = min(block_size - block_ofs, left);
 
-    if (ictx->object_cacher) {
+    if (ictx->cache) {
       v.push_back(ObjectExtent(oid, block_ofs, write_len));
       v.back().oloc.pool = ictx->data_ctx.get_id();
     }
@@ -1660,8 +1688,8 @@ int discard(ImageCtx *ictx, uint64_t off, uint64_t len)
     left -= write_len;
   }
 
-  if (ictx->object_cacher)
-    ictx->object_cacher->discard_set(ictx->object_set, v);
+  if (ictx->cache)
+    ictx->cache->object_cacher->discard_set(ictx->object_set, v);
 
   ictx->perfcounter->inc(l_librbd_discard);
   ictx->perfcounter->inc(l_librbd_discard_bytes, total_write);
@@ -1807,7 +1835,7 @@ int _flush(ImageCtx *ictx)
   CephContext *cct = ictx->cct;
   int r;
   // flush any outstanding writes
-  if (ictx->object_cacher) {
+  if (ictx->cache) {
     ictx->flush_cache();
     r = 0;
   } else {
@@ -1859,7 +1887,7 @@ int aio_write(ImageCtx *ictx, uint64_t off, size_t len, const char *buf,
     uint64_t write_len = min(block_size - block_ofs, left);
     bufferlist bl;
     bl.append(buf + total_write, write_len);
-    if (ictx->object_cacher) {
+    if (ictx->cache) {
       // may block
       ictx->write_to_cache(oid, bl, write_len, block_ofs);
     } else {
@@ -1911,7 +1939,7 @@ int aio_discard(ImageCtx *ictx, uint64_t off, uint64_t len, AioCompletion *c)
     return r;
 
   vector<ObjectExtent> v;
-  if (ictx->object_cacher)
+  if (ictx->cache)
     v.reserve(end_block - start_block + 1);
 
   c->get();
@@ -1925,7 +1953,7 @@ int aio_discard(ImageCtx *ictx, uint64_t off, uint64_t len, AioCompletion *c)
 
     uint64_t write_len = min(block_size - block_ofs, left);
 
-    if (ictx->object_cacher) {
+    if (ictx->cache) {
       v.push_back(ObjectExtent(oid, block_ofs, write_len));
       v.back().oloc.pool = ictx->data_ctx.get_id();
     }
@@ -1950,8 +1978,8 @@ int aio_discard(ImageCtx *ictx, uint64_t off, uint64_t len, AioCompletion *c)
   }
   r = 0;
 done:
-  if (ictx->object_cacher)
-    ictx->object_cacher->discard_set(ictx->object_set, v);
+  if (ictx->cache)
+    ictx->cache->object_cacher->discard_set(ictx->object_set, v);
 
   c->finish_adding_completions();
   c->put();
@@ -2009,7 +2037,7 @@ int aio_read(ImageCtx *ictx, uint64_t off, size_t len,
 	new AioBlockCompletion(ictx->cct, c, block_ofs, read_len, buf + total_read);
     c->add_block_completion(block_completion);
 
-    if (ictx->object_cacher) {
+    if (ictx->cache) {
       block_completion->m[block_ofs] = read_len;
       ictx->aio_read_from_cache(oid, &block_completion->data_bl,
 				read_len, block_ofs, block_completion);
@@ -2065,7 +2093,7 @@ int RBD::open(IoCtx& io_ctx, Image& image, const char *name)
 
 int RBD::open(IoCtx& io_ctx, Image& image, const char *name, const char *snapname)
 {
-  ImageCtx *ictx = new ImageCtx(name, snapname, io_ctx);
+  ImageCtx *ictx = new ImageCtx(name, snapname, io_ctx, NULL);
   if (!ictx)
     return -ENOMEM;
 
@@ -2384,7 +2412,7 @@ extern "C" int rbd_open(rados_ioctx_t p, const char *name, rbd_image_t *image, c
 {
   librados::IoCtx io_ctx;
   librados::IoCtx::from_rados_ioctx_t(p, io_ctx);
-  librbd::ImageCtx *ictx = new librbd::ImageCtx(name, snap_name, io_ctx);
+  librbd::ImageCtx *ictx = new librbd::ImageCtx(name, snap_name, io_ctx, NULL);
   if (!ictx)
     return -ENOMEM;
   int r = librbd::open_image(ictx);
