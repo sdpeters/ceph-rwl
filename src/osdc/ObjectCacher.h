@@ -274,6 +274,7 @@ class ObjectCacher {
     void *parent;
 
     inodeno_t ino;
+    WritebackHandler *wb;
     uint64_t truncate_seq, truncate_size;
 
     int64_t poolid;
@@ -281,8 +282,8 @@ class ObjectCacher {
 
     int dirty_or_tx;
 
-    ObjectSet(void *p, int64_t _poolid, inodeno_t i)
-      : parent(p), ino(i), truncate_seq(0),
+    ObjectSet(void *p, int64_t _poolid, inodeno_t i, WritebackHandler *wb)
+      : parent(p), ino(i), wb(wb), truncate_seq(0),
 	truncate_size(0), poolid(_poolid), dirty_or_tx(0) {}
   };
 
@@ -290,8 +291,6 @@ class ObjectCacher {
   // ******* ObjectCacher *********
   // ObjectCacher fields
  private:
-  WritebackHandler& writeback_handler;
-
   string name;
   Mutex& lock;
   
@@ -461,7 +460,7 @@ class ObjectCacher {
 
 
 
-  ObjectCacher(CephContext *cct_, string name, WritebackHandler& wb, Mutex& l,
+  ObjectCacher(CephContext *cct_, string name, Mutex& l,
 	       flush_set_callback_t flush_callback,
 	       void *flush_callback_arg);
   ~ObjectCacher();

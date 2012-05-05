@@ -409,11 +409,11 @@ void ObjectCacher::Object::discard(loff_t off, loff_t len)
 #define dout_prefix *_dout << "objectcacher "
 
 
-ObjectCacher::ObjectCacher(CephContext *cct_, string name, WritebackHandler& wb, Mutex& l,
+ObjectCacher::ObjectCacher(CephContext *cct_, string name, Mutex& l,
 			   flush_set_callback_t flush_callback,
 			   void *flush_callback_arg)
   : perfcounter(NULL),
-    cct(cct_), writeback_handler(wb), name(name), lock(l),
+    cct(cct_), name(name), lock(l),
     max_dirty(0), target_dirty(0), max_size(0),
     flush_set_callback(flush_callback), flush_set_callback_arg(flush_callback_arg),
     flusher_stop(false), flusher_thread(this),
@@ -508,10 +508,10 @@ void ObjectCacher::bh_read(BufferHead *bh)
   ObjectSet *oset = bh->ob->oset;
 
   // go
-  writeback_handler.read(bh->ob->get_oid(), bh->ob->get_oloc(),
-			 bh->start(), bh->length(), bh->ob->get_snap(),
-			 &onfinish->bl, oset->truncate_size, oset->truncate_seq,
-			 onfinish);
+  oset->wb->read(bh->ob->get_oid(), bh->ob->get_oloc(),
+		 bh->start(), bh->length(), bh->ob->get_snap(),
+		 &onfinish->bl, oset->truncate_size, oset->truncate_seq,
+		 onfinish);
 }
 
 void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid, loff_t start,
@@ -606,11 +606,11 @@ void ObjectCacher::bh_write(BufferHead *bh)
   ObjectSet *oset = bh->ob->oset;
 
   // go
-  tid_t tid = writeback_handler.write(bh->ob->get_oid(), bh->ob->get_oloc(),
-				      bh->start(), bh->length(),
-				      bh->snapc, bh->bl, bh->last_write,
-				      oset->truncate_size, oset->truncate_seq,
-				      oncommit);
+  tid_t tid = oset->wb->write(bh->ob->get_oid(), bh->ob->get_oloc(),
+			      bh->start(), bh->length(),
+			      bh->snapc, bh->bl, bh->last_write,
+			      oset->truncate_size, oset->truncate_seq,
+			      oncommit);
 
   // set bh last_write_tid
   oncommit->tid = tid;
@@ -1200,9 +1200,9 @@ void ObjectCacher::rdlock(Object *o)
     
     commit->tid = 
       ack->tid = 
-      o->last_write_tid = writeback_handler.lock(o->get_oid(), o->get_oloc(),
-						 CEPH_OSD_OP_RDLOCK, 0,
-						 ack, commit);
+      o->last_write_tid = o->oset->wb->lock(o->get_oid(), o->get_oloc(),
+					    CEPH_OSD_OP_RDLOCK, 0,
+					    ack, commit);
   }
   
   // stake our claim.
@@ -1247,8 +1247,8 @@ void ObjectCacher::wrlock(Object *o)
     
     commit->tid = 
       ack->tid = 
-      o->last_write_tid = writeback_handler.lock(o->get_oid(), o->get_oloc(),
-						 op, 0, ack, commit);
+      o->last_write_tid = o->oset->wb->lock(o->get_oid(), o->get_oloc(),
+					    op, 0, ack, commit);
   }
   
   // stake our claim.
@@ -1293,9 +1293,9 @@ void ObjectCacher::rdunlock(Object *o)
                                             o->get_soid(), 0, 0);
   commit->tid = 
     lockack->tid = 
-    o->last_write_tid = writeback_handler.lock(o->get_oid(), o->get_oloc(),
-					       CEPH_OSD_OP_RDUNLOCK, 0,
-					       lockack, commit);
+    o->last_write_tid = o->oset->wb->lock(o->get_oid(), o->get_oloc(),
+					  CEPH_OSD_OP_RDUNLOCK, 0,
+					  lockack, commit);
 }
 
 void ObjectCacher::wrunlock(Object *o)
@@ -1328,8 +1328,8 @@ void ObjectCacher::wrunlock(Object *o)
                                             o->get_soid(), 0, 0);
   commit->tid = 
     lockack->tid = 
-    o->last_write_tid = writeback_handler.lock(o->get_oid(), o->get_oloc(),
-					       op, 0, lockack, commit);
+    o->last_write_tid = o->oset->wb->lock(o->get_oid(), o->get_oloc(),
+					  op, 0, lockack, commit);
 }
 
 

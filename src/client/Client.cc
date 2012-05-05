@@ -150,7 +150,7 @@ Client::Client(Messenger *m, MonClient *mc)
   objecter = new Objecter(cct, messenger, monclient, osdmap, client_lock, timer);
   objecter->set_client_incarnation(0);  // client always 0, for now.
   writeback_handler = new ObjecterWriteback(objecter);
-  objectcacher = new ObjectCacher(cct, "libcephfs", *writeback_handler, client_lock,
+  objectcacher = new ObjectCacher(cct, "libcephfs", client_lock,
 				  client_flush_set_callback,    // all commit callback
 				  (void*)this);
   objectcacher->set_max_size(cct->_conf->client_oc_size);
@@ -467,7 +467,7 @@ Inode * Client::add_update_inode(InodeStat *st, utime_t from, int mds)
     in = inode_map[st->vino];
     ldout(cct, 12) << "add_update_inode had " << *in << " caps " << ccap_string(st->cap.caps) << dendl;
   } else {
-    in = new Inode(cct, st->vino, &st->layout);
+    in = new Inode(cct, st->vino, &st->layout, writeback_handler);
     inode_map[st->vino] = in;
     if (!root) {
       root = in;
@@ -2920,7 +2920,7 @@ void Client::handle_caps(MClientCaps *m)
   if (!in) {
     if (m->get_op() == CEPH_CAP_OP_IMPORT) {
       ldout(cct, 5) << "handle_caps adding ino " << vino << " on IMPORT" << dendl;
-      in = new Inode(cct, vino, &m->get_layout());
+      in = new Inode(cct, vino, &m->get_layout(), writeback_handler);
       inode_map[vino] = in;
       in->ino = vino.ino;
       in->snapid = vino.snapid;
@@ -5677,7 +5677,7 @@ Inode *Client::open_snapdir(Inode *diri)
   Inode *in;
   vinodeno_t vino(diri->ino, CEPH_SNAPDIR);
   if (!inode_map.count(vino)) {
-    in = new Inode(cct, vino, &diri->layout);
+    in = new Inode(cct, vino, &diri->layout, writeback_handler);
 
     in->ino = diri->ino;
     in->snapid = CEPH_SNAPDIR;
