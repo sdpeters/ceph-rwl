@@ -40,6 +40,7 @@ extern "C" {
 
 typedef void *rbd_snap_t;
 typedef void *rbd_image_t;
+typedef void *rbd_cache_t;
 
 typedef int (*librbd_progress_fn_t)(uint64_t offset, uint64_t total, void *ptr);
 
@@ -73,6 +74,8 @@ int rbd_remove_with_progress(rados_ioctx_t io, const char *name,
 int rbd_rename(rados_ioctx_t src_io_ctx, const char *srcname, const char *destname);
 
 int rbd_open(rados_ioctx_t io, const char *name, rbd_image_t *image, const char *snap_name);
+int rbd_open_cached(rados_ioctx_t io, const char *name, rbd_image_t *image, const char *snap_name,
+		    rbd_cache_t cache);
 int rbd_close(rbd_image_t image);
 int rbd_resize(rbd_image_t image, uint64_t size);
 int rbd_resize_with_progress(rbd_image_t image, uint64_t size,
@@ -81,6 +84,11 @@ int rbd_stat(rbd_image_t image, rbd_image_info_t *info, size_t infosize);
 int rbd_copy(rbd_image_t image, rados_ioctx_t dest_io_ctx, const char *destname);
 int rbd_copy_with_progress(rbd_image_t image, rados_ioctx_t dest_p, const char *destname,
 			   librbd_progress_fn_t cb, void *cbdata);
+
+/* cache */
+int rbd_cache_create(rados_t cluster, rbd_cache_t *cache, uint64_t max_size,
+		     uint64_t max_dirty, uint64_t target_dirty);
+int rbd_cache_destroy(rbd_cache_t cache);
 
 /* snapshots */
 int rbd_snap_list(rbd_image_t image, rbd_snap_info_t *snaps, int *max_snaps);

@@ -2420,6 +2420,19 @@ extern "C" int rbd_open(rados_ioctx_t p, const char *name, rbd_image_t *image, c
   return r;
 }
 
+extern "C" int rbd_open_cached(rados_ioctx_t p, const char *name, rbd_image_t *image, const char *snap_name,
+			       rbd_cache_t cache)
+{
+  librados::IoCtx io_ctx;
+  librados::IoCtx::from_rados_ioctx_t(p, io_ctx);
+  librbd::ImageCtx *ictx = new librbd::ImageCtx(name, snap_name, io_ctx, (librbd::CacheCtx *)cache);
+  if (!ictx)
+    return -ENOMEM;
+  int r = librbd::open_image(ictx);
+  *image = (rbd_image_t)ictx;
+  return r;
+}
+
 extern "C" int rbd_close(rbd_image_t image)
 {
   librbd::ImageCtx *ctx = (librbd::ImageCtx *)image;
@@ -2446,6 +2459,25 @@ extern "C" int rbd_stat(rbd_image_t image, rbd_image_info_t *info, size_t infosi
 {
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
   return librbd::info(ictx, *info, infosize);
+}
+
+/* cache */
+
+extern "C" int rbd_cache_create(rados_t cluster, rbd_cache_t *pcache,
+				uint64_t max_size, uint64_t max_dirty, uint64_t target_dirty)
+{
+  librbd::CacheCtx *cache = new librbd::CacheCtx((CephContext *)rados_cct(cluster), "rbd_cache");
+  cache->object_cacher->set_max_size(max_size);
+  cache->object_cacher->set_max_dirty(max_dirty);
+  cache->object_cacher->set_target_dirty(target_dirty);
+  *pcache = cache;
+  return 0;
+}
+
+extern "C" int rbd_cache_destroy(rbd_cache_t cache)
+{
+  delete (librbd::CacheCtx *)cache;
+  return 0;
 }
 
 /* snapshots */
