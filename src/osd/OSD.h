@@ -511,9 +511,9 @@ private:
     epoch_t epoch;      ///< most recent epoch we wanted this peer
   };
   /// state attached to outgoing heartbeat connections
-  struct HeartbeatSession : public RefCountedObject {
+  struct HeartbeatClientSession : public RefCountedObject {
     int peer;
-    HeartbeatSession(int p) : peer(p) {}
+    HeartbeatClientSession(int p) : peer(p) {}
   };
   Mutex heartbeat_lock;
   map<int, int> debug_heartbeat_drops_remaining;

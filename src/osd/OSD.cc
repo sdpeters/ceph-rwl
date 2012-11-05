@@ -1795,7 +1795,7 @@ void OSD::_add_heartbeat_peer(int p)
     hi->con = con.get();
     hi->con->get();
     hi->peer = p;
-    hi->con->set_priv(new HeartbeatSession(p));
+    hi->con->set_priv(new HeartbeatClientSession(p));
     dout(10) << "_add_heartbeat_peer: new peer osd." << p
 	     << " " << hi->con->get_peer_addr() << dendl;
   } else {
@@ -2087,7 +2087,7 @@ void OSD::heartbeat()
 
 bool OSD::heartbeat_reset(Connection *con)
 {
-  HeartbeatSession *s = (HeartbeatSession*)con->get_priv();
+  HeartbeatClientSession *s = (HeartbeatClientSession*)con->get_priv();
   if (s) {
     heartbeat_lock.Lock();
     map<int,HeartbeatInfo>::iterator p = heartbeat_peers.find(s->peer);
