@@ -689,7 +689,8 @@ int OSD::peek_journal_fsid(string path, uuid_d& fsid)
 
 // cons/des
 
-OSD::OSD(int id, Messenger *internal_messenger, Messenger *external_messenger,
+OSD::OSD(int id, uint64_t nonce,
+	 Messenger *internal_messenger, Messenger *external_messenger,
 	 Messenger *hbclientm, Messenger *hbserverm, MonClient *mc,
 	 const std::string &dev, const std::string &jdev) :
   Dispatcher(external_messenger->cct),
@@ -710,6 +711,7 @@ OSD::OSD(int id, Messenger *internal_messenger, Messenger *external_messenger,
   store(NULL),
   clog(external_messenger->cct, client_messenger, &mc->monmap, LogClient::NO_FLAGS),
   whoami(id),
+  nonce(nonce),
   dev_path(dev), journal_path(jdev),
   dispatch_running(false),
   osd_compat(get_osd_compat_set()),
@@ -722,7 +724,7 @@ OSD::OSD(int id, Messenger *internal_messenger, Messenger *external_messenger,
   heartbeat_lock("OSD::heartbeat_lock"),
   heartbeat_stop(false), heartbeat_need_update(true), heartbeat_epoch(0),
   hbclient_messenger(hbclientm),
-  hbserver_messenger(hbserverm),
+  hbserver_messenger(hbserverm), hbserver_messenger_previous(NULL),
   heartbeat_thread(this),
   heartbeat_dispatcher(this),
   stat_lock("OSD::stat_lock"),
@@ -774,6 +776,18 @@ void OSD::handle_signal(int signum)
   derr << "*** Got signal " << sys_siglist[signum] << " ***" << dendl;
   //suicide(128 + signum);
   suicide(0);
+}
+
+Messenger *OSD::create_hbserver_messenger(int whoami, uint64_t nonce)
+{
+  Messenger *msgr = Messenger::create(g_ceph_context,
+				      entity_name_t::OSD(whoami), "hbserver",
+				      nonce);
+  msgr->set_cluster_protocol(CEPH_OSD_PROTOCOL);
+  msgr->set_policy(entity_name_t::TYPE_OSD,
+		   Messenger::Policy::stateless_server(0, 0));
+
+  return msgr;
 }
 
 int OSD::pre_init()
@@ -3760,11 +3774,21 @@ void OSD::handle_osd_map(MOSDMap *m)
       if (r != 0)
 	do_shutdown = true;  // FIXME: do_restart?
 
-      r = hbserver_messenger->rebind(cport);
-      if (r != 0)
-	do_shutdown = true;  // FIXME: do_restart?
-
       hbclient_messenger->mark_down_all();
+
+      if (hbserver_messenger_previous) {
+	hbserver_messenger_prevoius->mark_down_all();
+	hbserver_messenger_previous->shutdown();
+	// FIXME: don't leak!
+      }
+      hbserver_messenger_previous = hbserver_messenger;
+      hbserver_messenger = create_hbserver_messenger(whoami, nonce);
+      entity_addr_t hb_addr = hbserver_messenger_previous->get_addr();
+      hb_addr.set_port(0);
+      r = hbserver_messenger->bind(hb_addr);
+      if (r != 0)
+	do_shutdown = true;
+      hbserver_messenger->add_dispatcher_head(&heartbeat_dispatcher);
 
       reset_heartbeat_peers();
     }

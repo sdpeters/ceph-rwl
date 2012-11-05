@@ -323,12 +323,8 @@ int main(int argc, const char **argv)
   Messenger *messenger_hbclient = Messenger::create(g_ceph_context,
 						    entity_name_t::OSD(whoami), "hbclient",
 						    getpid());
-  Messenger *messenger_hbserver = Messenger::create(g_ceph_context,
-						    entity_name_t::OSD(whoami), "hbserver",
-						    getpid());
   cluster_messenger->set_cluster_protocol(CEPH_OSD_PROTOCOL);
   messenger_hbclient->set_cluster_protocol(CEPH_OSD_PROTOCOL);
-  messenger_hbserver->set_cluster_protocol(CEPH_OSD_PROTOCOL);
 
   cout << "starting osd." << whoami
        << " at " << client_messenger->get_myaddr()
@@ -369,8 +365,6 @@ int main(int argc, const char **argv)
 
   messenger_hbclient->set_policy(entity_name_t::TYPE_OSD,
 			     Messenger::Policy::lossy_client(0, 0));
-  messenger_hbserver->set_policy(entity_name_t::TYPE_OSD,
-			     Messenger::Policy::stateless_server(0, 0));
 
   r = client_messenger->bind(g_conf->public_addr);
   if (r < 0)
@@ -378,6 +372,8 @@ int main(int argc, const char **argv)
   r = cluster_messenger->bind(g_conf->cluster_addr);
   if (r < 0)
     exit(1);
+
+  Messenger *messenger_hbserver = OSD::create_hbserver_messenger(whoami, getpid());
 
   // hb should bind to same ip as cluster_addr (if specified)
   entity_addr_t hb_addr = g_conf->osd_heartbeat_addr;
@@ -409,7 +405,7 @@ int main(int argc, const char **argv)
     return -1;
   global_init_chdir(g_ceph_context);
 
-  osd = new OSD(whoami, cluster_messenger, client_messenger,
+  osd = new OSD(whoami, getpid(), cluster_messenger, client_messenger,
 		messenger_hbclient, messenger_hbserver,
 		&mc,
 		g_conf->osd_data, g_conf->osd_journal);

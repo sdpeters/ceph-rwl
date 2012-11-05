@@ -385,6 +385,7 @@ protected:
   LogClient clog;
 
   int whoami;
+  uint64_t nonce;
   std::string dev_path, journal_path;
 
   class C_Tick : public Context {
@@ -522,7 +523,7 @@ private:
   epoch_t heartbeat_epoch;      ///< last epoch we updated our heartbeat peers
   map<int,HeartbeatInfo> heartbeat_peers;  ///< map of osd id to HeartbeatInfo
   utime_t last_mon_heartbeat;
-  Messenger *hbclient_messenger, *hbserver_messenger;
+  Messenger *hbclient_messenger, *hbserver_messenger, *hbserver_messenger_previous;
   
   void _add_heartbeat_peer(int p);
   bool heartbeat_reset(Connection *con);
@@ -1330,7 +1331,7 @@ protected:
  public:
   /* internal and external can point to the same messenger, they will still
    * be cleaned up properly*/
-  OSD(int id, Messenger *internal, Messenger *external, Messenger *hbmin, Messenger *hbmout,
+  OSD(int id, uint64_t nonce, Messenger *internal, Messenger *external, Messenger *hbmin, Messenger *hbmout,
       MonClient *mc, const std::string &dev, const std::string &jdev);
   ~OSD();
 
@@ -1375,6 +1376,8 @@ public:
 
   void suicide(int exitcode);
   int shutdown();
+
+  static Messenger *create_hbserver_messenger();
 
   void handle_signal(int signum);
 
