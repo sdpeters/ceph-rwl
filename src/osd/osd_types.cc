@@ -1421,23 +1421,25 @@ ostream &operator<<(ostream &lhs, const pg_notify_t &notify)
 
 void pg_interval_t::encode(bufferlist& bl) const
 {
-  ENCODE_START(2, 2, bl);
+  ENCODE_START(3, 2, bl);
   ::encode(first, bl);
   ::encode(last, bl);
   ::encode(up, bl);
   ::encode(acting, bl);
   ::encode(maybe_went_rw, bl);
+  ::encode(start_stamp, bl);
   ENCODE_FINISH(bl);
 }
 
 void pg_interval_t::decode(bufferlist::iterator& bl)
 {
-  DECODE_START_LEGACY_COMPAT_LEN(2, 2, 2, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(3, 2, 2, bl);
   ::decode(first, bl);
   ::decode(last, bl);
   ::decode(up, bl);
   ::decode(acting, bl);
   ::decode(maybe_went_rw, bl);
+  ::decode(start_stamp, bl);
   DECODE_FINISH(bl);
 }
 
@@ -1453,6 +1455,7 @@ void pg_interval_t::dump(Formatter *f) const
   f->open_array_section("acting");
   for (vector<int>::const_iterator p = acting.begin(); p != acting.end(); ++p)
     f->dump_int("osd", *p);
+  f->dump_stream("start_stamp") << duration;
   f->close_section();
 }
 
@@ -1466,6 +1469,7 @@ void pg_interval_t::generate_test_instances(list<pg_interval_t*>& o)
   o.back()->first = 4;
   o.back()->last = 5;
   o.back()->maybe_went_rw = true;
+  o.back()->start_stamp = utime_t(22, 23);
 }
 
 bool pg_interval_t::check_new_interval(
@@ -1491,6 +1495,7 @@ bool pg_interval_t::check_new_interval(
     i.last = osdmap->get_epoch() - 1;
     i.acting = old_acting;
     i.up = old_up;
+    i.start_stamp = osdmap->get_modified();
 
     if (i.acting.size() >=
 	osdmap->get_pools().find(pool_id)->second.min_size) {

@@ -1122,6 +1122,7 @@ struct pg_interval_t {
   vector<int> up, acting;
   epoch_t first, last;
   bool maybe_went_rw;
+  utime_t start_stamp; ///< timestamp of first osdmap epoch
 
   pg_interval_t() : first(0), last(0), maybe_went_rw(false) {}
 
