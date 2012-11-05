@@ -1795,7 +1795,7 @@ void OSD::_add_heartbeat_peer(int p)
     hi->con = con.get();
     hi->con->get();
     hi->peer = p;
-    hi->con->set_priv(new HeartbeatClientSession(p));
+    hi->con->set_priv(new HeartbeatSession(p));
     dout(10) << "_add_heartbeat_peer: new peer osd." << p
 	     << " " << hi->con->get_peer_addr() << dendl;
   } else {
@@ -1928,6 +1928,18 @@ void OSD::handle_osd_ping(MOSDPing *m)
 	  }
 	}
       }
+
+      HeartbeatSession *s = con->get_priv();
+      if (s) {
+	s->last_ack = ceph_clock_now(g_ceph_context);
+      } else {
+	s = new HeartbeatSession(-1);
+	s->get();
+	s->client = make_pair(m->get_source().num(), m->up_from);
+	heartbeat_clients[s->client].insert(s);
+	con->set_priv(s);
+	dout(20) << "handle_osd_ping new client session for " << con->get_peer_addr() << " " << s->client << " " << s << dendl;
+      }
     }
     break;
 
@@ -2026,6 +2038,43 @@ void OSD::heartbeat_check()
       failure_queue[p->first] = p->second.last_rx;
     }
   }
+
+  // trim old server sessions
+  utime_t cutoff = ceph_clock_now(g_ceph_context);
+  cutoff -= g_conf->osd_heartbeat_read_interval;
+  list<HeartbeatSession*>::iterator p = heartbeat_clients_closed.begin();
+  while (p != heartbeat_clients_closed.end()) {
+    HeartbeatSession *s = *p;
+    if (s->last_ack >= cutoff)
+      break;
+    dout(20) << "heartbeat_check trimming closed session " << s << dendl;
+    heartbeat_clients_closed.erase(p++);
+
+    map<pair<int,epoch_t>, set<HeartbeatSession*> >::iterator q = heartbeat_clients.find(s->client);
+    assert(q != heartbeat_clients.end());
+    q->second.erase(s);
+    if (q->second.empty())
+      heartbeat_clients.erase(q);
+
+    s->put();
+  }
+}
+
+utime_t OSD::get_last_hb_ack(int peer, epoch_t up_from)
+{
+  Mutex::Locker l(heartbeat_lock);
+  map<pair<int,epoch_t>,set<HeartbeatSession*> >::iterator p = heartbeat_clients.find(make_pair(peer, up_from));
+  if (p == heartbeat_clients.end())
+    return utime_t();
+  set<HeartSession*>::iterator q = p->second.begin();
+  utime_t min = (*q)->last_ack;
+  while (++q != heartbeat_clients.end()) {
+    if ((*q)->last_ack > min) {
+      min = (*q)->last_ack;
+    }
+  }
+  dout(20) << "get_last_hb_ack " << peer << "," << up_from << " " << min << dendl;
+  return min;
 }
 
 void OSD::heartbeat()
@@ -2089,8 +2138,11 @@ void OSD::heartbeat()
 
 bool OSD::heartbeat_reset(Connection *con)
 {
-  HeartbeatClientSession *s = (HeartbeatClientSession*)con->get_priv();
-  if (s) {
+  HeartbeatSession *s = (HeartbeatSession*)con->get_priv();
+  if (!s)
+    return true;
+  if (s->is_client()) {
+    // client
     heartbeat_lock.Lock();
     map<int,HeartbeatInfo>::iterator p = heartbeat_peers.find(s->peer);
     if (p != heartbeat_peers.end() &&
@@ -2111,6 +2163,13 @@ bool OSD::heartbeat_reset(Connection *con)
     hbclient_messenger->mark_down(con);
     heartbeat_lock.Unlock();
     s->put();
+  } else {
+    // server
+    heartbeat_lock.Lock();
+    dout(10) << "heartbeat_reset noting closed hb server con " << con << " session " << s << dendl;
+    s->closed = true;
+    heartbeat_clients_closed.push_back(s);
+    heartbeat_lock.Unlock();
   }
   return true;
 }

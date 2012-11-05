@@ -1404,6 +1404,7 @@ void pg_notify_t::dump(Formatter *f) const
     info.dump(f);
     f->close_section();
   }
+  f->dump_stream("last_hb") << last_hb;
 }
 
 void pg_notify_t::generate_test_instances(list<pg_notify_t*>& o)

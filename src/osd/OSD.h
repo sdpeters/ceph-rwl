@@ -510,10 +510,21 @@ private:
     utime_t last_rx;    ///< last time we got a ping reply
     epoch_t epoch;      ///< most recent epoch we wanted this peer
   };
-  /// state attached to outgoing heartbeat connections
-  struct HeartbeatClientSession : public RefCountedObject {
-    int peer;
-    HeartbeatClientSession(int p) : peer(p) {}
+  /// state attached to incoming or outgoing heartbeat connections
+  struct HeartbeatSession : public RefCountedObject {
+    int peer;           ///< if >= 0, we are a client connecting to this peer.
+    utime_t last_ack;
+    bool closed;
+    pair<int,epoch_t> client;  ///< client (osd, up_from)
+
+    HeartbeatSession(int p) : peer(p), closed(false) {}
+
+    bool is_client() {
+      return peer >= 0;
+    }
+    bool is_server() {
+      return peer < 0;
+    }
   };
   Mutex heartbeat_lock;
   map<int, int> debug_heartbeat_drops_remaining;
@@ -524,6 +535,8 @@ private:
   map<int,HeartbeatInfo> heartbeat_peers;  ///< map of osd id to HeartbeatInfo
   utime_t last_mon_heartbeat;
   Messenger *hbclient_messenger, *hbserver_messenger, *hbserver_messenger_previous;
+  map<pair<int,epoch_t>,set<HeartbeatSession*> > heartbeat_clients;  ///< (epoch, up_from) -> sessions...
+  list<HeartbeatSession*> heartbeat_clients_closed;                  ///< closed sessions
   
   void _add_heartbeat_peer(int p);
   bool heartbeat_reset(Connection *con);
@@ -533,6 +546,7 @@ private:
   void heartbeat_check();
   void heartbeat_entry();
   void need_heartbeat_peer_update();
+  utime_t get_last_hb_ack(int peer, epoch_t up_from);
 
   struct T_Heartbeat : public Thread {
     OSD *osd;

@@ -1,4 +1,4 @@
-// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*- 
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 /*
  * Ceph - scalable distributed file system
@@ -1098,6 +1098,8 @@ struct pg_notify_t {
   epoch_t query_epoch;
   epoch_t epoch_sent;
   pg_info_t info;
+  utime_t last_hb; ///< last time we acked a primary heartbeat
+
   pg_notify_t() : query_epoch(0), epoch_sent(0) {}
   pg_notify_t(epoch_t query_epoch,
 	      epoch_t epoch_sent,
@@ -1105,6 +1107,7 @@ struct pg_notify_t {
     : query_epoch(query_epoch),
       epoch_sent(epoch_sent),
       info(info) {}
+
   void encode(bufferlist &bl) const;
   void decode(bufferlist::iterator &p);
   void dump(Formatter *f) const;

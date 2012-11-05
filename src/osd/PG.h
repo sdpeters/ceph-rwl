@@ -459,6 +459,7 @@ public:
   map<int,eversion_t> peer_last_complete_ondisk;
   eversion_t  min_last_complete_ondisk;  // up: min over last_complete_ondisk, peer_last_complete_ondisk
   eversion_t  pg_trim_to;
+  epoch_t primary_up_from;
 
   // [primary only] content recovery state
  protected:
