@@ -1915,7 +1915,8 @@ void OSD::handle_osd_ping(MOSDPing *m)
       Message *r = new MOSDPing(monc->get_fsid(),
 				curmap->get_epoch(),
 				MOSDPing::PING_REPLY,
-				m->stamp);
+				m->stamp,
+				up_epoch);
       hbserver_messenger->send_message(r, m->get_connection());
 
       if (curmap->is_up(from)) {
@@ -2057,7 +2058,8 @@ void OSD::heartbeat()
     Message *m = new MOSDPing(monc->get_fsid(),
 			      service.get_osdmap()->get_epoch(),
 			      MOSDPing::PING,
-			      now);
+			      now,
+			      up_epoch);
     i->second.last_tx = now;
     if (i->second.first_tx == utime_t())
       i->second.first_tx = now;
