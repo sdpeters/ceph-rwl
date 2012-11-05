@@ -1377,19 +1377,21 @@ void pg_info_t::generate_test_instances(list<pg_info_t*>& o)
 // -- pg_notify_t --
 void pg_notify_t::encode(bufferlist &bl) const
 {
-  ENCODE_START(1, 1, bl);
+  ENCODE_START(2, 1, bl);
   ::encode(query_epoch, bl);
   ::encode(epoch_sent, bl);
   ::encode(info, bl);
+  ::encode(last_hb, bl);
   ENCODE_FINISH(bl);
 }
 
 void pg_notify_t::decode(bufferlist::iterator &bl)
 {
-  DECODE_START(1, bl);
+  DECODE_START(2, bl);
   ::decode(query_epoch, bl);
   ::decode(epoch_sent, bl);
   ::decode(info, bl);
+  ::decode(last_hb, bl);
   DECODE_FINISH(bl);
 }
 
@@ -1427,7 +1429,8 @@ void pg_interval_t::encode(bufferlist& bl) const
   ::encode(up, bl);
   ::encode(acting, bl);
   ::encode(maybe_went_rw, bl);
-  ::encode(start_stamp, bl);
+  ::encode(end_stamp, bl);
+  ::encode(primary_up_from, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -1439,7 +1442,8 @@ void pg_interval_t::decode(bufferlist::iterator& bl)
   ::decode(up, bl);
   ::decode(acting, bl);
   ::decode(maybe_went_rw, bl);
-  ::decode(start_stamp, bl);
+  ::decode(end_stamp, bl);
+  ::decode(primary_up_from, bl);
   DECODE_FINISH(bl);
 }
 
@@ -1455,7 +1459,8 @@ void pg_interval_t::dump(Formatter *f) const
   f->open_array_section("acting");
   for (vector<int>::const_iterator p = acting.begin(); p != acting.end(); ++p)
     f->dump_int("osd", *p);
-  f->dump_stream("start_stamp") << duration;
+  f->dump_stream("end_stamp") << duration;
+  f->dump_unsigned("primary_up_from", primary_up_from);
   f->close_section();
 }
 
@@ -1469,7 +1474,8 @@ void pg_interval_t::generate_test_instances(list<pg_interval_t*>& o)
   o.back()->first = 4;
   o.back()->last = 5;
   o.back()->maybe_went_rw = true;
-  o.back()->start_stamp = utime_t(22, 23);
+  o.back()->end_stamp = utime_t(22, 23);
+  o.back()->primary_up_from = 1322;
 }
 
 bool pg_interval_t::check_new_interval(
@@ -1495,7 +1501,9 @@ bool pg_interval_t::check_new_interval(
     i.last = osdmap->get_epoch() - 1;
     i.acting = old_acting;
     i.up = old_up;
-    i.start_stamp = osdmap->get_modified();
+    i.end_stamp = osdmap->get_modified();
+    if (old_acting.size())
+      i.primary_up_from = lastmap->get_osd_info(old_acting[0])->up_from;
 
     if (i.acting.size() >=
 	osdmap->get_pools().find(pool_id)->second.min_size) {
