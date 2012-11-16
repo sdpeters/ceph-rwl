@@ -16,6 +16,19 @@ RGWEnv::~RGWEnv()
   delete conf;
 }
 
+void RGWEnv::init(CephContext *cct)
+{
+  conf->init(cct, this);
+}
+
+
+void RGWEnv::set(const char *name, const char *val)
+{
+  if (!val)
+    val = "";
+  env_map[name] = val;
+}
+
 void RGWEnv::init(CephContext *cct, char **envp)
 {
   const char *p;
@@ -32,12 +45,12 @@ void RGWEnv::init(CephContext *cct, char **envp)
     env_map[name] = val;
   }
 
-  conf->init(cct, this);
+  init(cct);
 }
 
 const char *RGWEnv::get(const char *name, const char *def_val)
 {
-  map<string, string>::iterator iter = env_map.find(name);
+  map<string, string, ltstr_nocase>::iterator iter = env_map.find(name);
   if (iter == env_map.end())
     return def_val;
 
@@ -46,7 +59,7 @@ const char *RGWEnv::get(const char *name, const char *def_val)
 
 int RGWEnv::get_int(const char *name, int def_val)
 {
-  map<string, string>::iterator iter = env_map.find(name);
+  map<string, string, ltstr_nocase>::iterator iter = env_map.find(name);
   if (iter == env_map.end())
     return def_val;
 
@@ -56,7 +69,7 @@ int RGWEnv::get_int(const char *name, int def_val)
 
 bool RGWEnv::get_bool(const char *name, bool def_val)
 {
-  map<string, string>::iterator iter = env_map.find(name);
+  map<string, string, ltstr_nocase>::iterator iter = env_map.find(name);
   if (iter == env_map.end())
     return def_val;
 
@@ -66,7 +79,7 @@ bool RGWEnv::get_bool(const char *name, bool def_val)
 
 size_t RGWEnv::get_size(const char *name, size_t def_val)
 {
-  map<string, string>::iterator iter = env_map.find(name);
+  map<string, string, ltstr_nocase>::iterator iter = env_map.find(name);
   if (iter == env_map.end())
     return def_val;
 

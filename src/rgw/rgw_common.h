@@ -28,6 +28,8 @@
 #include "include/types.h"
 #include "include/utime.h"
 
+#include "rgw_string.h"
+
 using namespace std;
 
 namespace ceph {
@@ -233,17 +235,21 @@ class XMLArgs
 class RGWConf;
 
 class RGWEnv {
-  std::map<string, string> env_map;
+  std::map<string, string, ltstr_nocase> env_map;
 public:
   RGWConf *conf; 
 
   RGWEnv();
   ~RGWEnv();
+  void init(CephContext *cct);
   void init(CephContext *cct, char **envp);
+  void set(const char *name, const char *val);
   const char *get(const char *name, const char *def_val = NULL);
   int get_int(const char *name, int def_val = 0);
   bool get_bool(const char *name, bool def_val = 0);
   size_t get_size(const char *name, size_t def_val = 0);
+
+  std::map<string, string, ltstr_nocase>& get_map() { return env_map; }
 };
 
 class RGWConf {

@@ -38,13 +38,63 @@ static struct rgw_http_attr rgw_to_http_attr_list[] = {
   { NULL, NULL},
 };
 
+static struct http_code_list {
+  int code;
+  const char *name;
+} http_codes[] = {
+  { 100, "Continue" },
+  { 200, "OK" },
+  { 201, "Created" },
+  { 202, "Accepted" },
+  { 204, "No Content" },
+  { 205, "Reset Content" },
+  { 206, "Partial Content" },
+  { 207, "Multi Status" },
+  { 208, "Already Reported" },
+  { 300, "Multiple Choices" },
+  { 302, "Found" },
+  { 303, "See Other" },
+  { 304, "Not Modified" },
+  { 305, "User Proxy" },
+  { 306, "Switch Proxy" },
+  { 307, "Temporary Redirect" },
+  { 308, "Permanent Redirect" },
+  { 400, "Bad Request" },
+  { 401, "Unauthorized" },
+  { 402, "Payment Required" },
+  { 403, "Forbidden" },
+  { 404, "Not Found" },
+  { 405, "Method Not Allowed" },
+  { 406, "Not Acceptable" },
+  { 407, "Proxy Authentication Required" },
+  { 408, "Request Timeout" },
+  { 409, "Conflict" },
+  { 410, "Gone" },
+  { 411, "Length Required" },
+  { 412, "Precondition Failed" },
+  { 413, "Request Entity Too Large" },
+  { 414, "Request-URI Too Long" },
+  { 415, "Unsupported Media Type" },
+  { 416, "Requested Range Not Satisfiable" },
+  { 417, "Expectation Failed" },
+  { 422, "Unprocessable Entity" },
+  { 500, "Internal Server Error" },
+  { 0, NULL },
+};
+
 
 map<string, string> rgw_to_http_attrs;
+
+map<int, const char *> http_status_names;
 
 void rgw_rest_init()
 {
   for (struct rgw_http_attr *attr = rgw_to_http_attr_list; attr->rgw_attr; attr++) {
     rgw_to_http_attrs[attr->rgw_attr] = attr->http_attr;
+  }
+
+  for (struct http_code_list *h = http_codes; h->code; h++) {
+    http_status_names[h->code] = h->name;
   }
 }
 
@@ -66,11 +116,11 @@ struct generic_attr generic_attrs[] = {
   { NULL, NULL },
 };
 
-static void dump_status(struct req_state *s, const char *status)
+static void dump_status(struct req_state *s, const char *status, const char *status_name)
 {
-  int r = s->cio->print("Status: %s\n", status);
+  int r = s->cio->send_status(status, status_name);
   if (r < 0) {
-    ldout(s->cct, 0) << "ERROR: s->cio->print() returned err=" << r << dendl;
+    ldout(s->cct, 0) << "ERROR: s->cio->send_status() returned err=" << r << dendl;
   }
 }
 
@@ -127,14 +177,14 @@ void dump_errno(struct req_state *s)
 {
   char buf[32];
   snprintf(buf, sizeof(buf), "%d", s->err.http_ret);
-  dump_status(s, buf);
+  dump_status(s, buf, http_status_names[s->err.http_ret]);
 }
 
 void dump_errno(struct req_state *s, int err)
 {
   char buf[32];
   snprintf(buf, sizeof(buf), "%d", err);
-  dump_status(s, buf);
+  dump_status(s, buf, http_status_names[s->err.http_ret]);
 }
 
 void dump_content_length(struct req_state *s, size_t len)
@@ -293,9 +343,13 @@ void end_header(struct req_state *s, const char *content_type)
     s->formatter->close_section();
     dump_content_length(s, s->formatter->get_len());
   }
-  int r = s->cio->print("Content-type: %s\r\n\r\n", content_type);
+  int r = s->cio->print("Content-type: %s\r\n", content_type);
   if (r < 0) {
     ldout(s->cct, 0) << "ERROR: s->cio->print() returned err=" << r << dendl;
+  }
+  r = s->cio->complete_header();
+  if (r < 0) {
+    ldout(s->cct, 0) << "ERROR: s->cio->complete_header() returned err=" << r << dendl;
   }
   s->cio->set_account(true);
   rgw_flush_formatter_and_reset(s, s->formatter);
@@ -316,8 +370,7 @@ void abort_early(struct req_state *s, int err_no)
 
 void dump_continue(struct req_state *s)
 {
-  dump_status(s, "100");
-  s->cio->flush();
+  s->cio->send_100_continue();
 }
 
 void dump_range(struct req_state *s, uint64_t ofs, uint64_t end, uint64_t total)
@@ -805,23 +858,29 @@ struct str_len meta_prefixes[] = { STR_LEN_ENTRY("HTTP_X_AMZ"),
 
 static int init_meta_info(struct req_state *s)
 {
-  const char *p;
-
   s->x_meta_map.clear();
 
-  const char **envp = s->cio->envp();
+  RGWEnv& env = s->cio->get_env();
 
-  for (int i=0; (p = envp[i]); ++i) {
+  map<string, string, ltstr_nocase>& env_map = env.get_map();
+  map<string, string, ltstr_nocase>::iterator map_iter;
+
+
+  for (map_iter = env_map.begin(); map_iter != env_map.end(); ++map_iter) {
+    const string& name_str = map_iter->first;
+    string& val = map_iter->second;
+
+    const char *p = name_str.c_str();
     const char *prefix;
+
+    dout(20) << name_str << "=" << val << dendl;
+
     for (int prefix_num = 0; (prefix = meta_prefixes[prefix_num].str) != NULL; prefix_num++) {
       int len = meta_prefixes[prefix_num].len;
       if (strncmp(p, prefix, len) == 0) {
         dout(10) << "meta>> " << p << dendl;
         const char *name = p+len; /* skip the prefix */
-        const char *eq = strchr(name, '=');
-        if (!eq) /* shouldn't happen! */
-          continue;
-        int name_len = eq - name;
+        int name_len = name_str.size() - len;
 
         if (strncmp(name, "_META_", name_len) == 0)
           s->has_bad_meta = true;
@@ -836,8 +895,6 @@ static int init_meta_info(struct req_state *s)
             name_low[j] = '-';
         }
         name_low[j] = 0;
-        string val;
-        line_unfold(eq + 1, val);
 
         map<string, string>::iterator iter;
         iter = s->x_meta_map.find(name_low);

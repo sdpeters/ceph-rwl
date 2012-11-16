@@ -1,17 +1,23 @@
-#ifndef CEPH_RGW_FCGI_H
-#define CEPH_RGW_FCGI_H
+#ifndef CEPH_RGW_MONGOOSE_H
+#define CEPH_RGW_MONGOOSE_H
 
 #include "rgw_client_io.h"
 
 
-struct FCGX_Request;
+struct mg_connection;
 
 
-class RGWFCGX : public RGWClientIO
+class RGWMongoose : public RGWClientIO
 {
-  FCGX_Request *fcgx;
+  mg_connection *conn;
+
+  bufferlist header_data;
+
+  bool sent_header;
+
 protected:
   void init_env(CephContext *cct);
+
   int write_data(const char *buf, int len);
   int read_data(char *buf, int len);
 
@@ -20,7 +26,7 @@ protected:
   int complete_header();
 
 public:
-  RGWFCGX(FCGX_Request *_fcgx) : fcgx(_fcgx) {}
+  RGWMongoose(mg_connection *_conn);
   void flush();
 };
 

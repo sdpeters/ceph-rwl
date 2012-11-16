@@ -331,6 +331,7 @@ librgw_a_SOURCES =  \
 	rgw/rgw_acl_swift.cc \
 	rgw/rgw_client_io.cc \
 	rgw/rgw_fcgi.cc \
+	rgw/rgw_mongoose.cc \
 	rgw/rgw_xml.cc \
 	rgw/rgw_usage.cc \
 	rgw/rgw_json.cc \
@@ -357,6 +358,7 @@ my_radosgw_ldadd = \
        $(PTHREAD_LIBS) -lm $(CRYPTO_LIBS) $(EXTRALIBS)
 
 radosgw_SOURCES = \
+	mongoose/mongoose.c \
 	rgw/rgw_resolve.cc \
         rgw/rgw_rest.cc \
         rgw/rgw_rest_swift.cc \
@@ -1827,6 +1829,7 @@ noinst_HEADERS = \
 	rgw/rgw_acl_swift.h\
 	rgw/rgw_client_io.h\
 	rgw/rgw_fcgi.h\
+	rgw/rgw_mongoose.h\
 	rgw/rgw_xml.h\
 	rgw/rgw_json.h\
 	rgw/rgw_cache.h\
@@ -1853,6 +1856,7 @@ noinst_HEADERS = \
 	rgw/rgw_tools.h\
 	rgw/rgw_usage.h\
 	rgw/rgw_user.h\
+	mongoose/mongoose.h\
 	sample.ceph.conf\
 	tools/common.h\
 	test/osd/RadosModel.h\
