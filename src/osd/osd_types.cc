@@ -1460,7 +1460,7 @@ void pg_interval_t::dump(Formatter *f) const
   f->open_array_section("acting");
   for (vector<int>::const_iterator p = acting.begin(); p != acting.end(); ++p)
     f->dump_int("osd", *p);
-  f->dump_stream("end_stamp") << duration;
+  f->dump_stream("end_stamp") << end_stamp;
   f->dump_unsigned("primary_up_from", primary_up_from);
   f->close_section();
 }
@@ -1504,7 +1504,7 @@ bool pg_interval_t::check_new_interval(
     i.up = old_up;
     i.end_stamp = osdmap->get_modified();
     if (old_acting.size())
-      i.primary_up_from = lastmap->get_osd_info(old_acting[0])->up_from;
+      i.primary_up_from = lastmap->get_info(old_acting[0]).up_from;
 
     if (i.acting.size() >=
 	osdmap->get_pools().find(pool_id)->second.min_size) {

@@ -1795,7 +1795,9 @@ void OSD::_add_heartbeat_peer(int p)
     hi->con = con.get();
     hi->con->get();
     hi->peer = p;
-    hi->con->set_priv(new HeartbeatSession(p));
+    HeartbeatSession *s = new HeartbeatSession(p);
+    s->info = _get_peer_liveness(p, osdmap->get_info(p).up_from);
+    hi->con->set_priv(s);
     dout(10) << "_add_heartbeat_peer: new peer osd." << p
 	     << " " << hi->con->get_peer_addr() << dendl;
   } else {
@@ -1929,17 +1931,17 @@ void OSD::handle_osd_ping(MOSDPing *m)
 	}
       }
 
-      HeartbeatSession *s = con->get_priv();
-      if (s) {
-	s->last_ack = ceph_clock_now(g_ceph_context);
-      } else {
+      Connection *con = m->get_connection();
+      HeartbeatSession *s = (HeartbeatSession*)con->get_priv();
+      if (!s) {
 	s = new HeartbeatSession(-1);
+	s->info = _get_peer_liveness(m->get_source().num(), m->up_from);
 	s->get();
 	s->client = make_pair(m->get_source().num(), m->up_from);
-	heartbeat_clients[s->client].insert(s);
 	con->set_priv(s);
 	dout(20) << "handle_osd_ping new client session for " << con->get_peer_addr() << " " << s->client << " " << s << dendl;
       }
+      s->info->last_tx_ack = ceph_clock_now(g_ceph_context);
     }
     break;
 
@@ -2040,41 +2042,35 @@ void OSD::heartbeat_check()
   }
 
   // trim old server sessions
-  utime_t cutoff = ceph_clock_now(g_ceph_context);
-  cutoff -= g_conf->osd_heartbeat_read_interval;
-  list<HeartbeatSession*>::iterator p = heartbeat_clients_closed.begin();
-  while (p != heartbeat_clients_closed.end()) {
-    HeartbeatSession *s = *p;
-    if (s->last_ack >= cutoff)
-      break;
-    dout(20) << "heartbeat_check trimming closed session " << s << dendl;
-    heartbeat_clients_closed.erase(p++);
-
-    map<pair<int,epoch_t>, set<HeartbeatSession*> >::iterator q = heartbeat_clients.find(s->client);
-    assert(q != heartbeat_clients.end());
-    q->second.erase(s);
-    if (q->second.empty())
-      heartbeat_clients.erase(q);
-
-    s->put();
+  {
+    utime_t cutoff = ceph_clock_now(g_ceph_context);
+    cutoff -= g_conf->osd_heartbeat_read_interval;
+    list<HeartbeatSession*>::iterator p = heartbeat_clients_closed.begin();
+    while (p != heartbeat_clients_closed.end()) {
+      HeartbeatSession *s = *p;
+      if (s->info->last_rx_ack >= cutoff ||
+	  s->info->last_tx_ack >= cutoff)
+	break;
+      dout(20) << "heartbeat_check trimming closed session " << s << dendl;
+      heartbeat_clients_closed.erase(p++);
+      s->put();
+    }
   }
 }
 
-utime_t OSD::get_last_hb_ack(int peer, epoch_t up_from)
+OSD::LivenessInfoRef OSD::get_peer_liveness(int peer, epoch_t up_from)
 {
   Mutex::Locker l(heartbeat_lock);
-  map<pair<int,epoch_t>,set<HeartbeatSession*> >::iterator p = heartbeat_clients.find(make_pair(peer, up_from));
-  if (p == heartbeat_clients.end())
-    return utime_t();
-  set<HeartSession*>::iterator q = p->second.begin();
-  utime_t min = (*q)->last_ack;
-  while (++q != heartbeat_clients.end()) {
-    if ((*q)->last_ack > min) {
-      min = (*q)->last_ack;
-    }
+  return _get_peer_liveness(peer, up_from);
+}
+
+OSD::LivenessInfoRef OSD::_get_peer_liveness(int peer, epoch_t up_from)
+{
+  map<pair<int,epoch_t>,LivenessInfoRef>::iterator p = heartbeat_peer_info.find(make_pair(peer, up_from));
+  if (p == heartbeat_peer_info.end()) {
+    p = heartbeat_peer_info.insert(make_pair(make_pair(peer, up_from), new LivenessInfo));
   }
-  dout(20) << "get_last_hb_ack " << peer << "," << up_from << " " << min << dendl;
-  return min;
+  return p->second;
 }
 
 void OSD::heartbeat()
@@ -3838,13 +3834,13 @@ void OSD::handle_osd_map(MOSDMap *m)
       hbclient_messenger->mark_down_all();
 
       if (hbserver_messenger_previous) {
-	hbserver_messenger_prevoius->mark_down_all();
+	hbserver_messenger_previous->mark_down_all();
 	hbserver_messenger_previous->shutdown();
 	// FIXME: don't leak!
       }
       hbserver_messenger_previous = hbserver_messenger;
       hbserver_messenger = create_hbserver_messenger(whoami, nonce);
-      entity_addr_t hb_addr = hbserver_messenger_previous->get_addr();
+      entity_addr_t hb_addr = hbserver_messenger_previous->get_myaddr();
       hb_addr.set_port(0);
       r = hbserver_messenger->bind(hb_addr);
       if (r != 0)

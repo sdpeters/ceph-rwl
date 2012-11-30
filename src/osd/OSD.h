@@ -501,6 +501,12 @@ public:
 
 private:
   // -- heartbeat --
+  /// liveness information about a peer, both acks sent and received.
+  struct LivenessInfo {
+    utime_t last_tx_ack; ///< last ping ack we sent
+    utime_t last_rx_ack; ///< last ping ack we received
+  };
+  typedef boost::shared_ptr<LivenessInfo> LivenessInfoRef;
   /// information about a heartbeat peer
   struct HeartbeatInfo {
     int peer;           ///< peer
@@ -513,9 +519,9 @@ private:
   /// state attached to incoming or outgoing heartbeat connections
   struct HeartbeatSession : public RefCountedObject {
     int peer;           ///< if >= 0, we are a client connecting to this peer.
-    utime_t last_ack;
     bool closed;
     pair<int,epoch_t> client;  ///< client (osd, up_from)
+    LivenessInfoRef info;
 
     HeartbeatSession(int p) : peer(p), closed(false) {}
 
@@ -535,7 +541,7 @@ private:
   map<int,HeartbeatInfo> heartbeat_peers;  ///< map of osd id to HeartbeatInfo
   utime_t last_mon_heartbeat;
   Messenger *hbclient_messenger, *hbserver_messenger, *hbserver_messenger_previous;
-  map<pair<int,epoch_t>,set<HeartbeatSession*> > heartbeat_clients;  ///< (epoch, up_from) -> sessions...
+  map<pair<int,epoch_t>,LivenessInfoRef> heartbeat_peer_info;        ///< (epoch, up_from) -> sessions...
   list<HeartbeatSession*> heartbeat_clients_closed;                  ///< closed sessions
   
   void _add_heartbeat_peer(int p);
@@ -547,6 +553,8 @@ private:
   void heartbeat_entry();
   void need_heartbeat_peer_update();
   utime_t get_last_hb_ack(int peer, epoch_t up_from);
+  LivenessInfoRef _get_peer_liveness(int peer, epoch_t up_from);
+  LivenessInfoRef get_peer_liveness(int peer, epoch_t up_from);
 
   struct T_Heartbeat : public Thread {
     OSD *osd;
@@ -1391,7 +1399,7 @@ public:
   void suicide(int exitcode);
   int shutdown();
 
-  static Messenger *create_hbserver_messenger();
+  static Messenger *create_hbserver_messenger(int whoami, uint64_t nonce);
 
   void handle_signal(int signum);
 
