@@ -761,11 +761,12 @@ int RGWRados::create_pool(rgw_bucket& bucket)
  */
 int RGWRados::create_bucket(string& owner, rgw_bucket& bucket, 
 			    map<std::string, bufferlist>& attrs, 
+                            const string& preferred_placement,
 			    bool exclusive)
 {
   int ret = 0;
 
-  ret = select_bucket_placement(bucket.name, bucket);
+  ret = select_bucket_placement(bucket.name, bucket, preferred_placement);
   if (ret < 0)
     return ret;
   librados::IoCtx io_ctx; // context for new bucket
@@ -823,7 +824,7 @@ int RGWRados::store_bucket_info(RGWBucketInfo& info, map<string, bufferlist> *pa
 }
 
 
-int RGWRados::select_bucket_placement(string& bucket_name, rgw_bucket& bucket)
+int RGWRados::select_bucket_placement(string& bucket_name, rgw_bucket& bucket, const string& requested_placement)
 {
   bufferlist map_bl;
   map<string, bufferlist> m;
@@ -876,6 +877,12 @@ read_omap:
   }
 
   map<string, bufferlist>::iterator miter;
+
+  if (requested_placement.size() && m.find(requested_placement) != m.end()) {
+    pool_name = requested_placement;
+    goto done;
+  }
+
   if (m.size() > 1) {
     vector<string> v;
     for (miter = m.begin(); miter != m.end(); ++miter) {
@@ -893,6 +900,7 @@ read_omap:
     miter = m.begin();
     pool_name = miter->first;
   }
+done:
   bucket.pool = pool_name;
   bucket.name = bucket_name;
 

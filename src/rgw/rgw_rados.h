@@ -365,7 +365,7 @@ class RGWRados
   int complete_atomic_overwrite(RGWRadosCtx *rctx, RGWObjState *state, rgw_obj& obj);
 
   int update_placement_map();
-  int select_bucket_placement(std::string& bucket_name, rgw_bucket& bucket);
+  int select_bucket_placement(std::string& bucket_name, rgw_bucket& bucket, const string& preferred_placement);
   int store_bucket_info(RGWBucketInfo& info, map<string, bufferlist> *pattrs, bool exclusive);
 
 protected:
@@ -455,6 +455,7 @@ public:
    */
   virtual int create_bucket(string& owner, rgw_bucket& bucket,
                             map<std::string,bufferlist>& attrs,
+			    const string& preferred_placement,
                             bool exclusive = true);
   virtual int add_bucket_placement(std::string& new_pool);
   virtual int remove_bucket_placement(std::string& new_pool);

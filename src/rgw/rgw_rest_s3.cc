@@ -311,6 +311,10 @@ int RGWCreateBucket_ObjStore_S3::get_params()
   if (r < 0)
     return r;
 
+  const char *loc = s->env->get("HTTP_X_RGW_PLACEMENT");
+  if (loc)
+    preferred_placement = loc;
+
   policy = s3policy;
 
   return 0;

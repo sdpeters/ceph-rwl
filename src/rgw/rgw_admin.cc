@@ -435,7 +435,9 @@ static int create_bucket(string bucket_str, string& user_id, string& display_nam
 
   rgw_bucket& bucket = bucket_info.bucket;
 
-  ret = store->create_bucket(user_id, bucket, attrs);
+  string preferred_placement;
+
+  ret = store->create_bucket(user_id, bucket, attrs, preferred_placement);
   if (ret && ret != -EEXIST)   
     goto done;
 

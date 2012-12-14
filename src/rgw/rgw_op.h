@@ -220,6 +220,7 @@ class RGWCreateBucket : public RGWOp {
 protected:
   int ret;
   RGWAccessControlPolicy policy;
+  string preferred_placement;
 
 public:
   RGWCreateBucket() : ret(0) {}
