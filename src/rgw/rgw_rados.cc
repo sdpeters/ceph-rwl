@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <sys/types.h>
 
+#include "common/ceph_json.h"
+
 #include "common/errno.h"
 #include "common/Formatter.h"
 #include "common/Throttle.h"
@@ -54,7 +56,7 @@ static RGWObjCategory main_category = RGW_OBJ_CATEGORY_MAIN;
 
 #define RGW_USAGE_OBJ_PREFIX "usage."
 
-#define RGW_DEFAULT_zone_ROOT_POOL ".rgw.root"
+#define RGW_DEFAULT_ZONE_ROOT_POOL ".rgw.root"
 
 
 #define dout_subsys ceph_subsys_rgw
@@ -89,11 +91,25 @@ void RGWRadosParams::dump(Formatter *f) const
   f->close_section();
 }
 
+void RGWRadosParams::decode_json(JSONObj *obj)
+{
+  JSONDecoder::decode_json("domain_root", domain_root.pool, obj);
+  JSONDecoder::decode_json("control_pool", control_pool.pool, obj);
+  JSONDecoder::decode_json("gc_pool", gc_pool.pool, obj);
+  JSONDecoder::decode_json("log_pool", log_pool.pool, obj);
+  JSONDecoder::decode_json("intent_log_pool", intent_log_pool.pool, obj);
+  JSONDecoder::decode_json("usage_log_pool", usage_log_pool.pool, obj);
+  JSONDecoder::decode_json("user_keys_pool", user_keys_pool.pool, obj);
+  JSONDecoder::decode_json("user_email_pool", user_email_pool.pool, obj);
+  JSONDecoder::decode_json("user_swift_pool", user_swift_pool.pool, obj);
+  JSONDecoder::decode_json("user_uid_pool ", user_uid_pool.pool, obj);
+}
+
 int RGWRadosParams::init(CephContext *cct, RGWRados *store)
 {
   string pool_name = cct->_conf->rgw_zone_root_pool;
   if (pool_name.empty())
-    pool_name = RGW_DEFAULT_zone_ROOT_POOL;
+    pool_name = RGW_DEFAULT_ZONE_ROOT_POOL;
 
   rgw_bucket pool(pool_name.c_str());
   bufferlist bl;
@@ -115,6 +131,21 @@ int RGWRadosParams::init(CephContext *cct, RGWRados *store)
   }
 
   return 0;
+}
+
+int RGWRadosParams::store_info(CephContext *cct, RGWRados *store)
+{
+  string pool_name = cct->_conf->rgw_zone_root_pool;
+  if (pool_name.empty())
+    pool_name = RGW_DEFAULT_ZONE_ROOT_POOL;
+
+  rgw_bucket pool(pool_name.c_str());
+
+  bufferlist bl;
+  ::encode(*this, bl);
+  int ret = rgw_put_system_obj(store, pool, zone_info_oid, bl.c_str(), bl.length(), false, NULL);
+
+  return ret;
 }
 
 void RGWObjManifest::append(RGWObjManifest& m)
