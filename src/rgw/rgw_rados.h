@@ -246,6 +246,7 @@ struct RGWRadosParams {
 
   int init(CephContext *cct, RGWRados *store);
   void init_default();
+  int store_info(CephContext *cct, RGWRados *store);
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
@@ -277,6 +278,7 @@ struct RGWRadosParams {
     DECODE_FINISH(bl);
   }
   void dump(Formatter *f) const;
+  void decode_json(JSONObj *obj);
 };
 WRITE_CLASS_ENCODER(RGWRadosParams);
   
