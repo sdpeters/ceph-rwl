@@ -645,7 +645,7 @@ static int remove_bucket(RGWRados *store, rgw_bucket& bucket, bool delete_childr
   obj.bucket = bucket;
   int max = 1000;
 
-  ret = rgw_get_obj(store, NULL, store->params.domain_root, bucket.name, bl, NULL);
+  ret = rgw_get_obj(store, NULL, store->zone.domain_root, bucket.name, bl, NULL);
 
   bufferlist::iterator iter = bl.begin();
   try {
@@ -1868,25 +1868,25 @@ next:
   }
 
   if (opt_cmd == OPT_ZONE_INFO) {
-    store->params.dump(formatter);
+    store->zone.dump(formatter);
     formatter->flush(cout);
   }
 
   if (opt_cmd == OPT_ZONE_SET) {
-    RGWRadosParams params;
-    params.init_default();
-    int ret = read_decode_json(infile, params);
+    RGWZoneParams zone;
+    zone.init_default();
+    int ret = read_decode_json(infile, zone);
     if (ret < 0) {
       return 1;
     }
 
-    ret = params.store_info(g_ceph_context, store);
+    ret = zone.store_info(g_ceph_context, store);
     if (ret < 0) {
       cerr << "ERROR: couldn't store zone info: " << cpp_strerror(-ret) << std::endl;
       return 1;
     }
 
-    params.dump(formatter);
+    zone.dump(formatter);
     formatter->flush(cout);
   }
 
