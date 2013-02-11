@@ -148,6 +148,30 @@ ceph_test_cls_hello_LDADD = \
 ceph_test_cls_hello_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 bin_DEBUGPROGRAMS += ceph_test_cls_hello
 
+LUA_TEST_H=test/cls_lua/test_script.h
+LUA_TEST_L=test/cls_lua/test_script.lua
+
+EXTRA_DIST += $(LUA_TEST_L)
+BUILT_SOURCES += $(LUA_TEST_H)
+CLEANFILES += $(LUA_TEST_H)
+
+txt2str_SOURCES = test/cls_lua/txt2str.cc
+noinst_PROGRAMS += txt2str
+
+$(LUA_TEST_H): $(LUA_TEST_L) txt2str
+	$(top_builddir)/src/txt2str $(LUA_TEST_L) cls_lua_test_script > $@
+
+if HAVE_LUA
+ceph_test_cls_lua_SOURCES = \
+	test/cls_lua/test_cls_lua.cc \
+	test/librados/test.cc \
+	$(LUA_TEST_H)
+ceph_test_cls_lua_LDADD = $(LIBRADOS) libcls_lua_client.la $(LIBCOMMON) \
+    $(UNITTEST_LDADD) $(RADOS_TEST_LDADD) $(LUA_LIBS)
+ceph_test_cls_lua_CXXFLAGS = $(LUA_CFLAGS) $(UNITTEST_CXXFLAGS)
+bin_DEBUGPROGRAMS += ceph_test_cls_lua
+endif
+
 ceph_test_rados_api_cmd_SOURCES = test/librados/cmd.cc
 ceph_test_rados_api_cmd_LDADD = \
 	$(LIBCOMMON) $(LIBRADOS) $(CRYPTO_LIBS) \

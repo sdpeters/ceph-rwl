@@ -48,6 +48,18 @@ DENCODER_DEPS += libcls_user_client.a
 
 noinst_LIBRARIES += libcls_user_client.a
 
+if HAVE_LUA
+libcls_lua_client_la_SOURCES = \
+	cls/lua/cls_lua_client.cc \
+	cls/lua/lua_bufferlist.cc \
+	cls/lua/lua_cmsgpack.c \
+	cls/lua/cls_lua_client.hpp
+libcls_lua_client_la_CFLAGS = $(LUA_CFLAGS)
+libcls_lua_client_la_CXXFLAGS = $(AM_CXXFLAGS) $(LUA_CFLAGS)
+libcls_lua_client_la_LIBADD = $(LUA_LIBS)
+noinst_LTLIBRARIES += libcls_lua_client.la
+endif
+
 noinst_HEADERS += \
 	cls/lock/cls_lock_types.h \
 	cls/lock/cls_lock_ops.h \

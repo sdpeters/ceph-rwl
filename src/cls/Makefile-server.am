@@ -57,4 +57,18 @@ libcls_rgw_la_SOURCES = \
 libcls_rgw_la_LIBADD = libjson_spirit.la $(PTHREAD_LIBS) $(EXTRALIBS)
 libcls_rgw_la_LDFLAGS = ${AM_LDFLAGS} -module -avoid-version -shared -export-symbols-regex '.*__cls_.*'
 radoslib_LTLIBRARIES += libcls_rgw.la
+
+if HAVE_LUA
+libcls_lua_la_SOURCES = \
+	cls/lua/cls_lua.cc \
+	cls/lua/cls_lua.h \
+	cls/lua/lua_bufferlist.cc \
+	cls/lua/lua_cmsgpack.c
+libcls_lua_la_CFLAGS = $(LUA_CFLAGS) $(AM_CFLAGS)
+libcls_lua_la_CXXFLAGS = $(LUA_CFLAGS) $(AM_CXXFLAGS)
+libcls_lua_la_LIBADD = $(LUA_LIBS)
+libcls_lua_la_LDFLAGS = ${AM_LDFLAGS} -version-info 1:0:0 -export-symbols-regex '.*__cls_.*'
+radoslib_LTLIBRARIES += libcls_lua.la
+endif
+
 endif # WITH_OSD
