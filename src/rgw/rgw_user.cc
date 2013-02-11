@@ -82,14 +82,14 @@ int rgw_store_user_info(RGWRados *store, RGWUserInfo& info, RGWUserInfo *old_inf
   ::encode(ui, data_bl);
   ::encode(info, data_bl);
 
-  ret = rgw_put_system_obj(store, store->params.user_uid_pool, info.user_id, data_bl.c_str(), data_bl.length(), exclusive);
+  ret = rgw_put_system_obj(store, store->zone.user_uid_pool, info.user_id, data_bl.c_str(), data_bl.length(), exclusive);
   if (ret < 0)
     return ret;
 
   if (info.user_email.size()) {
     if (!old_info ||
         old_info->user_email.compare(info.user_email) != 0) { /* only if new index changed */
-      ret = rgw_put_system_obj(store, store->params.user_email_pool, info.user_email, link_bl.c_str(), link_bl.length(), exclusive);
+      ret = rgw_put_system_obj(store, store->zone.user_email_pool, info.user_email, link_bl.c_str(), link_bl.length(), exclusive);
       if (ret < 0)
         return ret;
     }
@@ -102,7 +102,7 @@ int rgw_store_user_info(RGWRados *store, RGWUserInfo& info, RGWUserInfo *old_inf
       if (old_info && old_info->access_keys.count(iter->first) != 0)
 	continue;
 
-      ret = rgw_put_system_obj(store, store->params.user_keys_pool, k.id, link_bl.c_str(), link_bl.length(), exclusive);
+      ret = rgw_put_system_obj(store, store->zone.user_keys_pool, k.id, link_bl.c_str(), link_bl.length(), exclusive);
       if (ret < 0)
         return ret;
     }
@@ -114,7 +114,7 @@ int rgw_store_user_info(RGWRados *store, RGWUserInfo& info, RGWUserInfo *old_inf
     if (old_info && old_info->swift_keys.count(siter->first) != 0)
       continue;
 
-    ret = rgw_put_system_obj(store, store->params.user_swift_pool, k.id, link_bl.c_str(), link_bl.length(), exclusive);
+    ret = rgw_put_system_obj(store, store->zone.user_swift_pool, k.id, link_bl.c_str(), link_bl.length(), exclusive);
     if (ret < 0)
       return ret;
   }
@@ -152,7 +152,7 @@ int rgw_get_user_info_by_uid(RGWRados *store, string& uid, RGWUserInfo& info)
   bufferlist bl;
   RGWUID user_id;
 
-  int ret = rgw_get_obj(store, NULL, store->params.user_uid_pool, uid, bl);
+  int ret = rgw_get_obj(store, NULL, store->zone.user_uid_pool, uid, bl);
   if (ret < 0)
     return ret;
 
@@ -180,7 +180,7 @@ int rgw_get_user_info_by_uid(RGWRados *store, string& uid, RGWUserInfo& info)
  */
 int rgw_get_user_info_by_email(RGWRados *store, string& email, RGWUserInfo& info)
 {
-  return rgw_get_user_info_from_index(store, email, store->params.user_email_pool, info);
+  return rgw_get_user_info_from_index(store, email, store->zone.user_email_pool, info);
 }
 
 /**
@@ -189,7 +189,7 @@ int rgw_get_user_info_by_email(RGWRados *store, string& email, RGWUserInfo& info
  */
 extern int rgw_get_user_info_by_swift(RGWRados *store, string& swift_name, RGWUserInfo& info)
 {
-  return rgw_get_user_info_from_index(store, swift_name, store->params.user_swift_pool, info);
+  return rgw_get_user_info_from_index(store, swift_name, store->zone.user_swift_pool, info);
 }
 
 /**
@@ -198,7 +198,7 @@ extern int rgw_get_user_info_by_swift(RGWRados *store, string& swift_name, RGWUs
  */
 extern int rgw_get_user_info_by_access_key(RGWRados *store, string& access_key, RGWUserInfo& info)
 {
-  return rgw_get_user_info_from_index(store, access_key, store->params.user_keys_pool, info);
+  return rgw_get_user_info_from_index(store, access_key, store->zone.user_keys_pool, info);
 }
 
 static void get_buckets_obj(string& user_id, string& buckets_obj_id)
@@ -210,7 +210,7 @@ static void get_buckets_obj(string& user_id, string& buckets_obj_id)
 static int rgw_read_buckets_from_attr(RGWRados *store, string& user_id, RGWUserBuckets& buckets)
 {
   bufferlist bl;
-  rgw_obj obj(store->params.user_uid_pool, user_id);
+  rgw_obj obj(store->zone.user_uid_pool, user_id);
   int ret = store->get_attr(NULL, obj, RGW_ATTR_BUCKETS, bl);
   if (ret)
     return ret;
@@ -237,7 +237,7 @@ int rgw_read_user_buckets(RGWRados *store, string user_id, RGWUserBuckets& bucke
     string buckets_obj_id;
     get_buckets_obj(user_id, buckets_obj_id);
     bufferlist bl;
-    rgw_obj obj(store->params.user_uid_pool, buckets_obj_id);
+    rgw_obj obj(store->zone.user_uid_pool, buckets_obj_id);
     bufferlist header;
     map<string,bufferlist> m;
 
@@ -290,7 +290,7 @@ int rgw_write_buckets_attr(RGWRados *store, string user_id, RGWUserBuckets& buck
   bufferlist bl;
   buckets.encode(bl);
 
-  rgw_obj obj(store->params.user_uid_pool, user_id);
+  rgw_obj obj(store->zone.user_uid_pool, user_id);
 
   int ret = store->set_attr(NULL, obj, RGW_ATTR_BUCKETS, bl);
 
@@ -314,7 +314,7 @@ int rgw_add_bucket(RGWRados *store, string user_id, rgw_bucket& bucket)
     string buckets_obj_id;
     get_buckets_obj(user_id, buckets_obj_id);
 
-    rgw_obj obj(store->params.user_uid_pool, buckets_obj_id);
+    rgw_obj obj(store->zone.user_uid_pool, buckets_obj_id);
     ret = store->omap_set(obj, bucket_name, bl);
     if (ret < 0) {
       ldout(store->ctx(), 0) << "ERROR: error adding bucket to directory: "
@@ -355,7 +355,7 @@ int rgw_remove_user_bucket_info(RGWRados *store, string user_id, rgw_bucket& buc
     string buckets_obj_id;
     get_buckets_obj(user_id, buckets_obj_id);
 
-    rgw_obj obj(store->params.user_uid_pool, buckets_obj_id);
+    rgw_obj obj(store->zone.user_uid_pool, buckets_obj_id);
     ret = store->omap_del(obj, bucket.name);
     if (ret < 0) {
       ldout(store->ctx(), 0) << "ERROR: error removing bucket from directory: "
@@ -377,28 +377,28 @@ int rgw_remove_user_bucket_info(RGWRados *store, string user_id, rgw_bucket& buc
 
 int rgw_remove_key_index(RGWRados *store, RGWAccessKey& access_key)
 {
-  rgw_obj obj(store->params.user_keys_pool, access_key.id);
+  rgw_obj obj(store->zone.user_keys_pool, access_key.id);
   int ret = store->delete_obj(NULL, obj);
   return ret;
 }
 
 int rgw_remove_uid_index(RGWRados *store, string& uid)
 {
-  rgw_obj obj(store->params.user_uid_pool, uid);
+  rgw_obj obj(store->zone.user_uid_pool, uid);
   int ret = store->delete_obj(NULL, obj);
   return ret;
 }
 
 int rgw_remove_email_index(RGWRados *store, string& email)
 {
-  rgw_obj obj(store->params.user_email_pool, email);
+  rgw_obj obj(store->zone.user_email_pool, email);
   int ret = store->delete_obj(NULL, obj);
   return ret;
 }
 
 int rgw_remove_swift_name_index(RGWRados *store, string& swift_name)
 {
-  rgw_obj obj(store->params.user_swift_pool, swift_name);
+  rgw_obj obj(store->zone.user_swift_pool, swift_name);
   int ret = store->delete_obj(NULL, obj);
   return ret;
 }
@@ -445,7 +445,7 @@ int rgw_delete_user(RGWRados *store, RGWUserInfo& info) {
     }
   }
 
-  rgw_obj email_obj(store->params.user_email_pool, info.user_email);
+  rgw_obj email_obj(store->zone.user_email_pool, info.user_email);
   ldout(store->ctx(), 10) << "removing email index: " << info.user_email << dendl;
   ret = store->delete_obj(NULL, email_obj);
   if (ret < 0 && ret != -ENOENT) {
@@ -455,7 +455,7 @@ int rgw_delete_user(RGWRados *store, RGWUserInfo& info) {
 
   string buckets_obj_id;
   get_buckets_obj(info.user_id, buckets_obj_id);
-  rgw_obj uid_bucks(store->params.user_uid_pool, buckets_obj_id);
+  rgw_obj uid_bucks(store->zone.user_uid_pool, buckets_obj_id);
   ldout(store->ctx(), 10) << "removing user buckets index" << dendl;
   ret = store->delete_obj(NULL, uid_bucks);
   if (ret < 0 && ret != -ENOENT) {
@@ -463,7 +463,7 @@ int rgw_delete_user(RGWRados *store, RGWUserInfo& info) {
     return ret;
   }
   
-  rgw_obj uid_obj(store->params.user_uid_pool, info.user_id);
+  rgw_obj uid_obj(store->zone.user_uid_pool, info.user_id);
   ldout(store->ctx(), 10) << "removing user index: " << info.user_id << dendl;
   ret = store->delete_obj(NULL, uid_obj);
   if (ret < 0 && ret != -ENOENT) {
