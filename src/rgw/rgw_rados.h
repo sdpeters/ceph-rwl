@@ -231,7 +231,7 @@ struct RGWPoolIterCtx {
   librados::ObjectIterator iter;
 };
 
-struct RGWRadosParams {
+struct RGWZoneParams {
   rgw_bucket domain_root;
   rgw_bucket control_pool;
   rgw_bucket gc_pool;
@@ -280,7 +280,7 @@ struct RGWRadosParams {
   void dump(Formatter *f) const;
   void decode_json(JSONObj *obj);
 };
-WRITE_CLASS_ENCODER(RGWRadosParams);
+WRITE_CLASS_ENCODER(RGWZoneParams);
   
 class RGWRados
 {
@@ -385,7 +385,7 @@ public:
                cct(NULL), rados(NULL),
                pools_initialized(false) {}
 
-  RGWRadosParams params;
+  RGWZoneParams zone;
 
   virtual ~RGWRados() {
     if (rados) {
