@@ -195,16 +195,13 @@ void RGWCacheNotifyInfo::dump(Formatter *f) const
 
 void RGWAccessKey::dump(Formatter *f) const
 {
-  f->open_object_section("key");
   f->dump_string("access_key", id);
   f->dump_string("secret_key", key);
   f->dump_string("subuser", subuser);
-  f->close_section();
 }
 
 void RGWAccessKey::dump(Formatter *f, const string& user, bool swift) const
 {
-  f->open_object_section("key");
   string u = user;
   if (!subuser.empty()) {
     u.append(":");
@@ -215,7 +212,6 @@ void RGWAccessKey::dump(Formatter *f, const string& user, bool swift) const
     f->dump_string("access_key", id);
   }
   f->dump_string("secret_key", key);
-  f->close_section();
 }
 
 void RGWAccessKey::decode_json(JSONObj *obj) {
@@ -292,17 +288,14 @@ static void perm_to_str(uint32_t mask, char *buf, int len)
 
 void RGWSubUser::dump(Formatter *f) const
 {
-  f->open_object_section("subuser");
   f->dump_string("id", name);
   char buf[256];
   perm_to_str(perm_mask, buf, sizeof(buf));
   f->dump_string("permissions", buf);
-  f->close_section();
 }
 
 void RGWSubUser::dump(Formatter *f, const string& user) const
 {
-  f->open_object_section("subuser");
   string s = user;
   s.append(":");
   s.append(name);
@@ -310,7 +303,6 @@ void RGWSubUser::dump(Formatter *f, const string& user) const
   char buf[256];
   perm_to_str(perm_mask, buf, sizeof(buf));
   f->dump_string("permissions", buf);
-  f->close_section();
 }
 
 static uint32_t str_to_perm(const string& s)
@@ -353,25 +345,31 @@ void RGWUserInfo::dump(Formatter *f) const
   map<string, RGWSubUser>::const_iterator siter = subusers.begin();
   f->open_array_section("subusers");
   for (; siter != subusers.end(); ++siter) {
+    f->open_object_section("subuser");
     siter->second.dump(f, user_id);
+    f->close_section();
   }
   f->close_section();
 
   map<string, RGWAccessKey>::const_iterator aiter = access_keys.begin();
   f->open_array_section("keys");
   for (; aiter != access_keys.end(); ++aiter) {
+    f->open_object_section("key");
     aiter->second.dump(f, user_id, false);
+    f->close_section();
   }
   f->close_section();
 
   aiter = swift_keys.begin();
   f->open_array_section("swift_keys");
   for (; aiter != swift_keys.end(); ++aiter) {
+    f->open_object_section("key");
     aiter->second.dump(f, user_id, true);
+    f->close_section();
   }
   f->close_section();
 
-  caps.dump(f);
+  encode_json("caps", caps, f);
 
   f->close_section();
 }

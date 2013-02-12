@@ -3,8 +3,10 @@
 
 #include <iostream>
 #include <include/types.h>
+#include <list>
 
 #include "json_spirit/json_spirit.h"
+#include "Formatter.h"
 
 
 using namespace json_spirit;
@@ -105,10 +107,10 @@ public:
   }
 
   template<class T>
-  static bool decode_json(const string& name, T& val, JSONObj *obj, bool mandatory = false);
+  static bool decode_json(const char *name, T& val, JSONObj *obj, bool mandatory = false);
 
   template<class T>
-  static void decode_json(const string& name, T& val, T& default_val, JSONObj *obj);
+  static void decode_json(const char *name, T& val, T& default_val, JSONObj *obj);
 };
 
 template<class T>
@@ -142,12 +144,12 @@ void decode_json_obj(list<T>& l, JSONObj *obj)
 }
 
 template<class T>
-bool JSONDecoder::decode_json(const string& name, T& val, JSONObj *obj, bool mandatory)
+bool JSONDecoder::decode_json(const char *name, T& val, JSONObj *obj, bool mandatory)
 {
   JSONObjIter iter = obj->find_first(name);
   if (iter.end()) {
     if (mandatory) {
-      string s = "missing mandatory field " + name;
+      string s = "missing mandatory field " + string(name);
       throw err(s);
     }
     return false;
@@ -156,7 +158,7 @@ bool JSONDecoder::decode_json(const string& name, T& val, JSONObj *obj, bool man
   try {
     decode_json_obj(val, *iter);
   } catch (err& e) {
-    string s = name + ": ";
+    string s = string(name) + ": ";
     s.append(e.message);
     throw err(s);
   }
@@ -165,7 +167,7 @@ bool JSONDecoder::decode_json(const string& name, T& val, JSONObj *obj, bool man
 }
 
 template<class T>
-void JSONDecoder::decode_json(const string& name, T& val, T& default_val, JSONObj *obj)
+void JSONDecoder::decode_json(const char *name, T& val, T& default_val, JSONObj *obj)
 {
   JSONObjIter iter = obj->find_first(name);
   if (iter.end()) {
@@ -177,10 +179,30 @@ void JSONDecoder::decode_json(const string& name, T& val, T& default_val, JSONOb
     decode_json_obj(val, *iter);
   } catch (err& e) {
     val = default_val;
-    string s = name + ": ";
+    string s = string(name) + ": ";
     s.append(e.message);
     throw err(s);
   }
+}
+
+template<class T>
+static void encode_json(const char *name, const T& val, Formatter *f)
+{
+  f->open_object_section(name);
+  val.dump(f);
+  f->close_section();
+}
+
+template<class T>
+static void encode_json(const char *name, const std::list<T>& l, Formatter *f)
+{
+  f->open_array_section(name);
+  for (typename std::list<T>::const_iterator iter = l.begin(); iter != l.end(); ++iter) {
+    f->open_object_section("obj");
+    encode_json(name, *iter, f);
+    f->close_section();
+  }
+  f->close_section();
 }
 
 #endif

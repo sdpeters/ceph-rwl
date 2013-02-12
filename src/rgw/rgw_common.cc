@@ -707,7 +707,12 @@ int RGWUserCaps::remove_from_string(const string& str)
 
 void RGWUserCaps::dump(Formatter *f) const
 {
-  f->open_array_section("caps");
+  dump(f, "caps");
+}
+
+void RGWUserCaps::dump(Formatter *f, const char *name) const
+{
+  f->open_array_section(name);
   map<string, uint32_t>::const_iterator iter;
   for (iter = caps.begin(); iter != caps.end(); ++iter)
   {
@@ -747,6 +752,11 @@ struct RGWUserCap {
     }
   }
 };
+
+void encode_json(const char *name, const RGWUserCaps& val, Formatter *f)
+{
+  val.dump(f, name);
+}
 
 void RGWUserCaps::decode_json(JSONObj *obj)
 {
