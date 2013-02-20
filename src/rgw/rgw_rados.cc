@@ -149,7 +149,7 @@ int RGWRegion::set_as_default()
   return 0;
 }
 
-int RGWRegion::init(CephContext *_cct, RGWRados *_store, bool create_region)
+int RGWRegion::init(CephContext *_cct, RGWRados *_store)
 {
   cct = _cct;
   store = _store;
@@ -161,7 +161,7 @@ int RGWRegion::init(CephContext *_cct, RGWRados *_store, bool create_region)
   if (name.empty()) {
     int r = read_default();
     if (r == -ENOENT) {
-      r = init_default();
+      r = create_default();
       if (r < 0)
 	return r;
       r = set_as_default();
@@ -179,9 +179,6 @@ int RGWRegion::init(CephContext *_cct, RGWRados *_store, bool create_region)
   string oid = region_info_oid_prefix + "." + name;
 
   int ret = rgw_get_obj(store, NULL, pool, oid, bl);
-  if (ret == -ENOENT && create_region) {
-    return init_default();
-  }
   if (ret < 0) {
     lderr(cct) << "failed reading region info from " << pool << ":" << oid << ": " << cpp_strerror(-ret) << dendl;
     return ret;
@@ -198,7 +195,7 @@ int RGWRegion::init(CephContext *_cct, RGWRados *_store, bool create_region)
   return 0;
 }
 
-int RGWRegion::init_default()
+int RGWRegion::create_default()
 {
   name = "default";
   string zone_name = "default";
@@ -392,7 +389,7 @@ int RGWRados::init_complete()
 {
   int ret;
 
-  ret = region.init(cct, this, create_region);
+  ret = region.init(cct, this);
   if (ret < 0)
     return ret;
 
@@ -3775,6 +3772,21 @@ RGWRados *RGWStoreManager::init_storage_provider(CephContext *cct, bool use_gc_t
   }
 
   if (store->initialize(cct, use_gc_thread) < 0) {
+    delete store;
+    return NULL;
+  }
+
+  return store;
+}
+
+RGWRados *RGWStoreManager::init_raw_storage_provider(CephContext *cct)
+{
+  RGWRados *store = NULL;
+  store = new RGWRados;
+
+  store->set_context(cct);
+
+  if (store->init_rados() < 0) {
     delete store;
     return NULL;
   }
