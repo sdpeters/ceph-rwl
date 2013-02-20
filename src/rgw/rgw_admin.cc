@@ -981,18 +981,41 @@ int main(int argc, char **argv)
     return usage();
   }
 
+  bool region_op = (opt_cmd == OPT_REGION_INFO);
+
+
   user_modify_op = (opt_cmd == OPT_USER_MODIFY || opt_cmd == OPT_SUBUSER_MODIFY ||
                     opt_cmd == OPT_SUBUSER_CREATE || opt_cmd == OPT_SUBUSER_RM ||
                     opt_cmd == OPT_KEY_CREATE || opt_cmd == OPT_KEY_RM || opt_cmd == OPT_USER_RM ||
 		    opt_cmd == OPT_CAPS_ADD || opt_cmd == OPT_CAPS_RM);
 
-  store = RGWStoreManager::get_storage(g_ceph_context, false);
+  if (region_op) {
+    store = RGWStoreManager::get_raw_storage(g_ceph_context);
+  } else {
+    store = RGWStoreManager::get_storage(g_ceph_context, false);
+  }
   if (!store) {
     cerr << "couldn't init storage provider" << std::endl;
     return 5; //EIO
   }
 
   StoreDestructor store_destructor(store);
+
+  if (region_op) {
+    if (opt_cmd == OPT_REGION_INFO) {
+      RGWRegion region;
+      int ret = region.init(g_ceph_context, store);
+      if (ret < 0) {
+        cerr << "failed to init region: " << cpp_strerror(-ret) << std::endl;
+      }
+
+      encode_json("region", region, formatter);
+      formatter->flush(cout);
+      cout << std::endl;
+    }
+
+    return 0;
+  }
 
   if (opt_cmd != OPT_USER_CREATE && 
       opt_cmd != OPT_LOG_SHOW && opt_cmd != OPT_LOG_LIST && opt_cmd != OPT_LOG_RM && 
