@@ -59,10 +59,12 @@ void _usage()
   cerr << "  bucket check               check bucket index\n";
   cerr << "  object rm                  remove object\n";
   cerr << "  region info                show region info\n";
-  cerr << "  region list                list all regions\n";
+  cerr << "  regions list               list all regions set on this cluster\n";
   cerr << "  region set                 set region info\n";
   cerr << "  region default             set default region\n";
-  cerr << "  zone info                  show zone params info\n";
+  cerr << "  zone info                  show zone cluster params\n";
+  cerr << "  zone set                   set zone cluster params\n";
+  cerr << "  zone list                  list all zones set on this cluster\n";
   cerr << "  pool add                   add an existing pool for data placement\n";
   cerr << "  pool rm                    remove an existing pool from data placement set\n";
   cerr << "  pools list                 list placement active set\n";
@@ -170,6 +172,7 @@ enum {
   OPT_REGION_DEFAULT,
   OPT_ZONE_INFO,
   OPT_ZONE_SET,
+  OPT_ZONE_LIST,
   OPT_CAPS_ADD,
   OPT_CAPS_RM,
 };
@@ -203,6 +206,7 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       strcmp(cmd, "usage") == 0 ||
       strcmp(cmd, "object") == 0 ||
       strcmp(cmd, "region") == 0 ||
+      strcmp(cmd, "regions") == 0 ||
       strcmp(cmd, "zone") == 0 ||
       strcmp(cmd, "temp") == 0 ||
       strcmp(cmd, "caps") == 0 ||
@@ -283,6 +287,8 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       return OPT_POOL_ADD;
     if (strcmp(cmd, "rm") == 0)
       return OPT_POOL_RM;
+    if (strcmp(cmd, "list") == 0)
+      return OPT_POOLS_LIST;
   } else if (strcmp(prev_cmd, "pools") == 0) {
     if (strcmp(cmd, "list") == 0)
       return OPT_POOLS_LIST;
@@ -298,11 +304,19 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       return OPT_REGION_SET;
     if (strcmp(cmd, "default") == 0)
       return OPT_REGION_DEFAULT;
+  } else if (strcmp(prev_cmd, "regions") == 0) {
+    if (strcmp(cmd, "list") == 0)
+      return OPT_REGION_LIST;
   } else if (strcmp(prev_cmd, "zone") == 0) {
     if (strcmp(cmd, "info") == 0)
       return OPT_ZONE_INFO;
     if (strcmp(cmd, "set") == 0)
       return OPT_ZONE_SET;
+    if (strcmp(cmd, "list") == 0)
+      return OPT_ZONE_LIST;
+  } else if (strcmp(prev_cmd, "zones") == 0) {
+    if (strcmp(cmd, "list") == 0)
+      return OPT_ZONE_LIST;
   } else if (strcmp(prev_cmd, "gc") == 0) {
     if (strcmp(cmd, "list") == 0)
       return OPT_GC_LIST;
@@ -863,7 +877,9 @@ int main(int argc, char **argv)
   }
 
   bool raw_storage_op = (opt_cmd == OPT_REGION_INFO || opt_cmd == OPT_REGION_LIST ||
-                         opt_cmd == OPT_REGION_SET || opt_cmd == OPT_REGION_DEFAULT);
+                         opt_cmd == OPT_REGION_SET || opt_cmd == OPT_REGION_DEFAULT ||
+                         opt_cmd == OPT_ZONE_INFO || opt_cmd == OPT_ZONE_SET ||
+                         opt_cmd == OPT_ZONE_LIST);
 
 
   user_modify_op = (opt_cmd == OPT_USER_MODIFY || opt_cmd == OPT_SUBUSER_MODIFY ||
@@ -958,6 +974,57 @@ int main(int argc, char **argv)
       }
     }
 
+    if (opt_cmd == OPT_ZONE_INFO) {
+      RGWRegion region;
+      int ret = region.init(g_ceph_context, store);
+      if (ret < 0) {
+        cerr << "WARNING: failed to initialize region" << std::endl;
+      }
+      RGWZoneParams zone;
+      ret = zone.init(g_ceph_context, store, region);
+      if (ret < 0) {
+	cerr << "unable to initialize zone: " << cpp_strerror(-ret) << std::endl;
+	return -ret;
+      }
+      encode_json("zone", zone, formatter);
+      formatter->flush(cout);
+    }
+
+    if (opt_cmd == OPT_ZONE_SET) {
+      RGWRegion region;
+      int ret = region.init(g_ceph_context, store);
+      if (ret < 0) {
+        cerr << "WARNING: failed to initialize region" << std::endl;
+      }
+      RGWZoneParams zone;
+      zone.init_default();
+      ret = read_decode_json(infile, zone);
+      if (ret < 0) {
+        return 1;
+      }
+
+      ret = zone.store_info(g_ceph_context, store, region);
+      if (ret < 0) {
+        cerr << "ERROR: couldn't store zone info: " << cpp_strerror(-ret) << std::endl;
+        return 1;
+      }
+
+      encode_json("zone", zone, formatter);
+      formatter->flush(cout);
+    }
+    if (opt_cmd == OPT_ZONE_LIST) {
+      list<string> zones;
+      int ret = store->list_zones(zones);
+      if (ret < 0) {
+        cerr << "failed to list zones: " << cpp_strerror(-ret) << std::endl;
+	return -ret;
+      }
+      formatter->open_object_section("zones_list");
+      encode_json("zones", zones, formatter);
+      formatter->close_section();
+      formatter->flush(cout);
+      cout << std::endl;
+    }
     return 0;
   }
 
@@ -1828,29 +1895,6 @@ next:
       cerr << "ERROR: gc processing returned error: " << cpp_strerror(-ret) << std::endl;
       return 1;
     }
-  }
-
-  if (opt_cmd == OPT_ZONE_INFO) {
-    encode_json("zone", store->zone, formatter);
-    formatter->flush(cout);
-  }
-
-  if (opt_cmd == OPT_ZONE_SET) {
-    RGWZoneParams zone;
-    zone.init_default();
-    int ret = read_decode_json(infile, zone);
-    if (ret < 0) {
-      return 1;
-    }
-
-    ret = zone.store_info(g_ceph_context, store);
-    if (ret < 0) {
-      cerr << "ERROR: couldn't store zone info: " << cpp_strerror(-ret) << std::endl;
-      return 1;
-    }
-
-    encode_json("zone", store->zone, formatter);
-    formatter->flush(cout);
   }
 
   return 0;
