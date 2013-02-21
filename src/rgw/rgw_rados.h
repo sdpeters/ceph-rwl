@@ -231,6 +231,13 @@ struct RGWPoolIterCtx {
   librados::ObjectIterator iter;
 };
 
+struct RGWListRawObjsCtx {
+  bool initialized;
+  RGWPoolIterCtx iter_ctx;
+
+  RGWListRawObjsCtx() : initialized(false) {}
+};
+
 struct RGWZoneParams {
   rgw_bucket domain_root;
   rgw_bucket control_pool;
@@ -310,6 +317,25 @@ struct RGWZone {
 };
 WRITE_CLASS_ENCODER(RGWZone);
 
+struct RGWDefaultRegionInfo {
+  string default_region;
+
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    ::encode(default_region, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::iterator& bl) {
+    DECODE_START(1, bl);
+    ::decode(default_region, bl);
+    DECODE_FINISH(bl);
+  }
+  void dump(Formatter *f) const;
+  void decode_json(JSONObj *obj);
+};
+WRITE_CLASS_ENCODER(RGWDefaultRegionInfo);
+
 struct RGWRegion {
   string name;
   list<string> endpoints;
@@ -336,12 +362,13 @@ struct RGWRegion {
     DECODE_FINISH(bl);
   }
 
-  string get_pool_name(CephContext *cct);
-  int init(CephContext *_cct, RGWRados *_store);
+  int init(CephContext *_cct, RGWRados *_store, bool setup_region = true);
   int create_default();
   int store_info(bool exclusive);
-  int read_default();
+  int read_default(RGWDefaultRegionInfo& default_region);
   int set_as_default();
+
+  static string get_pool_name(CephContext *cct);
 
   void dump(Formatter *f) const;
   void decode_json(JSONObj *obj);
@@ -503,6 +530,8 @@ public:
       delete rados;
     }
   }
+
+  int list_regions(list<string>& regions);
 
   void tick();
 
@@ -879,6 +908,10 @@ public:
    */
   int pool_iterate(RGWPoolIterCtx& ctx, uint32_t num, vector<RGWObjEnt>& objs,
                    bool *is_truncated, RGWAccessListFilter *filter);
+
+  int list_raw_objects(rgw_bucket& pool, const string& prefix_filter, int max,
+                       RGWListRawObjsCtx& ctx, vector<string>& oids,
+                       bool *is_truncated);
 
   uint64_t instance_id();
   uint64_t next_bucket_id();
