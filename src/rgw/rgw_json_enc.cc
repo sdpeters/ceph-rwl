@@ -436,18 +436,28 @@ void RGWZoneParams::dump(Formatter *f) const
   encode_json("user_uid_pool ", user_uid_pool.pool, f);
 }
 
+static void decode_json(const char *field, rgw_bucket& bucket, JSONObj *obj)
+{
+  string pool;
+  JSONDecoder::decode_json(field, pool, obj);
+  if (pool[0] != '.') {
+    pool = string(".") + pool;
+  }
+  bucket = rgw_bucket(pool.c_str());
+}
+
 void RGWZoneParams::decode_json(JSONObj *obj)
 {
-  JSONDecoder::decode_json("domain_root", domain_root.pool, obj);
-  JSONDecoder::decode_json("control_pool", control_pool.pool, obj);
-  JSONDecoder::decode_json("gc_pool", gc_pool.pool, obj);
-  JSONDecoder::decode_json("log_pool", log_pool.pool, obj);
-  JSONDecoder::decode_json("intent_log_pool", intent_log_pool.pool, obj);
-  JSONDecoder::decode_json("usage_log_pool", usage_log_pool.pool, obj);
-  JSONDecoder::decode_json("user_keys_pool", user_keys_pool.pool, obj);
-  JSONDecoder::decode_json("user_email_pool", user_email_pool.pool, obj);
-  JSONDecoder::decode_json("user_swift_pool", user_swift_pool.pool, obj);
-  JSONDecoder::decode_json("user_uid_pool ", user_uid_pool.pool, obj);
+  ::decode_json("domain_root", domain_root, obj);
+  ::decode_json("control_pool", control_pool, obj);
+  ::decode_json("gc_pool", gc_pool, obj);
+  ::decode_json("log_pool", log_pool, obj);
+  ::decode_json("intent_log_pool", intent_log_pool, obj);
+  ::decode_json("usage_log_pool", usage_log_pool, obj);
+  ::decode_json("user_keys_pool", user_keys_pool, obj);
+  ::decode_json("user_email_pool", user_email_pool, obj);
+  ::decode_json("user_swift_pool", user_swift_pool, obj);
+  ::decode_json("user_uid_pool ", user_uid_pool, obj);
 }
 
 void RGWZone::dump(Formatter *f) const
