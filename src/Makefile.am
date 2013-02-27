@@ -382,7 +382,7 @@ noinst_LIBRARIES += librgw.a
 
 my_radosgw_ldadd = \
        libglobal.la librgw.a librados.la libcls_rgw_client.a \
-       libcls_lock_client.a libcls_refcount_client.a -lcurl -lexpat \
+       libcls_lock_client.a libcls_refcount_client.a libcls_version_client.a -lcurl -lexpat \
        $(PTHREAD_LIBS) -lm $(CRYPTO_LIBS) $(EXTRALIBS)
 
 radosgw_SOURCES = \
@@ -524,6 +524,15 @@ libcls_refcount_la_LDFLAGS = ${AM_LDFLAGS} -version-info 1:0:0 -export-symbols-r
 
 radoslib_LTLIBRARIES += libcls_refcount.la
 
+# version class
+libcls_version_la_SOURCES = cls/version/cls_version.cc
+libcls_version_la_CFLAGS = ${AM_CFLAGS}
+libcls_version_la_CXXFLAGS= ${AM_CXXFLAGS}
+libcls_version_la_LIBADD = $(PTHREAD_LIBS) $(EXTRALIBS)
+libcls_version_la_LDFLAGS = ${AM_LDFLAGS} -version-info 1:0:0 -export-symbols-regex '.*__cls_.*'
+
+radoslib_LTLIBRARIES += libcls_version.la
+
 
 if WITH_RADOSGW
 # rgw: rados gateway
@@ -545,6 +554,10 @@ noinst_LIBRARIES += libcls_lock_client.a
 libcls_refcount_client_a_SOURCES =  \
 	cls/refcount/cls_refcount_client.cc
 noinst_LIBRARIES += libcls_refcount_client.a
+
+libcls_version_client_a_SOURCES =  \
+	cls/version/cls_version_client.cc
+noinst_LIBRARIES += libcls_version_client.a
 
 libcls_rgw_client_a_SOURCES =  \
 	cls/rgw/cls_rgw_client.cc \
@@ -883,6 +896,12 @@ ceph_test_cls_refcount_SOURCES = test/cls_refcount/test_cls_refcount.cc \
 ceph_test_cls_refcount_LDADD = librados.la libcls_refcount_client.a ${UNITTEST_STATIC_LDADD}
 ceph_test_cls_refcount_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_test_cls_refcount
+
+ceph_test_cls_version_SOURCES = test/cls_version/test_cls_version.cc \
+	test/librados/test.cc
+ceph_test_cls_version_LDADD = librados.la libcls_version_client.a ${UNITTEST_STATIC_LDADD}
+ceph_test_cls_version_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
+bin_DEBUGPROGRAMS += ceph_test_cls_version
 
 ceph_test_cls_lock_SOURCES = test/cls_lock/test_cls_lock.cc test/librados/test.cc
 ceph_test_cls_lock_LDFLAGS = ${AM_LDFLAGS}
@@ -1511,6 +1530,9 @@ noinst_HEADERS = \
 	cls/rbd/cls_rbd_client.h\
 	cls/refcount/cls_refcount_ops.h\
 	cls/refcount/cls_refcount_client.h\
+	cls/version/cls_version_types.h\
+	cls/version/cls_version_ops.h\
+	cls/version/cls_version_client.h\
 	cls/rgw/cls_rgw_client.h\
 	cls/rgw/cls_rgw_ops.h\
 	cls/rgw/cls_rgw_types.h\
