@@ -83,6 +83,7 @@ void _usage()
   cerr << "                             specified date (and optional time)\n";
   cerr << "  gc list                    dump expired garbage collection objects\n";
   cerr << "  gc process                 manually process garbage\n";
+  cerr << "  metadata get               get metadata info\n";
   cerr << "options:\n";
   cerr << "   --uid=<id>                user id\n";
   cerr << "   --subuser=<name>          subuser name\n";
@@ -184,6 +185,7 @@ enum {
   OPT_ZONE_LIST,
   OPT_CAPS_ADD,
   OPT_CAPS_RM,
+  OPT_METADATA_GET,
 };
 
 static uint32_t str_to_perm(const char *str)
@@ -222,7 +224,8 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       strcmp(cmd, "zone") == 0 ||
       strcmp(cmd, "temp") == 0 ||
       strcmp(cmd, "caps") == 0 ||
-      strcmp(cmd, "gc") == 0) {
+      strcmp(cmd, "gc") == 0 ||
+      strcmp(cmd, "metadata") == 0) {
     *need_more = true;
     return 0;
   }
@@ -346,6 +349,9 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       return OPT_GC_LIST;
     if (strcmp(cmd, "process") == 0)
       return OPT_GC_PROCESS;
+  } else if (strcmp(prev_cmd, "metadata") == 0) {
+    if (strcmp(cmd, "get") == 0)
+      return OPT_METADATA_GET;
   }
 
   return -EINVAL;
@@ -858,6 +864,7 @@ int main(int argc, char **argv)
   string caps;
   int check_objects = false;
   string infile;
+  string metadata_key;
 
   std::string val;
   std::ostringstream errs;
@@ -959,6 +966,8 @@ int main(int argc, char **argv)
       caps = val;
     } else if (ceph_argparse_witharg(args, i, &val, "-i", "--infile", (char*)NULL)) {
       infile = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--metadata-key", (char*)NULL)) {
+      metadata_key = val;
     } else {
       ++i;
     }
@@ -1043,6 +1052,8 @@ int main(int argc, char **argv)
     cerr << "couldn't init storage provider" << std::endl;
     return 5; //EIO
   }
+
+  rgw_user_init(store->meta_mgr);
 
   StoreDestructor store_destructor(store);
 
@@ -2127,6 +2138,16 @@ next:
 
   if (opt_cmd == OPT_USER_CHECK) {
     check_bad_user_bucket_mapping(store, user_id, fix);
+  }
+
+  if (opt_cmd == OPT_METADATA_GET) {
+    int ret = store->meta_mgr->get(metadata_key, formatter);
+    if (ret < 0) {
+      cerr << "ERROR: can't get key: " << cpp_strerror(-ret) << std::endl;
+      return -ret;
+    }
+
+    formatter->flush(cout);
   }
 
   return 0;
