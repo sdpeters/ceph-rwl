@@ -144,4 +144,11 @@ extern int rgw_remove_key_index(RGWRados *store, RGWAccessKey& access_key);
 extern int rgw_remove_uid_index(RGWRados *store, string& uid);
 extern int rgw_remove_email_index(RGWRados *store, string& email);
 extern int rgw_remove_swift_name_index(RGWRados *store, string& swift_name);
+
+
+class RGWMetadataManager;
+
+extern void rgw_user_init(RGWMetadataManager *mm);
+
+
 #endif
