@@ -691,7 +691,7 @@ static int remove_bucket(RGWRados *store, rgw_bucket& bucket, bool delete_childr
   obj.bucket = bucket;
   int max = 1000;
 
-  ret = rgw_get_obj(store, NULL, store->zone.domain_root, bucket.name, bl, NULL);
+  ret = rgw_get_system_obj(store, NULL, store->zone.domain_root, bucket.name, bl, NULL);
 
   bufferlist::iterator iter = bl.begin();
   try {
