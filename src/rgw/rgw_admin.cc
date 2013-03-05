@@ -2212,7 +2212,7 @@ next:
       }
       formatter->flush(cout);
 
-    } while (!truncated);
+    } while (truncated);
 
     formatter->close_section();
     formatter->flush(cout);
