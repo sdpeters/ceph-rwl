@@ -36,7 +36,7 @@ bool rgw_user_is_authenticated(RGWUserInfo& info)
  * Save the given user information to storage.
  * Returns: 0 on success, -ERR# on failure.
  */
-int rgw_store_user_info(RGWRados *store, RGWUserInfo& info, RGWUserInfo *old_info, bool exclusive)
+int rgw_store_user_info(RGWRados *store, RGWUserInfo& info, RGWUserInfo *old_info, obj_version *objv, bool exclusive)
 {
   bufferlist bl;
   info.encode(bl);
@@ -84,14 +84,14 @@ int rgw_store_user_info(RGWRados *store, RGWUserInfo& info, RGWUserInfo *old_inf
   ::encode(ui, data_bl);
   ::encode(info, data_bl);
 
-  ret = rgw_put_system_obj(store, store->zone.user_uid_pool, info.user_id, data_bl.c_str(), data_bl.length(), exclusive);
+  ret = rgw_put_system_obj(store, store->zone.user_uid_pool, info.user_id, data_bl.c_str(), data_bl.length(), exclusive, objv);
   if (ret < 0)
     return ret;
 
   if (info.user_email.size()) {
     if (!old_info ||
         old_info->user_email.compare(info.user_email) != 0) { /* only if new index changed */
-      ret = rgw_put_system_obj(store, store->zone.user_email_pool, info.user_email, link_bl.c_str(), link_bl.length(), exclusive);
+      ret = rgw_put_system_obj(store, store->zone.user_email_pool, info.user_email, link_bl.c_str(), link_bl.length(), exclusive, objv);
       if (ret < 0)
         return ret;
     }
@@ -104,7 +104,7 @@ int rgw_store_user_info(RGWRados *store, RGWUserInfo& info, RGWUserInfo *old_inf
       if (old_info && old_info->access_keys.count(iter->first) != 0)
 	continue;
 
-      ret = rgw_put_system_obj(store, store->zone.user_keys_pool, k.id, link_bl.c_str(), link_bl.length(), exclusive);
+      ret = rgw_put_system_obj(store, store->zone.user_keys_pool, k.id, link_bl.c_str(), link_bl.length(), exclusive, objv);
       if (ret < 0)
         return ret;
     }
@@ -116,7 +116,7 @@ int rgw_store_user_info(RGWRados *store, RGWUserInfo& info, RGWUserInfo *old_inf
     if (old_info && old_info->swift_keys.count(siter->first) != 0)
       continue;
 
-    ret = rgw_put_system_obj(store, store->zone.user_swift_pool, k.id, link_bl.c_str(), link_bl.length(), exclusive);
+    ret = rgw_put_system_obj(store, store->zone.user_swift_pool, k.id, link_bl.c_str(), link_bl.length(), exclusive, objv);
     if (ret < 0)
       return ret;
   }
@@ -525,7 +525,7 @@ public:
       return ret;
 
 
-    ret = rgw_store_user_info(store, info, &old_info, false);
+    ret = rgw_store_user_info(store, info, &old_info, &objv, false);
     if (ret < 0)
       return ret;
 
