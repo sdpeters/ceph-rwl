@@ -689,11 +689,22 @@ int RGWRados::list_objects(rgw_bucket& bucket, int max, string& prefix, string& 
   int count = 0;
   string cur_marker = marker;
   bool truncated;
+  string ns_prefix;
 
   if (bucket_is_system(bucket)) {
     return -EINVAL;
   }
   result.clear();
+  if (!ns.empty()) {
+    ns_prefix = "_";
+    ns_prefix += ns + "_";
+    if (cur_marker < ns_prefix) {
+      cur_marker = ns_prefix;
+    } else if (cur_marker.substr(0, ns.size()) > ns_prefix) {
+      truncated = false;
+      goto done;
+    }
+  }
 
   do {
     std::map<string, RGWObjEnt> ent_map;
@@ -707,8 +718,16 @@ int RGWRados::list_objects(rgw_bucket& bucket, int max, string& prefix, string& 
       string obj = eiter->first;
       string key = obj;
 
-      if (!rgw_obj::translate_raw_obj_to_obj_in_ns(obj, ns))
+      if (!rgw_obj::translate_raw_obj_to_obj_in_ns(obj, ns)) {
+        if (!ns.empty()) {
+          /* we're not under the namespace anymore, we're done */
+          truncated = false;
+          goto done;
+        }
+
+        /* we're not under the namespace this object is in, next! */
         continue;
+      }
 
       if (filter && !filter->filter(obj, key))
         continue;
@@ -732,6 +751,7 @@ int RGWRados::list_objects(rgw_bucket& bucket, int max, string& prefix, string& 
     }
   } while (truncated && count < max);
 
+done:
   if (is_truncated)
     *is_truncated = truncated;
 
