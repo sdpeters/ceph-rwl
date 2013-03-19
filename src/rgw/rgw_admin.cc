@@ -871,6 +871,7 @@ int main(int argc, char **argv)
   int check_objects = false;
   string infile;
   string metadata_key;
+  RGWObjVersionTracker objv_tracker;
 
   std::string val;
   std::ostringstream errs;
@@ -1285,7 +1286,7 @@ int main(int argc, char **argv)
     string s;
     if (!found && (!user_email.empty())) {
       s = user_email;
-      if (rgw_get_user_info_by_email(store, s, info) >= 0) {
+      if (rgw_get_user_info_by_email(store, s, info, &objv_tracker) >= 0) {
 	found = true;
       } else {
 	cerr << "could not find user by specified email" << std::endl;
@@ -1293,7 +1294,7 @@ int main(int argc, char **argv)
     }
     if (!found && (!access_key.empty())) {
       s = access_key;
-      if (rgw_get_user_info_by_access_key(store, s, info) >= 0) {
+      if (rgw_get_user_info_by_access_key(store, s, info, &objv_tracker) >= 0) {
 	found = true;
       } else {
 	cerr << "could not find user by specified access key" << std::endl;
@@ -1312,7 +1313,7 @@ int main(int argc, char **argv)
       return usage();
     }
 
-    bool found = (rgw_get_user_info_by_uid(store, user_id, info) >= 0);
+    bool found = (rgw_get_user_info_by_uid(store, user_id, info, &objv_tracker) >= 0);
 
     if (opt_cmd == OPT_USER_CREATE) {
       if (found) {
@@ -1394,7 +1395,7 @@ int main(int argc, char **argv)
 	}
 	access_key = public_id_buf;
 	duplicate_check_id = access_key;
-      } while (!rgw_get_user_info_by_access_key(store, duplicate_check_id, duplicate_check));
+      } while (!rgw_get_user_info_by_access_key(store, duplicate_check_id, duplicate_check, &objv_tracker));
     }
   }
 
