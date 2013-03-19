@@ -41,6 +41,37 @@ static inline void get_obj_bucket_and_oid_key(rgw_obj& obj, rgw_bucket& bucket, 
   prepend_bucket_marker(bucket, obj.key, key);
 }
 
+struct RGWObjVersionTracker {
+  obj_version read_version;
+  obj_version write_version;
+
+  obj_version *version_for_read() {
+    return &read_version;
+  }
+
+  obj_version *version_for_write() {
+    if (write_version.ver == 0)
+      return NULL;
+
+    return &write_version;
+  }
+
+  obj_version *version_for_check() {
+    if (read_version.ver == 0)
+      return NULL;
+
+    return &read_version;
+  }
+
+  void prepare_op_for_read(librados::ObjectReadOperation *op);
+  void prepare_op_for_write(librados::ObjectWriteOperation *op);
+
+  void apply_write() {
+    read_version = write_version;
+    write_version = obj_version();
+  }
+};
+
 struct RGWUsageBatch {
   map<utime_t, rgw_usage_log_entry> m;
 
@@ -182,7 +213,7 @@ struct RGWObjState {
   bool has_data;
   bufferlist data;
   bool prefetch_data;
-  obj_version objv;
+  RGWObjVersionTracker objv_tracker;
 
   map<string, bufferlist> attrset;
   RGWObjState() : is_atomic(false), has_attrs(0), exists(false),
@@ -466,7 +497,7 @@ class RGWRados
   Mutex bucket_id_lock;
   uint64_t max_bucket_id;
 
-  int get_obj_state(RGWRadosCtx *rctx, rgw_obj& obj, RGWObjState **state, obj_version *objv);
+  int get_obj_state(RGWRadosCtx *rctx, rgw_obj& obj, RGWObjState **state, RGWObjVersionTracker *objv_tracker);
   int append_atomic_test(RGWRadosCtx *rctx, rgw_obj& obj,
                          librados::ObjectOperation& op, RGWObjState **state);
   int prepare_atomic_for_write_impl(RGWRadosCtx *rctx, rgw_obj& obj,
@@ -641,11 +672,12 @@ public:
     const string *ptag;
     list<string> *remove_objs;
     bool modify_version;
-    obj_version *objv;
+    RGWObjVersionTracker *objv_tracker;
 
     PutObjMetaExtraParams() : mtime(NULL), rmattrs(NULL),
                      data(NULL), manifest(NULL), ptag(NULL),
-                     remove_objs(NULL), modify_version(false), objv(NULL) {}
+                     remove_objs(NULL), modify_version(false),
+                     objv_tracker(NULL) {}
   };
 
   /** Write/overwrite an object to the bucket storage. */
@@ -653,7 +685,7 @@ public:
               map<std::string, bufferlist>& attrs, RGWObjCategory category, int flags,
               map<std::string, bufferlist>* rmattrs, const bufferlist *data,
               RGWObjManifest *manifest, const string *ptag, list<string> *remove_objs,
-              bool modify_version, obj_version *objv);
+              bool modify_version, RGWObjVersionTracker *objv_tracker);
 
   virtual int put_obj_meta(void *ctx, rgw_obj& obj, uint64_t size,
               map<std::string, bufferlist>& attrs, RGWObjCategory category, int flags,
@@ -667,7 +699,7 @@ public:
                            RGWObjCategory category, int flags, PutObjMetaExtraParams& params) {
     return put_obj_meta_impl(ctx, obj, size, params.mtime, attrs, category, flags,
                         params.rmattrs, params.data, params.manifest, params.ptag, params.remove_objs,
-                        params.modify_version, params.objv);
+                        params.modify_version, params.objv_tracker);
   }
 
   virtual int put_obj_data(void *ctx, rgw_obj& obj, const char *data,
@@ -676,7 +708,7 @@ public:
                                off_t ofs, bool exclusive, void **handle);
   /* note that put_obj doesn't set category on an object, only use it for none user objects */
   int put_system_obj(void *ctx, rgw_obj& obj, const char *data, size_t len, bool exclusive,
-              time_t *mtime, map<std::string, bufferlist>& attrs, obj_version *objv) {
+              time_t *mtime, map<std::string, bufferlist>& attrs, RGWObjVersionTracker *objv_tracker) {
     bufferlist bl;
     bl.append(data, len);
     int flags = PUT_OBJ_CREATE;
@@ -687,7 +719,7 @@ public:
     ep.mtime = mtime;
     ep.data = &bl;
     ep.modify_version = true;
-    ep.objv = objv;
+    ep.objv_tracker = objv_tracker;
 
     int ret = put_obj_meta(ctx, obj, len, attrs, RGW_OBJ_CATEGORY_NONE, flags, ep);
     return ret;
@@ -829,11 +861,11 @@ public:
             const char *if_nomatch,
             uint64_t *total_size,
             uint64_t *obj_size,
-            obj_version *objv,
+            RGWObjVersionTracker *objv_tracker,
             void **handle,
             struct rgw_err *err);
 
-  virtual int get_obj(void *ctx, obj_version *objv, void **handle, rgw_obj& obj,
+  virtual int get_obj(void *ctx, RGWObjVersionTracker *objv_tracker, void **handle, rgw_obj& obj,
                       bufferlist& bl, off_t ofs, off_t end);
 
   virtual void finish_get_obj(void **handle);
@@ -862,7 +894,7 @@ public:
 
   virtual int obj_stat(void *ctx, rgw_obj& obj, uint64_t *psize, time_t *pmtime,
                        uint64_t *epoch, map<string, bufferlist> *attrs, bufferlist *first_chunk,
-                       obj_version *objv);
+                       RGWObjVersionTracker *objv_tracker);
 
   virtual bool supports_omap() { return true; }
   virtual int omap_get_all(rgw_obj& obj, bufferlist& header, std::map<string, bufferlist>& m);
