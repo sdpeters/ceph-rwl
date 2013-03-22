@@ -87,7 +87,7 @@ int rgw_store_user_info(RGWRados *store, RGWUserInfo& info, RGWUserInfo *old_inf
   ::encode(ui, data_bl);
   ::encode(info, data_bl);
 
-  ret = store->meta_mgr->put_obj(user_meta_handler, info.user_id, data_bl, exclusive, objv_tracker);
+  ret = store->meta_mgr->put_entry(user_meta_handler, info.user_id, data_bl, exclusive, objv_tracker);
   if (ret < 0)
     return ret;
 
@@ -214,7 +214,7 @@ extern int rgw_get_user_info_by_access_key(RGWRados *store, string& access_key, 
 static void get_buckets_obj(string& user_id, string& buckets_obj_id)
 {
     buckets_obj_id = user_id;
-    buckets_obj_id += RGW_BUCKETS_OBJ_PREFIX;
+    buckets_obj_id += RGW_BUCKETS_OBJ_SUFFIX;
 }
 
 static int rgw_read_buckets_from_attr(RGWRados *store, string& user_id, RGWUserBuckets& buckets)
@@ -533,9 +533,20 @@ public:
 
     return 0;
   }
+  int remove(RGWRados *store, string& entry, RGWObjVersionTracker& objv_tracker) {
+#warning FIXME: use objv_tracker
 
-  int put_obj(RGWRados *store, string& key, bufferlist& bl, bool exclusive,
-              RGWObjVersionTracker *objv_tracker, map<string, bufferlist> *pattrs) {
+    RGWUserInfo info;
+    RGWObjVersionTracker ot;
+    int ret = rgw_get_user_info_by_uid(store, entry, info, &ot);
+    if (ret < 0)
+      return ret;
+
+    return rgw_delete_user(store, info);
+  }
+
+  int put_entry(RGWRados *store, string& key, bufferlist& bl, bool exclusive,
+                RGWObjVersionTracker *objv_tracker, map<string, bufferlist> *pattrs) {
     return rgw_put_system_obj(store, store->zone.user_uid_pool, key,
                               bl.c_str(), bl.length(), exclusive,
                               objv_tracker, pattrs);
