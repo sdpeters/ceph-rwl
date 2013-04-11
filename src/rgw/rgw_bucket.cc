@@ -321,7 +321,9 @@ int rgw_remove_bucket(RGWRados *store, rgw_bucket& bucket, bool delete_children)
   RGWBucketInfo info;
   bufferlist bl;
 
-  ret = store->get_bucket_stats(bucket, stats);
+  uint64_t bucket_ver, master_ver;
+
+  ret = store->get_bucket_stats(bucket, &bucket_ver, &master_ver, stats);
   if (ret < 0)
     return ret;
 
@@ -895,7 +897,8 @@ static int bucket_stats(RGWRados *store, std::string&  bucket_name, Formatter *f
 
   bucket = bucket_info.bucket;
 
-  int ret = store->get_bucket_stats(bucket, stats);
+  uint64_t bucket_ver, master_ver;
+  int ret = store->get_bucket_stats(bucket, &bucket_ver, &master_ver, stats);
   if (ret < 0) {
     cerr << "error getting bucket stats ret=" << ret << std::endl;
     return ret;
@@ -908,6 +911,8 @@ static int bucket_stats(RGWRados *store, std::string&  bucket_name, Formatter *f
   formatter->dump_string("id", bucket.bucket_id);
   formatter->dump_string("marker", bucket.marker);
   formatter->dump_string("owner", bucket_info.owner);
+  formatter->dump_int("ver", bucket_ver);
+  formatter->dump_int("master_ver", master_ver);
   dump_bucket_usage(stats, formatter);
   formatter->close_section();
 
