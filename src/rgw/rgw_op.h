@@ -736,12 +736,6 @@ public:
 struct RGWMultipartUploadEntry {
   RGWObjEnt obj;
   RGWMPObj mp;
-
-  void clear() {
-    obj.clear();
-    string empty;
-    mp.init(empty, empty);
-  }
 };
 
 class RGWListBucketMultiparts : public RGWOp {
