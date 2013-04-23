@@ -559,14 +559,14 @@ bool verify_object_permission(struct req_state *s, int perm)
   return verify_object_permission(s, s->bucket_acl, s->object_acl, perm);
 }
 
-static char hex_to_num(char c)
+static char hex_to_nibble(char c)
 {
   static char table[256];
   static bool initialized = false;
 
 
   if (!initialized) {
-    memset(table, -1, sizeof(table));
+    memset(table, 0x10, sizeof(table));
     int i;
     for (i = '0'; i<='9'; i++)
       table[i] = i - '0';
@@ -597,14 +597,14 @@ bool url_decode(string& src_str, string& dest_str)
       src++;
       if (!*src)
         break;
-      char c1 = hex_to_num(*src++);
+      char c1 = hex_to_nibble(*src++);
       if (!*src)
         break;
-      c = c1 << 4;
-      if (c1 < 0)
+      if (c1 >= 0x10)
         return false;
-      c1 = hex_to_num(*src++);
-      if (c1 < 0)
+      c = c1 << 4;
+      c1 = hex_to_nibble(*src++);
+      if (c1 >= 0x10)
         return false;
       c |= c1;
       dest[pos++] = c;
