@@ -455,7 +455,7 @@ struct RGWRegionMap {
 };
 WRITE_CLASS_ENCODER(RGWRegionMap);
 
-
+class RGWDataChangesLog;
   
 class RGWRados
 {
@@ -563,7 +563,7 @@ public:
                num_watchers(0), watchers(NULL), watch_handles(NULL),
                bucket_id_lock("rados_bucket_id"), max_bucket_id(0),
                cct(NULL), rados(NULL),
-               pools_initialized(false), meta_mgr(NULL) {}
+               pools_initialized(false), meta_mgr(NULL), data_log(NULL) {}
 
   void set_context(CephContext *_cct) {
     cct = _cct;
@@ -581,6 +581,8 @@ public:
   RGWZoneParams zone;
 
   RGWMetadataManager *meta_mgr;
+
+  RGWDataChangesLog *data_log;
 
   virtual ~RGWRados() {
     if (rados) {
