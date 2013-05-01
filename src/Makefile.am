@@ -1679,6 +1679,7 @@ noinst_HEADERS = \
 	common/ceph_crypto.h\
 	common/ceph_crypto_cms.h\
 	common/ceph_json.h\
+	common/lru_map.h\
 	common/utf8.h\
 	common/mime.h\
 	common/pick_address.h\
