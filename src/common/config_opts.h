@@ -581,6 +581,11 @@ OPTION(rgw_get_obj_max_req_size, OPT_INT, 4 << 20) // max length of a single get
 OPTION(rgw_relaxed_s3_bucket_names, OPT_BOOL, false) // enable relaxed bucket name rules for US region buckets
 OPTION(rgw_md_log_max_shards, OPT_INT, 64) // max shards for metadata log
 
+OPTION(rgw_data_log_window, OPT_INT, 30) // data log entries window (in seconds)
+OPTION(rgw_data_log_changes_size, OPT_INT, 1000) // number of in-memory entries to hold for data changes log
+OPTION(rgw_data_log_num_shards, OPT_INT, 128) // number of objects to keep data changes log on
+OPTION(rgw_data_log_obj_prefix, OPT_STR, "data_log") // 
+
 OPTION(mutex_perf_counter, OPT_BOOL, false) // enable/disable mutex perf counter
 
 // This will be set to true when it is safe to start threads.
