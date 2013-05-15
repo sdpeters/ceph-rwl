@@ -436,9 +436,9 @@ public:
 
   // log bandwidth info
   int log_usage(map<rgw_user_bucket, RGWUsageBatch>& usage_info);
-  int read_usage(string& user, uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
+  int read_usage(rgw_user& user, uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
                  bool *is_truncated, RGWUsageIter& read_iter, map<rgw_user_bucket, rgw_usage_log_entry>& usage);
-  int trim_usage(string& user, uint64_t start_epoch, uint64_t end_epoch);
+  int trim_usage(rgw_user& user, uint64_t start_epoch, uint64_t end_epoch);
 
   /**
    * get listing of the objects in a bucket.
@@ -463,7 +463,7 @@ public:
    * create a bucket with name bucket and the given list of attrs
    * returns 0 on success, -ERR# otherwise.
    */
-  virtual int create_bucket(string& owner, rgw_bucket& bucket,
+  virtual int create_bucket(rgw_user& owner, rgw_bucket& bucket,
                             map<std::string,bufferlist>& attrs,
                             bool exclusive = true);
   virtual int add_bucket_placement(std::string& new_pool);

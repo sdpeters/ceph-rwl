@@ -631,15 +631,16 @@ int RGWRados::log_usage(map<rgw_user_bucket, RGWUsageBatch>& usage_info)
   return 0;
 }
 
-int RGWRados::read_usage(string& user, uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
+int RGWRados::read_usage(rgw_user& user, uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries,
                          bool *is_truncated, RGWUsageIter& usage_iter, map<rgw_user_bucket, rgw_usage_log_entry>& usage)
 {
   uint32_t num = max_entries;
   string hash, first_hash;
-  usage_log_hash(cct, user, first_hash, 0);
+  string user_str = user.to_str();
+  usage_log_hash(cct, user_str, first_hash, 0);
 
   if (usage_iter.index) {
-    usage_log_hash(cct, user, hash, usage_iter.index);
+    usage_log_hash(cct, user_str, hash, usage_iter.index);
   } else {
     hash = first_hash;
   }
@@ -650,7 +651,7 @@ int RGWRados::read_usage(string& user, uint64_t start_epoch, uint64_t end_epoch,
     map<rgw_user_bucket, rgw_usage_log_entry> ret_usage;
     map<rgw_user_bucket, rgw_usage_log_entry>::iterator iter;
 
-    int ret =  cls_obj_usage_log_read(hash, user, start_epoch, end_epoch, num,
+    int ret =  cls_obj_usage_log_read(hash, user_str, start_epoch, end_epoch, num,
                                     usage_iter.read_iter, ret_usage, is_truncated);
     if (ret == -ENOENT)
       goto next;
@@ -667,22 +668,23 @@ int RGWRados::read_usage(string& user, uint64_t start_epoch, uint64_t end_epoch,
 next:
     if (!*is_truncated) {
       usage_iter.read_iter.clear();
-      usage_log_hash(cct, user, hash, ++usage_iter.index);
+      usage_log_hash(cct, user_str, hash, ++usage_iter.index);
     }
   } while (num && !*is_truncated && hash != first_hash);
   return 0;
 }
 
-int RGWRados::trim_usage(string& user, uint64_t start_epoch, uint64_t end_epoch)
+int RGWRados::trim_usage(rgw_user& user, uint64_t start_epoch, uint64_t end_epoch)
 {
   uint32_t index = 0;
   string hash, first_hash;
-  usage_log_hash(cct, user, first_hash, index);
+  string user_str = user.to_str();
+  usage_log_hash(cct, user_str, first_hash, index);
 
   hash = first_hash;
 
   do {
-    int ret =  cls_obj_usage_log_trim(hash, user, start_epoch, end_epoch);
+    int ret =  cls_obj_usage_log_trim(hash, user_str, start_epoch, end_epoch);
     if (ret == -ENOENT)
       goto next;
 
@@ -690,7 +692,7 @@ int RGWRados::trim_usage(string& user, uint64_t start_epoch, uint64_t end_epoch)
       return ret;
 
 next:
-    usage_log_hash(cct, user, hash, ++index);
+    usage_log_hash(cct, user_str, hash, ++index);
   } while (hash != first_hash);
 
   return 0;
@@ -814,7 +816,7 @@ int RGWRados::create_pool(rgw_bucket& bucket)
  * create a bucket with name bucket and the given list of attrs
  * returns 0 on success, -ERR# otherwise.
  */
-int RGWRados::create_bucket(string& owner, rgw_bucket& bucket, 
+int RGWRados::create_bucket(rgw_user& owner, rgw_bucket& bucket, 
 			    map<std::string, bufferlist>& attrs, 
 			    bool exclusive)
 {
@@ -3556,7 +3558,7 @@ int RGWRados::cls_obj_complete_op(rgw_bucket& bucket, uint8_t op, string& tag, u
   dir_meta.size = ent.size;
   dir_meta.mtime = utime_t(ent.mtime, 0);
   dir_meta.etag = ent.etag;
-  dir_meta.owner = ent.owner;
+  dir_meta.owner = ent.owner.to_str();
   dir_meta.owner_display_name = ent.owner_display_name;
   dir_meta.content_type = ent.content_type;
   dir_meta.category = category;
@@ -3861,7 +3863,7 @@ int RGWRados::check_disk_state(librados::IoCtx io_ctx,
   list_state.meta.content_type = content_type;
   if (astate->obj_tag.length() > 0)
     list_state.meta.tag = astate->obj_tag.c_str();
-  list_state.meta.owner = owner.get_id();
+  list_state.meta.owner = owner.get_id().to_str();
   list_state.meta.owner_display_name = owner.get_display_name();
 
   list_state.exists = true;

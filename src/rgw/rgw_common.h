@@ -29,6 +29,7 @@
 #include "include/utime.h"
 #include "rgw_acl.h"
 #include "rgw_cors.h"
+#include "rgw_basic_types.h"
 
 using namespace std;
 
@@ -379,7 +380,7 @@ void encode_json(const char *name, const RGWUserCaps& val, Formatter *f);
 struct RGWUserInfo
 {
   uint64_t auid;
-  string user_id;
+  rgw_user user_id;
   string display_name;
   string user_email;
   map<string, RGWAccessKey> access_keys;
@@ -393,7 +394,7 @@ struct RGWUserInfo
   RGWUserInfo() : auid(0), suspended(0), max_buckets(RGW_DEFAULT_MAX_BUCKETS), op_mask(RGW_OP_TYPE_ALL) {}
 
   void encode(bufferlist& bl) const {
-     ENCODE_START(12, 9, bl);
+     ENCODE_START(13, 9, bl);
      ::encode(auid, bl);
      string access_key;
      string secret_key;
@@ -417,7 +418,7 @@ struct RGWUserInfo
      }
      ::encode(swift_name, bl);
      ::encode(swift_key, bl);
-     ::encode(user_id, bl);
+     ::encode(user_id.id, bl);
      ::encode(access_keys, bl);
      ::encode(subusers, bl);
      ::encode(suspended, bl);
@@ -425,10 +426,11 @@ struct RGWUserInfo
      ::encode(max_buckets, bl);
      ::encode(caps, bl);
      ::encode(op_mask, bl);
+     ::encode(user_id, bl);
      ENCODE_FINISH(bl);
   }
   void decode(bufferlist::iterator& bl) {
-     DECODE_START_LEGACY_COMPAT_LEN_32(11, 9, 9, bl);
+     DECODE_START_LEGACY_COMPAT_LEN_32(13, 9, 9, bl);
      if (struct_v >= 2) ::decode(auid, bl);
      else auid = CEPH_AUTH_UID_DEFAULT;
      string access_key;
@@ -447,10 +449,13 @@ struct RGWUserInfo
     string swift_key;
     if (struct_v >= 3) ::decode(swift_name, bl);
     if (struct_v >= 4) ::decode(swift_key, bl);
+    if (struct_v < 13) {
+      user_id.tenant.clear();
+    }
     if (struct_v >= 5)
-      ::decode(user_id, bl);
+      ::decode(user_id.id, bl);
     else
-      user_id = access_key;
+      user_id.id = access_key;
     if (struct_v >= 6) {
       ::decode(access_keys, bl);
       ::decode(subusers, bl);
@@ -475,21 +480,15 @@ struct RGWUserInfo
     } else {
       op_mask = RGW_OP_TYPE_ALL;
     }
+    if (struct_v >= 13) {
+      ::decode(user_id, bl);
+    }
     DECODE_FINISH(bl);
   }
   void dump(Formatter *f) const;
   static void generate_test_instances(list<RGWUserInfo*>& o);
 
   void decode_json(JSONObj *obj);
-
-  void clear() {
-    user_id.clear();
-    display_name.clear();
-    user_email.clear();
-    auid = CEPH_AUTH_UID_DEFAULT;
-    access_keys.clear();
-    suspended = 0;
-  }
 };
 WRITE_CLASS_ENCODER(RGWUserInfo)
 
@@ -560,23 +559,28 @@ enum RGWBucketFlags {
 struct RGWBucketInfo
 {
   rgw_bucket bucket;
-  string owner;
+  rgw_user owner;
   uint32_t flags;
 
   void encode(bufferlist& bl) const {
-     ENCODE_START(4, 4, bl);
+     ENCODE_START(5, 4, bl);
      ::encode(bucket, bl);
-     ::encode(owner, bl);
+     ::encode(owner.id, bl);
      ::encode(flags, bl);
      ENCODE_FINISH(bl);
   }
   void decode(bufferlist::iterator& bl) {
-    DECODE_START_LEGACY_COMPAT_LEN_32(4, 4, 4, bl);
+    DECODE_START_LEGACY_COMPAT_LEN_32(5, 4, 4, bl);
      ::decode(bucket, bl);
-     if (struct_v >= 2)
-       ::decode(owner, bl);
+     if (struct_v >= 2) {
+       string s;
+       ::decode(s, bl);
+       owner.from_str(s);
+     }
      if (struct_v >= 3)
        ::decode(flags, bl);
+     if (struct_v >= 5)
+       ::decode(owner, bl);
      DECODE_FINISH(bl);
   }
   void dump(Formatter *f) const;
@@ -671,7 +675,7 @@ struct req_state {
 /** Store basic data on an object */
 struct RGWObjEnt {
   std::string name;
-  std::string owner;
+  rgw_user owner;
   std::string owner_display_name;
   uint64_t size;
   time_t mtime;

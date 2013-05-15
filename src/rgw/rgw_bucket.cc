@@ -23,9 +23,10 @@
 using namespace std;
 
 // define as static when RGWBucket implementation compete
-void rgw_get_buckets_obj(string& user_id, string& buckets_obj_id)
+void rgw_get_buckets_obj(const rgw_user& user_id, string& buckets_obj_id)
 {
-  buckets_obj_id = user_id;
+  string s = user_id.to_str();
+  buckets_obj_id = s;
   buckets_obj_id += RGW_BUCKETS_OBJ_PREFIX;
 }
 
@@ -33,7 +34,7 @@ void rgw_get_buckets_obj(string& user_id, string& buckets_obj_id)
  * Get all the buckets owned by a user and fill up an RGWUserBuckets with them.
  * Returns: 0 on success, -ERR# on failure.
  */
-int rgw_read_user_buckets(RGWRados *store, string user_id, RGWUserBuckets& buckets,
+int rgw_read_user_buckets(RGWRados *store, const rgw_user& user_id, RGWUserBuckets& buckets,
                           const string& marker, uint64_t max, bool need_stats)
 {
   int ret;
@@ -75,19 +76,21 @@ int rgw_read_user_buckets(RGWRados *store, string user_id, RGWUserBuckets& bucke
  * This completely overwrites any previously-stored list, so be careful!
  * Returns 0 on success, -ERR# otherwise.
  */
-int rgw_write_buckets_attr(RGWRados *store, string user_id, RGWUserBuckets& buckets)
+int rgw_write_buckets_attr(RGWRados *store, rgw_user& user_id, RGWUserBuckets& buckets)
 {
   bufferlist bl;
   buckets.encode(bl);
 
-  rgw_obj obj(store->zone.user_uid_pool, user_id);
+  string oid = user_id.to_str();
+
+  rgw_obj obj(store->zone.user_uid_pool, oid);
 
   int ret = store->set_attr(NULL, obj, RGW_ATTR_BUCKETS, bl);
 
   return ret;
 }
 
-int rgw_add_bucket(RGWRados *store, string user_id, rgw_bucket& bucket)
+int rgw_add_bucket(RGWRados *store, const rgw_user& user_id, rgw_bucket& bucket)
 {
   int ret;
   string& bucket_name = bucket.name;
@@ -113,7 +116,7 @@ int rgw_add_bucket(RGWRados *store, string user_id, rgw_bucket& bucket)
   return ret;
 }
 
-int rgw_remove_user_bucket_info(RGWRados *store, string user_id, rgw_bucket& bucket)
+int rgw_remove_user_bucket_info(RGWRados *store, rgw_user& user_id, rgw_bucket& bucket)
 {
   int ret;
 
@@ -132,7 +135,7 @@ int rgw_remove_user_bucket_info(RGWRados *store, string user_id, rgw_bucket& buc
   return ret;
 }
 
-int RGWBucket::create_bucket(string bucket_str, string& user_id, string& display_name)
+int RGWBucket::create_bucket(string bucket_str, rgw_user& user_id, string& display_name)
 {
   RGWAccessControlPolicy policy, old_policy;
   map<string, bufferlist> attrs;
@@ -188,7 +191,7 @@ static void dump_mulipart_index_results(list<std::string>& objs_to_unlink,
   f->close_section();
 }
 
-void check_bad_user_bucket_mapping(RGWRados *store, const string& user_id, bool fix)
+void check_bad_user_bucket_mapping(RGWRados *store, const rgw_user& user_id, bool fix)
 {
   RGWUserBuckets user_buckets;
   bool done;
@@ -383,7 +386,6 @@ int RGWBucket::link(RGWBucketAdminOpState& op_state, std::string *err_msg)
   std::string display_name = op_state.get_user_display_name();
   rgw_bucket bucket = op_state.get_bucket();
 
-  string uid_str(user_id);
   bufferlist aclbl;
   rgw_obj obj(bucket, no_oid);
 
@@ -402,7 +404,7 @@ int RGWBucket::link(RGWBucketAdminOpState& op_state, std::string *err_msg)
 
     r = rgw_remove_user_bucket_info(store, owner.get_id(), bucket);
     if (r < 0) {
-      set_err_msg(err_msg, "could not unlink policy from user " + owner.get_id());
+      set_err_msg(err_msg, "could not unlink policy from user " + owner.get_id().to_str());
       return r;
     }
 
@@ -432,7 +434,7 @@ int RGWBucket::link(RGWBucketAdminOpState& op_state, std::string *err_msg)
       return r;
   } else {
     // the bucket seems not to exist, so we should probably create it...
-    r = create_bucket(bucket_name.c_str(), uid_str, display_name);
+    r = create_bucket(bucket_name.c_str(), user_id, display_name);
     if (r < 0) {
       set_err_msg(err_msg, "error linking bucket to user r=" + cpp_strerror(-r));
     }
@@ -851,7 +853,7 @@ static int bucket_stats(RGWRados *store, std::string&  bucket_name, Formatter *f
 
   formatter->dump_string("id", bucket.bucket_id);
   formatter->dump_string("marker", bucket.marker);
-  formatter->dump_string("owner", bucket_info.owner);
+  formatter->dump_string("owner", bucket_info.owner.to_str());
   dump_bucket_usage(stats, formatter);
   formatter->close_section();
 

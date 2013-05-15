@@ -24,9 +24,10 @@ void RGWOp_User_Info::execute()
 {
   RGWUserAdminOpState op_state;
 
-  std::string uid;
+  std::string uid_str;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
 
   op_state.set_user_id(uid);
 
@@ -49,7 +50,7 @@ public:
 
 void RGWOp_User_Create::execute()
 {
-  std::string uid;
+  std::string uid_str;
   std::string display_name;
   std::string email;
   std::string access_key;
@@ -65,7 +66,9 @@ void RGWOp_User_Create::execute()
 
   RGWUserAdminOpState op_state;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_string(s, "display-name", display_name, &display_name);
   RESTArgs::get_string(s, "email", email, &email);
   RESTArgs::get_string(s, "access-key", access_key, &access_key);
@@ -132,7 +135,7 @@ public:
 
 void RGWOp_User_Modify::execute()
 {
-  std::string uid;
+  std::string uid_str;
   std::string display_name;
   std::string email;
   std::string access_key;
@@ -148,7 +151,9 @@ void RGWOp_User_Modify::execute()
 
   RGWUserAdminOpState op_state;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_string(s, "display-name", display_name, &display_name);
   RESTArgs::get_string(s, "email", email, &email);
   RESTArgs::get_string(s, "access-key", access_key, &access_key);
@@ -214,12 +219,14 @@ public:
 
 void RGWOp_User_Remove::execute()
 {
-  std::string uid;
+  std::string uid_str;
   bool purge_data;
 
   RGWUserAdminOpState op_state;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_bool(s, "purge-data", false, &purge_data);
 
   // FIXME: no double checking
@@ -247,7 +254,7 @@ public:
 
 void RGWOp_Subuser_Create::execute()
 {
-  std::string uid;
+  std::string uid_str;
   std::string subuser;
   std::string secret_key;
   std::string perm_str;
@@ -261,7 +268,9 @@ void RGWOp_Subuser_Create::execute()
 
   RGWUserAdminOpState op_state;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_string(s, "subuser", subuser, &subuser);
   RESTArgs::get_string(s, "secret-key", secret_key, &secret_key);
   RESTArgs::get_string(s, "access", perm_str, &perm_str);
@@ -316,7 +325,7 @@ public:
 
 void RGWOp_Subuser_Modify::execute()
 {
-  std::string uid;
+  std::string uid_str;
   std::string subuser;
   std::string secret_key;
   std::string key_type_str;
@@ -329,7 +338,9 @@ void RGWOp_Subuser_Modify::execute()
 
   bool gen_secret;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_string(s, "subuser", subuser, &subuser);
   RESTArgs::get_string(s, "secret-key", secret_key, &secret_key);
   RESTArgs::get_string(s, "access", perm_str, &perm_str);
@@ -381,13 +392,15 @@ public:
 
 void RGWOp_Subuser_Remove::execute()
 {
-  std::string uid;
+  std::string uid_str;
   std::string subuser;
   bool purge_keys;
 
   RGWUserAdminOpState op_state;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_string(s, "subuser", subuser, &subuser);
   RESTArgs::get_bool(s, "purge-keys", true, &purge_keys);
 
@@ -420,7 +433,7 @@ public:
 
 void RGWOp_Key_Create::execute()
 {
-  std::string uid;
+  std::string uid_str;
   std::string subuser;
   std::string access_key;
   std::string secret_key;
@@ -431,7 +444,9 @@ void RGWOp_Key_Create::execute()
 
   RGWUserAdminOpState op_state;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_string(s, "subuser", subuser, &subuser);
   RESTArgs::get_string(s, "access-key", access_key, &access_key);
   RESTArgs::get_string(s, "secret-key", secret_key, &secret_key);
@@ -482,7 +497,7 @@ public:
 
 void RGWOp_Key_Remove::execute()
 {
-  std::string uid;
+  std::string uid_str;
   std::string subuser;
   std::string access_key;
   std::string key_type_str;
@@ -491,7 +506,9 @@ void RGWOp_Key_Remove::execute()
 
   RGWUserAdminOpState op_state;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_string(s, "subuser", subuser, &subuser);
   RESTArgs::get_string(s, "access-key", access_key, &access_key);
   RESTArgs::get_string(s, "key-type", key_type_str, &key_type_str);
@@ -534,12 +551,14 @@ public:
 
 void RGWOp_Caps_Add::execute()
 {
-  std::string uid;
+  std::string uid_str;
   std::string caps;
 
   RGWUserAdminOpState op_state;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_string(s, "user-caps", caps, &caps);
 
   // FIXME: no double checking
@@ -568,12 +587,14 @@ public:
 
 void RGWOp_Caps_Remove::execute()
 {
-  std::string uid;
+  std::string uid_str;
   std::string caps;
 
   RGWUserAdminOpState op_state;
 
-  RESTArgs::get_string(s, "uid", uid, &uid);
+  RESTArgs::get_string(s, "uid", uid_str, &uid_str);
+  rgw_user uid(uid_str);
+
   RESTArgs::get_string(s, "user-caps", caps, &caps);
 
   // FIXME: no double checking

@@ -297,7 +297,8 @@ static int parse_grantee_str(RGWRados *store, string& grantee_str,
 
     grant.set_canon(info.user_id, info.display_name, rgw_perm);
   } else if (strcasecmp(id_type.c_str(), "id") == 0) {
-    ret = rgw_get_user_info_by_uid(store, id_val, info);
+    rgw_user user(id_val);
+    ret = rgw_get_user_info_by_uid(store, user, info);
     if (ret < 0)
       return ret;
 
@@ -347,7 +348,7 @@ int RGWAccessControlList_S3::create_canned(ACLOwner& owner, ACLOwner& bucket_own
 
   ACLGrant owner_grant;
 
-  string bid = bucket_owner.get_id();
+  rgw_user bid = bucket_owner.get_id();
   string bname = bucket_owner.get_display_name();
 
   /* owner gets full control */
@@ -479,16 +480,18 @@ int RGWAccessControlPolicy_S3::rebuild(RGWRados *store, ACLOwner *owner, RGWAcce
     ACLGranteeType& type = src_grant.get_type();
     ACLGrant new_grant;
     bool grant_ok = false;
-    string uid;
+    rgw_user uid;
     RGWUserInfo grant_user;
     switch (type.get_type()) {
     case ACL_TYPE_EMAIL_USER:
       {
         string email;
-        if (!src_grant.get_id(email)) {
+        rgw_user u;
+        if (!src_grant.get_id(u)) {
           ldout(cct, 0) << "ERROR: src_grant.get_id() failed" << dendl;
           return -EINVAL;
         }
+        email = u.id;
         ldout(cct, 10) << "grant user email=" << email << dendl;
         if (rgw_get_user_info_by_email(store, email, grant_user) < 0) {
           ldout(cct, 10) << "grant user email not found or other error" << dendl;
@@ -512,7 +515,7 @@ int RGWAccessControlPolicy_S3::rebuild(RGWRados *store, ACLOwner *owner, RGWAcce
           ACLPermission& perm = src_grant.get_permission();
           new_grant.set_canon(uid, grant_user.display_name, perm.get_permissions());
           grant_ok = true;
-          string new_id;
+          rgw_user new_id;
           new_grant.get_id(new_id);
           ldout(cct, 10) << "new grant: " << new_id << ":" << grant_user.display_name << dendl;
         }
