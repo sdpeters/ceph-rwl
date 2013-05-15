@@ -589,7 +589,7 @@ int bucket_stats(rgw_bucket& bucket, Formatter *formatter)
   
   formatter->dump_string("id", bucket.bucket_id);
   formatter->dump_string("marker", bucket.marker);
-  formatter->dump_string("owner", bucket_info.owner);
+  ::encode_json("owner", bucket_info.owner, formatter);
   formatter->dump_int("mtime", mtime);
   formatter->dump_string("ver", bucket_ver);
   formatter->dump_string("master_ver", master_ver);
@@ -916,7 +916,8 @@ int main(int argc, char **argv)
   global_init(NULL, args, CEPH_ENTITY_TYPE_CLIENT, CODE_ENVIRONMENT_UTILITY, 0);
   common_init_finish(g_ceph_context);
 
-  std::string user_id, access_key, secret_key, user_email, display_name;
+  rgw_user user_id;
+  std::string access_key, secret_key, user_email, display_name;
   std::string bucket_name, pool_name, object;
   std::string date, subuser, access, format;
   std::string start_date, end_date;
@@ -998,7 +999,7 @@ int main(int argc, char **argv)
       usage();
       return 0;
     } else if (ceph_argparse_witharg(args, i, &val, "-i", "--uid", (char*)NULL)) {
-      user_id = val;
+      user_id.from_str(val);
     } else if (ceph_argparse_witharg(args, i, &val, "--access-key", (char*)NULL)) {
       access_key = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--subuser", (char*)NULL)) {
@@ -1811,7 +1812,7 @@ int main(int argc, char **argv)
 	return -r;
       }
       formatter->dump_string("bucket_id", entry.bucket_id);
-      formatter->dump_string("bucket_owner", entry.bucket_owner);
+      formatter->dump_string("bucket_owner", entry.bucket_owner.to_str());
       formatter->dump_string("bucket", entry.bucket);
 
       uint64_t agg_time = 0;

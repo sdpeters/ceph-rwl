@@ -83,9 +83,11 @@ public:
 
   bool xml_end(const char *el);
   void to_xml(ostream& out) {
-    if (id.empty())
+    string s;
+    id.to_str(s);
+    if (s.empty())
       return;
-    out << "<Owner>" << "<ID>" << id << "</ID>";
+    out << "<Owner>" << "<ID>" << s << "</ID>";
     if (!display_name.empty())
       out << "<DisplayName>" << display_name << "</DisplayName>";
     out << "</Owner>";
