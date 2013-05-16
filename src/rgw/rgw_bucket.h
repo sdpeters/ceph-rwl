@@ -101,6 +101,7 @@ extern void check_bad_user_bucket_mapping(RGWRados *store, const rgw_user& user_
 
 struct RGWBucketAdminOpState {
   rgw_user uid;
+  std::string tenant;
   std::string display_name;
   std::string bucket_name;
   std::string bucket_id;
@@ -123,6 +124,10 @@ struct RGWBucketAdminOpState {
   void set_user_id(rgw_user& user_id) {
     if (!user_id.empty())
       uid = user_id;
+    tenant = uid.tenant;
+  }
+  void set_tenant(string& t) {
+    tenant = t;
   }
   void set_bucket_name(std::string& bucket_str) {
     bucket_name = bucket_str; 
@@ -135,6 +140,7 @@ struct RGWBucketAdminOpState {
   std::string& get_user_display_name() { return display_name; };
   std::string& get_bucket_name() { return bucket_name; };
   std::string& get_object_name() { return object_name; };
+  std::string& get_tenant() { return tenant; };
 
   rgw_bucket& get_bucket() { return bucket; };
   void set_bucket(rgw_bucket& _bucket) {
@@ -166,6 +172,7 @@ class RGWBucket
   RGWAccessHandle handle;
 
   rgw_user user_id;
+  std::string tenant;
   std::string bucket_name;
 
   bool failure;
@@ -176,7 +183,7 @@ public:
   RGWBucket() : store(NULL), handle(NULL), failure(false) {}
   int init(RGWRados *storage, RGWBucketAdminOpState& op_state);
 
-  int create_bucket(string bucket_str, rgw_user& user_id, string& display_name);
+  int create_bucket(string& bucket_str, rgw_user& user_id, string& display_name);
   
   int check_bad_index_multipart(RGWBucketAdminOpState& op_state,
           list<std::string>& objs_to_unlink, std::string *err_msg = NULL);

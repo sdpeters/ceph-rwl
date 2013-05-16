@@ -375,7 +375,7 @@ class RGWRados
   int complete_atomic_overwrite(RGWRadosCtx *rctx, RGWObjState *state, rgw_obj& obj);
 
   int update_placement_map();
-  int select_bucket_placement(std::string& bucket_name, rgw_bucket& bucket);
+  int select_bucket_placement(std::string& tenant, std::string& bucket_name, rgw_bucket& bucket);
   int store_bucket_info(RGWBucketInfo& info, map<string, bufferlist> *pattrs, bool exclusive);
 
 protected:
@@ -701,8 +701,10 @@ public:
 
   int decode_policy(bufferlist& bl, ACLOwner *owner);
   int get_bucket_stats(rgw_bucket& bucket, map<RGWObjCategory, RGWBucketStats>& stats);
-  virtual int get_bucket_info(void *ctx, string& bucket_name, RGWBucketInfo& info, map<string, bufferlist> *pattrs = NULL);
-  virtual int put_bucket_info(string& bucket_name, RGWBucketInfo& info, bool exclusive, map<string, bufferlist> *pattrs);
+  virtual int get_bucket_info(void *ctx, const string& tenant, const string& bucket_name,
+                              RGWBucketInfo& info, map<string, bufferlist> *pattrs = NULL);
+  virtual int put_bucket_info(const string& tenant, const string& bucket_name, RGWBucketInfo& info,
+                              bool exclusive, map<string, bufferlist> *pattrs);
 
   int cls_rgw_init_index(librados::IoCtx& io_ctx, librados::ObjectWriteOperation& op, string& oid);
   int cls_obj_prepare_op(rgw_bucket& bucket, uint8_t op, string& tag,

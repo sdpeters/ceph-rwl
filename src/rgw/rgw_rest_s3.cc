@@ -2006,6 +2006,8 @@ int RGW_Auth_S3::authorize(RGWRados *store, struct req_state *s)
     return -EPERM;
   }
 
+  s->tenant = s->user.user_id.tenant;
+
   // populate the owner info
   s->owner.set_id(s->user.user_id);
   s->owner.set_name(s->user.display_name);

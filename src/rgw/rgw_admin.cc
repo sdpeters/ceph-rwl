@@ -339,7 +339,7 @@ static void dump_bucket_usage(map<RGWObjCategory, RGWBucketStats>& stats, Format
 int bucket_stats(rgw_bucket& bucket, Formatter *formatter)
 {
   RGWBucketInfo bucket_info;
-  int r = store->get_bucket_info(NULL, bucket.name, bucket_info);
+  int r = store->get_bucket_info(NULL, bucket.tenant, bucket.name, bucket_info);
   if (r < 0)
     return r;
 
@@ -371,11 +371,11 @@ public:
   }
 };
 
-static int init_bucket(string& bucket_name, rgw_bucket& bucket)
+static int init_bucket(string& tenant, string& bucket_name, rgw_bucket& bucket)
 {
   if (!bucket_name.empty()) {
     RGWBucketInfo bucket_info;
-    int r = store->get_bucket_info(NULL, bucket_name, bucket_info);
+    int r = store->get_bucket_info(NULL, tenant, bucket_name, bucket_info);
     if (r < 0) {
       cerr << "could not get bucket info for bucket=" << bucket_name << std::endl;
       return r;
@@ -455,6 +455,7 @@ int main(int argc, char **argv)
   common_init_finish(g_ceph_context);
 
   rgw_user user_id;
+  string tenant;
   std::string access_key, secret_key, user_email, display_name;
   std::string bucket_name, pool_name, object;
   std::string date, subuser, access, format;
@@ -500,7 +501,14 @@ int main(int argc, char **argv)
       usage();
       return 0;
     } else if (ceph_argparse_witharg(args, i, &val, "-i", "--uid", (char*)NULL)) {
-      user_id.from_str(val);
+      string s = val;
+      if (!tenant.empty()) {
+        s = tenant + ":" + val;
+      }
+      user_id.from_str(s);
+      tenant = user_id.tenant;
+    } else if (ceph_argparse_witharg(args, i, &val, "--tenant", (char*)NULL)) {
+      tenant = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--access-key", (char*)NULL)) {
       access_key = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--subuser", (char*)NULL)) {
@@ -716,6 +724,7 @@ int main(int argc, char **argv)
 
   /* populate bucket operation */
   bucket_op.set_bucket_name(bucket_name);
+  bucket_op.set_tenant(tenant);
   bucket_op.set_object(object);
   bucket_op.set_check_objects(check_objects);
   bucket_op.set_delete_children(delete_child_objects);
@@ -1115,7 +1124,7 @@ next:
   }
 
   if (opt_cmd == OPT_OBJECT_RM) {
-    int ret = init_bucket(bucket_name, bucket);
+    int ret = init_bucket(tenant, bucket_name, bucket);
     if (ret < 0) {
       cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -1129,7 +1138,7 @@ next:
   }
 
   if (opt_cmd == OPT_OBJECT_UNLINK) {
-    int ret = init_bucket(bucket_name, bucket);
+    int ret = init_bucket(tenant, bucket_name, bucket);
     if (ret < 0) {
       cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
       return -ret;

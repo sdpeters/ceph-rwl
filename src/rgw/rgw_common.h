@@ -493,6 +493,7 @@ struct RGWUserInfo
 WRITE_CLASS_ENCODER(RGWUserInfo)
 
 struct rgw_bucket {
+  std::string tenant;
   std::string name;
   std::string pool;
   std::string marker;
@@ -503,19 +504,20 @@ struct rgw_bucket {
     assert(*n == '.'); // only rgw private buckets should be initialized without pool
     pool = n;
   }
-  rgw_bucket(const char *n, const char *p, const char *m, const char *id) :
-    name(n), pool(p), marker(m), bucket_id(id) {}
 
+  rgw_bucket(const char *t, const char *n, const char *p, const char *m, const char *id) :
+    tenant(t), name(n), pool(p), marker(m), bucket_id(id) {}
   void encode(bufferlist& bl) const {
-     ENCODE_START(4, 3, bl);
+     ENCODE_START(5, 3, bl);
     ::encode(name, bl);
     ::encode(pool, bl);
     ::encode(marker, bl);
     ::encode(bucket_id, bl);
+    ::encode(tenant, bl);
     ENCODE_FINISH(bl);
   }
   void decode(bufferlist::iterator& bl) {
-    DECODE_START_LEGACY_COMPAT_LEN(4, 3, 3, bl);
+    DECODE_START_LEGACY_COMPAT_LEN(5, 3, 3, bl);
     ::decode(name, bl);
     ::decode(pool, bl);
     if (struct_v >= 2) {
@@ -530,6 +532,8 @@ struct rgw_bucket {
         ::decode(bucket_id, bl);
       }
     }
+    if (struct_v >= 5)
+      ::decode(tenant, bl);
     DECODE_FINISH(bl);
   }
   void dump(Formatter *f) const;
@@ -559,6 +563,7 @@ struct RGWBucketInfo
      ::encode(bucket, bl);
      ::encode(owner.id, bl);
      ::encode(flags, bl);
+     ::encode(owner, bl);
      ENCODE_FINISH(bl);
   }
   void decode(bufferlist::iterator& bl) {
@@ -637,6 +642,7 @@ struct req_state {
    bool has_bad_meta;
 
    RGWUserInfo user; 
+   string tenant;
    RGWAccessControlPolicy *bucket_acl;
    RGWAccessControlPolicy *object_acl;
    RGWCORSConfiguration   *bucket_cors;

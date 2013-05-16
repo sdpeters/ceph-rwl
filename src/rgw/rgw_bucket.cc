@@ -135,7 +135,7 @@ int rgw_remove_user_bucket_info(RGWRados *store, rgw_user& user_id, rgw_bucket& 
   return ret;
 }
 
-int RGWBucket::create_bucket(string bucket_str, rgw_user& user_id, string& display_name)
+int RGWBucket::create_bucket(string& bucket_str, rgw_user& user_id, string& display_name)
 {
   RGWAccessControlPolicy policy, old_policy;
   map<string, bufferlist> attrs;
@@ -146,11 +146,11 @@ int RGWBucket::create_bucket(string bucket_str, rgw_user& user_id, string& displ
 
   int ret;
 
-  // defaule policy (private)
+  // default policy (private)
   policy.create_default(user_id, display_name);
   policy.encode(aclbl);
 
-  ret = store->get_bucket_info(NULL, bucket_str, bucket_info);
+  ret = store->get_bucket_info(NULL, user_id.tenant, bucket_str, bucket_info);
   if (ret < 0)
     return ret;
 
@@ -218,7 +218,7 @@ void check_bad_user_bucket_mapping(RGWRados *store, const rgw_user& user_id, boo
       rgw_bucket& bucket = bucket_ent.bucket;
 
       RGWBucketInfo bucket_info;
-      int r = store->get_bucket_info(NULL, bucket.name, bucket_info);
+      int r = store->get_bucket_info(NULL, user_id.tenant, bucket.name, bucket_info);
       if (r < 0) {
         ldout(store->ctx(), 0) << "could not get bucket info for bucket=" << bucket << dendl;
         continue;
@@ -227,6 +227,7 @@ void check_bad_user_bucket_mapping(RGWRados *store, const rgw_user& user_id, boo
       rgw_bucket& actual_bucket = bucket_info.bucket;
 
       if (actual_bucket.name.compare(bucket.name) != 0 ||
+          actual_bucket.tenant.compare(bucket.tenant) != 0 ||
           actual_bucket.pool.compare(bucket.pool) != 0 ||
           actual_bucket.marker.compare(bucket.marker) != 0 ||
           actual_bucket.bucket_id.compare(bucket.bucket_id) != 0) {
@@ -347,13 +348,14 @@ int RGWBucket::init(RGWRados *storage, RGWBucketAdminOpState& op_state)
 
   user_id = op_state.get_user_id();
   bucket_name = op_state.get_bucket_name();
+  tenant = op_state.get_tenant();
   RGWUserBuckets user_buckets;
 
   if (bucket_name.empty() && user_id.empty())
     return -EINVAL;
 
   if (!bucket_name.empty()) {
-    int r = store->get_bucket_info(NULL, bucket_name, bucket_info);
+    int r = store->get_bucket_info(NULL, tenant, bucket_name, bucket_info);
     if (r < 0) {
       ldout(store->ctx(), 0) << "could not get bucket info for bucket=" << bucket_name << dendl;
       return r;
@@ -434,7 +436,7 @@ int RGWBucket::link(RGWBucketAdminOpState& op_state, std::string *err_msg)
       return r;
   } else {
     // the bucket seems not to exist, so we should probably create it...
-    r = create_bucket(bucket_name.c_str(), user_id, display_name);
+    r = create_bucket(bucket_name, user_id, display_name);
     if (r < 0) {
       set_err_msg(err_msg, "error linking bucket to user r=" + cpp_strerror(-r));
     }
@@ -829,13 +831,13 @@ int RGWBucketAdminOp::remove_object(RGWRados *store, RGWBucketAdminOpState& op_s
   return bucket.remove_object(op_state);
 }
 
-static int bucket_stats(RGWRados *store, std::string&  bucket_name, Formatter *formatter)
+static int bucket_stats(RGWRados *store, std::string& tenant, std::string&  bucket_name, Formatter *formatter)
 {
   RGWBucketInfo bucket_info;
   rgw_bucket bucket;
   map<RGWObjCategory, RGWBucketStats> stats;
 
-  int r = store->get_bucket_info(NULL, bucket_name, bucket_info);
+  int r = store->get_bucket_info(NULL, tenant, bucket_name, bucket_info);
   if (r < 0)
     return r;
 
@@ -878,6 +880,7 @@ int RGWBucketAdminOp::info(RGWRados *store, RGWBucketAdminOpState& op_state,
   size_t max_entries = cct->_conf->rgw_list_buckets_max_chunk;
 
   bool show_stats = op_state.will_fetch_stats();
+  string tenant = op_state.get_tenant();
   if (op_state.is_user_op()) {
     formatter->open_array_section("buckets");
 
@@ -896,7 +899,7 @@ int RGWBucketAdminOp::info(RGWRados *store, RGWBucketAdminOpState& op_state,
       for (iter = m.begin(); iter != m.end(); ++iter) {
         std::string  obj_name = iter->first;
         if (show_stats)
-          bucket_stats(store, obj_name, formatter);
+          bucket_stats(store, tenant, obj_name, formatter);
         else
           formatter->dump_string("bucket", obj_name);
 
@@ -909,7 +912,7 @@ int RGWBucketAdminOp::info(RGWRados *store, RGWBucketAdminOpState& op_state,
 
     formatter->close_section();
   } else if (!bucket_name.empty()) {
-    bucket_stats(store, bucket_name, formatter);
+    bucket_stats(store, tenant, bucket_name, formatter);
   } else {
     RGWAccessHandle handle;
 
@@ -918,7 +921,7 @@ int RGWBucketAdminOp::info(RGWRados *store, RGWBucketAdminOpState& op_state,
       while (store->list_buckets_next(obj, &handle) >= 0) {
 	formatter->dump_string("bucket", obj.name);
         if (show_stats)
-          bucket_stats(store, obj.name, formatter);
+          bucket_stats(store, tenant, obj.name, formatter);
       }
     }
   }
