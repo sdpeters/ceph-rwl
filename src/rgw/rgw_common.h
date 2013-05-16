@@ -502,17 +502,9 @@ struct rgw_bucket {
   rgw_bucket(const char *n) : name(n) {
     assert(*n == '.'); // only rgw private buckets should be initialized without pool
     pool = n;
-    marker = "";
   }
   rgw_bucket(const char *n, const char *p, const char *m, const char *id) :
     name(n), pool(p), marker(m), bucket_id(id) {}
-
-  void clear() {
-    name = "";
-    pool = "";
-    marker = "";
-    bucket_id = "";
-  }
 
   void encode(bufferlist& bl) const {
      ENCODE_START(4, 3, bl);
@@ -683,13 +675,6 @@ struct RGWObjEnt {
   string content_type;
 
   RGWObjEnt() : size(0), mtime(0) {}
-
-  void clear() { // not clearing etag
-    name="";
-    size = 0;
-    mtime = 0;
-    content_type="";
-  }
 };
 
 /** Store basic data on bucket */
@@ -737,13 +722,6 @@ struct RGWBucketEnt {
   }
   void dump(Formatter *f) const;
   static void generate_test_instances(list<RGWBucketEnt*>& o);
-  void clear() {
-    bucket.clear();
-    size = 0;
-    size_rounded = 0;
-    mtime = 0;
-    count = 0;
-  }
 };
 WRITE_CLASS_ENCODER(RGWBucketEnt)
 
