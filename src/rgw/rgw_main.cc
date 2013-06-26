@@ -42,6 +42,8 @@
 #include "rgw_rest_bucket.h"
 #include "rgw_rest_metadata.h"
 #include "rgw_rest_log.h"
+#include "rgw_replica_log.h"
+#include "rgw_rest_replica_log.h"
 #include "rgw_swift_auth.h"
 #include "rgw_swift.h"
 #include "rgw_log.h"
@@ -506,6 +508,7 @@ int main(int argc, const char **argv)
     /*Registering resource for /admin/metadata */
     admin_resource->register_resource("metadata", new RGWRESTMgr_Metadata);
     admin_resource->register_resource("log", new RGWRESTMgr_Log);
+    admin_resource->register_resource("replica_log", new RGWRESTMgr_ReplicaLog);
     rest.register_resource(g_conf->rgw_admin_entry, admin_resource);
   }
 
