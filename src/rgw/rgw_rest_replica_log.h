@@ -15,7 +15,6 @@
 #define CEPH_RGW_REST_REPLICA_LOG_H
 
 class RGWOp_OBJLog_GetBounds : public RGWRESTOp {
-  int http_ret;
   string prefix;
   string obj_type;
   utime_t oldest_time;
@@ -24,7 +23,7 @@ class RGWOp_OBJLog_GetBounds : public RGWRESTOp {
 
 public:
   RGWOp_OBJLog_GetBounds(const char *_prefix, const char *type) 
-    : http_ret(0) , prefix(_prefix), obj_type(type){}
+    : prefix(_prefix), obj_type(type){}
   ~RGWOp_OBJLog_GetBounds() {}
 
   int check_caps(RGWUserCaps& caps) {
@@ -84,12 +83,11 @@ public:
 };
 
 class RGWOp_BILog_GetBounds : public RGWRESTOp {
-  int http_ret;
   utime_t oldest_time;
   string lowest_bound;
   list<cls_replica_log_progress_marker> entries;
 public:
-  RGWOp_BILog_GetBounds() : http_ret(0) {}
+  RGWOp_BILog_GetBounds() {}
   ~RGWOp_BILog_GetBounds() {}
 
   int check_caps(RGWUserCaps& caps) {

@@ -24,51 +24,7 @@
 #include "common/errno.h"
 
 #define dout_subsys ceph_subsys_rgw
-
-static int get_data(req_state *s, bufferlist& bl) {
-  size_t cl = 0;
-  char *data;
-  int read_len;
-
-  if (s->length)
-    cl = atoll(s->length);
-  if (cl) {
-    data = (char *)malloc(cl + 1);
-    if (!data) {
-       return -ENOMEM;
-    }
-    int r = s->cio->read(data, cl, &read_len);
-    if (cl != (size_t)read_len) {
-      dout(10) << "cio->read incomplete" << dendl;
-    }
-    if (r < 0) {
-      free(data);
-      return r;
-    }
-    bl.append(data, read_len);
-  } else {
-    int chunk_size = CEPH_PAGE_SIZE; 
-    const char *enc = s->info.env->get("HTTP_TRANSFER_ENCODING");
-    if (!enc || strcmp(enc, "chunked")) {
-      return -ERR_LENGTH_REQUIRED;
-    }
-    data = (char *)malloc(chunk_size);
-    if (!data) {
-      return -ENOMEM;
-    }
-    do {
-      int r = s->cio->read(data, chunk_size, &read_len);
-      if (r < 0) {
-        free(data);
-        return r;
-      }
-      bl.append(data, read_len);
-    } while ((read_len == chunk_size));
-  }
-
-  free(data);
-  return 0;
-}
+#define REPLICA_INPUT_MAX_LEN (512*1024)
 
 static int parse_to_utime(string& in, utime_t& out) {
   struct tm tm;
@@ -81,10 +37,11 @@ static int parse_to_utime(string& in, utime_t& out) {
   return 0;
 }
 
-static int parse_input_list(bufferlist& bl, const char *el_name, list<pair<string, utime_t> >& out) {
+static int parse_input_list(const char *data, int data_len, 
+                            const char *el_name, list<pair<string, utime_t> >& out) {
   JSONParser parser;
 
-  if (!parser.parse(bl.c_str(), bl.length())) {
+  if (!parser.parse(data, data_len)) {
     return -EINVAL;
   }
   if (!parser.is_array()) {
@@ -120,19 +77,20 @@ static int parse_input_list(bufferlist& bl, const char *el_name, list<pair<strin
 }
 
 static int get_input_list(req_state *s, const char *element_name, list<pair<string, utime_t> >& out) {
-  bufferlist bl;
-  int rv;
+  int rv, data_len;
+  char *data;
 
-  if ((rv = get_data(s, bl)) < 0) {
+  if ((rv = rgw_rest_read_all_input(s, &data, &data_len, REPLICA_INPUT_MAX_LEN)) < 0) {
     dout(5) << "Error - reading input data - " << rv << dendl;
     return rv;
   }
   
-  if ((rv = parse_input_list(bl, element_name, out)) < 0) {
+  if ((rv = parse_input_list(data, data_len, element_name, out)) < 0) {
     dout(5) << "Error parsing input list - " << rv << dendl;
     return rv;
   }
 
+  free(data);
   return 0;
 }
 
