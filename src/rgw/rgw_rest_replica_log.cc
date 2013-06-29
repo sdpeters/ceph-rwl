@@ -245,7 +245,7 @@ static int bucket_name_to_bucket(RGWRados *store, string& bucket_str, rgw_bucket
   RGWObjVersionTracker objv_tracker;
   time_t mtime;
   
-  int r = store->get_bucket_info(NULL, bucket_str, bucket_info, &objv_tracker, &mtime);
+  int r = store->get_bucket_info(NULL, bucket_str, bucket_info, &mtime);
   if (r < 0) {
     dout(5) << "could not get bucket info for bucket=" << bucket_str << dendl;
     return -EINVAL;
