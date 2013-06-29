@@ -8,9 +8,25 @@
  * Copyright 2013 Inktank
  */
 
+#include "common/ceph_json.h"
+
 #include "rgw_replica_log.h"
 #include "cls/replica_log/cls_replica_log_client.h"
 #include "rgw_rados.h"
+
+
+void RGWReplicaBounds::dump(Formatter *f) const
+{
+  encode_json("marker", marker, f);
+  encode_json("oldest_time", oldest_time, f);
+  encode_json("markers", markers, f);
+}
+
+void RGWReplicaBounds::decode_json(JSONObj *obj) {
+  JSONDecoder::decode_json("marker", marker, obj);
+  JSONDecoder::decode_json("oldest_time", oldest_time, obj);
+  JSONDecoder::decode_json("markers", markers, obj);
+};
 
 RGWReplicaLogger::RGWReplicaLogger(RGWRados *_store) :
     cct(_store->cct), store(_store) {}
@@ -19,8 +35,7 @@ int RGWReplicaLogger::open_ioctx(librados::IoCtx& ctx, const string& pool)
 {
   int r = store->rados->ioctx_create(pool.c_str(), ctx);
   if (r < 0) {
-    lderr(cct) << "ERROR: could not open rados pool "
-	       << pool << dendl;
+    lderr(cct) << "ERROR: could not open rados pool " << pool << dendl;
   }
   return r;
 }
@@ -60,8 +75,7 @@ int RGWReplicaLogger::delete_bound(const string& oid, const string& pool,
 }
 
 int RGWReplicaLogger::get_bounds(const string& oid, const string& pool,
-                                 string& marker, utime_t& oldest_time,
-                                 list<cls_replica_log_progress_marker>& markers)
+                                 RGWReplicaBounds& bounds)
 {
   librados::IoCtx ioctx;
   int r = open_ioctx(ioctx, pool);
@@ -69,7 +83,7 @@ int RGWReplicaLogger::get_bounds(const string& oid, const string& pool,
     return r;
   }
 
-  return cls_replica_log_get_bounds(ioctx, oid, marker, oldest_time, markers);
+  return cls_replica_log_get_bounds(ioctx, oid, bounds.marker, bounds.oldest_time, bounds.markers);
 }
 
 void RGWReplicaLogger::get_bound_info(

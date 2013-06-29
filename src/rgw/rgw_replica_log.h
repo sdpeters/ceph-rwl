@@ -25,6 +25,16 @@ using namespace std;
 #define META_REPLICA_LOG_OBJ_PREFIX "meta.replicalog."
 #define DATA_REPLICA_LOG_OBJ_PREFIX "data.replicalog."
 
+
+struct RGWReplicaBounds {
+  string marker;
+  utime_t oldest_time;
+  list<cls_replica_log_progress_marker> markers;
+
+  void dump(Formatter *f) const;
+  void decode_json(JSONObj *obj);
+};
+
 class RGWReplicaLogger {
 protected:
   CephContext *cct;
@@ -40,8 +50,7 @@ protected:
   int delete_bound(const string& oid, const string& pool,
                    const string& daemon_id);
   int get_bounds(const string& oid, const string& pool,
-                 string& marker, utime_t& oldest_time,
-                 list<cls_replica_log_progress_marker>& markers);
+                 RGWReplicaBounds& bounds);
 
 public:
   static void get_bound_info(const cls_replica_log_progress_marker& progress,
@@ -80,12 +89,10 @@ public:
     return RGWReplicaLogger::delete_bound(oid, pool,
                                           daemon_id);
   }
-  int get_bounds(int shard, string& marker, utime_t& oldest_time,
-                 list<cls_replica_log_progress_marker>& markers) {
+  int get_bounds(int shard, RGWReplicaBounds& bounds) {
     string oid;
     get_shard_oid(shard, oid);
-    return RGWReplicaLogger::get_bounds(oid, pool,
-                                        marker, oldest_time, markers);
+    return RGWReplicaLogger::get_bounds(oid, pool, bounds);
   }
 };
 
@@ -104,10 +111,9 @@ public:
     return RGWReplicaLogger::delete_bound(prefix+bucket.name, pool,
                                           daemon_id);
   }
-  int get_bounds(const rgw_bucket& bucket, string& marker, utime_t& oldest_time,
-                 list<cls_replica_log_progress_marker>& markers) {
+  int get_bounds(const rgw_bucket& bucket, RGWReplicaBounds& bounds) {
     return RGWReplicaLogger::get_bounds(prefix+bucket.name, pool,
-                                        marker, oldest_time, markers);
+                                        bounds);
   }
 };
 
