@@ -466,7 +466,7 @@ int RGWSwift::get_keystone_admin_token(std::string& token)
 {
   std::string token_url;
 
-  if (get_keystone_url(token_url) != 0)
+  if (get_keystone_url(token_url) < 0)
     return -EINVAL;
   if (g_conf->rgw_keystone_admin_token.empty()) {
     token_url.append("v2.0/tokens");
@@ -491,9 +491,9 @@ int RGWSwift::get_keystone_admin_token(std::string& token)
     if (t.parse(cct, token_bl) != 0)
       return -EINVAL;
     token = t.token_id;
-  }
-  else
+  } else {
     token = g_conf->rgw_keystone_admin_token;
+  }
   return 0; 
 }
 
@@ -506,9 +506,9 @@ int RGWSwift::check_revoked()
   bufferlist bl;
   RGWGetRevokedTokens req(&bl);
 
-  if (get_keystone_admin_token(token) != 0)
+  if (get_keystone_admin_token(token) < 0)
     return -EINVAL;
-  if (get_keystone_url(url) != 0)
+  if (get_keystone_url(url) < 0)
     return -EINVAL;
   url.append("v2.0/tokens/revoked");
     req.append_header("X-Auth-Token", token);
@@ -707,18 +707,17 @@ int RGWSwift::validate_keystone_token(RGWRados *store, const string& token, stru
     /* can't decode, just go to the keystone server for validation */
 
     RGWValidateKeystoneToken validate(cct, &bl);
-
-    string url = g_conf->rgw_keystone_url;
-    if (url.empty()) {
-      ldout(cct, 0) << "ERROR: keystone url is not configured" << dendl;
+    std::string url;
+    std::string admin_token;
+    if (get_keystone_admin_token(admin_token) != 0)
       return -EINVAL;
-    }
-    if (url[url.size() - 1] != '/')
-      url.append("/");
+    if (get_keystone_url(url) != 0)
+      return -EINVAL;
+
     url.append("v2.0/tokens/");
     url.append(token);
 
-    validate.append_header("X-Auth-Token", g_conf->rgw_keystone_admin_token);
+    validate.append_header("X-Auth-Token", admin_token);
 
     int ret = validate.process(url.c_str());
     if (ret < 0)
