@@ -9,8 +9,6 @@ class RGWGetDataCB;
 
 class RGWRESTSimpleRequest : public RGWHTTPClient {
 protected:
-  CephContext *cct;
-
   int status;
 
   string url;
@@ -29,7 +27,7 @@ protected:
   int sign_request(RGWAccessKey& key, RGWEnv& env, req_info& info);
 public:
   RGWRESTSimpleRequest(CephContext *_cct, string& _url, list<pair<string, string> > *_headers,
-                list<pair<string, string> > *_params) : cct(_cct), status(0), url(_url), send_iter(NULL),
+                list<pair<string, string> > *_params) : RGWHTTPClient(_cct), status(0), url(_url), send_iter(NULL),
                                                         max_response(0) {
     if (_headers)
       headers = *_headers;
