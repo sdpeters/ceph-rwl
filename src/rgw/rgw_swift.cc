@@ -84,10 +84,10 @@ int RGWValidateSwiftToken::receive_header(void *ptr, size_t len)
 
 int RGWSwift::validate_token(const char *token, struct rgw_swift_auth_info *info)
 {
-  if (g_conf->rgw_swift_auth_url.empty())
+  if (cct->_conf->rgw_swift_auth_url.empty())
     return -EINVAL;
 
-  string auth_url = g_conf->rgw_swift_auth_url;
+  string auth_url = cct->_conf->rgw_swift_auth_url;
   if (auth_url[auth_url.size() - 1] != '/')
     auth_url.append("/");
   auth_url.append("token");
@@ -302,7 +302,7 @@ class RGWGetKeystoneAdminToken : public RGWHTTPClient {
   std::string post_data;
   size_t post_data_index;
 public:
-  RGWGetKeystoneAdminToken(bufferlist *_bl) : bl(_bl), post_data_index(0) {}
+  RGWGetKeystoneAdminToken(CephContext *_cct, bufferlist *_bl) : RGWHTTPClient(_cct), bl(_bl), post_data_index(0) {}
 
   void set_post_data(std::string _post_data) {
     this->post_data = _post_data;
@@ -451,7 +451,7 @@ int RGWSwift::get_keystone_url(std::string& url)
   bufferlist bl;
   RGWGetRevokedTokens req(cct, &bl);
 
-  string url = g_conf->rgw_keystone_url;
+  url = cct->_conf->rgw_keystone_url;
 
   if (url.empty()) {
     ldout(cct, 0) << "ERROR: keystone url is not configured" << dendl;
@@ -468,18 +468,18 @@ int RGWSwift::get_keystone_admin_token(std::string& token)
 
   if (get_keystone_url(token_url) < 0)
     return -EINVAL;
-  if (g_conf->rgw_keystone_admin_token.empty()) {
+  if (cct->_conf->rgw_keystone_admin_token.empty()) {
     token_url.append("v2.0/tokens");
     KeystoneToken t;
     bufferlist token_bl;
-    RGWGetKeystoneAdminToken token_req(&token_bl);
+    RGWGetKeystoneAdminToken token_req(cct, &token_bl);
     JSONFormatter jf;
     jf.open_object_section("auth");
     jf.open_object_section("passwordCredentials");
-    encode_json("username", g_conf->rgw_keystone_admin_user, &jf);
-    encode_json("password", g_conf->rgw_keystone_admin_password, &jf);
+    encode_json("username", cct->_conf->rgw_keystone_admin_user, &jf);
+    encode_json("password", cct->_conf->rgw_keystone_admin_password, &jf);
     jf.close_section();
-    encode_json("tenantName", g_conf->rgw_keystone_admin_tenant, &jf);
+    encode_json("tenantName", cct->_conf->rgw_keystone_admin_tenant, &jf);
     jf.close_section();
     std::stringstream ss;
     jf.flush(ss);
@@ -492,7 +492,7 @@ int RGWSwift::get_keystone_admin_token(std::string& token)
       return -EINVAL;
     token = t.token_id;
   } else {
-    token = g_conf->rgw_keystone_admin_token;
+    token = cct->_conf->rgw_keystone_admin_token;
   }
   return 0; 
 }
@@ -504,7 +504,7 @@ int RGWSwift::check_revoked()
   string token;
 
   bufferlist bl;
-  RGWGetRevokedTokens req(&bl);
+  RGWGetRevokedTokens req(cct, &bl);
 
   if (get_keystone_admin_token(token) < 0)
     return -EINVAL;
@@ -609,7 +609,7 @@ int RGWSwift::parse_keystone_token_response(const string& token, bufferlist& bl,
   }
 
   if (!found) {
-    ldout(cct, 0) << "user does not hold a matching role; required roles: " << g_conf->rgw_keystone_accepted_roles << dendl;
+    ldout(cct, 0) << "user does not hold a matching role; required roles: " << cct->_conf->rgw_keystone_accepted_roles << dendl;
     return -EPERM;
   }
 
