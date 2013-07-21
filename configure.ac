@@ -132,8 +132,6 @@ AX_C_PRETTY_FUNC
 # Checks for libraries.
 ACX_PTHREAD
 
-AC_CHECK_LIB([uuid], [uuid_parse], [true], AC_MSG_FAILURE([libuuid not found]))
-
 if test x"$linux" = x"yes"; then
   AC_CHECK_LIB([blkid], [blkid_devno_to_wholedisk], [true], AC_MSG_FAILURE([libblkid not found]))
 fi
@@ -177,6 +175,18 @@ AS_IF([test x"$linux" = x"yes"], [
   AC_CHECK_LIB([keyutils], [add_key], [KEYUTILS_LIB="-lkeyutils"], [
     AC_MSG_FAILURE([libkeyutils not found])])])
 AC_SUBST(KEYUTILS_LIB)
+
+#
+# Check for UUID library (defines UUID_LIBS).
+#
+UUID_LIBS=""
+saved_LIBS="${LIBS}"
+AC_SEARCH_LIBS([uuid_parse], [uuid], [], AC_MSG_FAILURE([no uuid library found]))
+AS_CASE([$ac_cv_search_uuid_parse],
+    ["none required"], [], [no], [],
+    [UUID_LIBS="${ac_cv_search_uuid_parse}"])
+LIBS="${saved_LIBS}"
+AC_SUBST([UUID_LIBS])
 
 AC_CHECK_LIB([m], [pow], [true], AC_MSG_FAILURE([libm not found]))
 AC_CHECK_FUNCS([syncfs], AC_DEFINE([HAVE_SYS_SYNCFS], [1], [we have syncfs]), [])
