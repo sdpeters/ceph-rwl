@@ -1435,7 +1435,7 @@ int KvFlatBtreeAsync::set_op(const string &key, const bufferlist &val,
   	<< err << std::endl;
       return err;
     }
-    case -EKEYREJECTED: {
+    case -ERANGE: {
       //the object needs to be split.
       do {
 	if (verbose) cout << "\t" << client_name << ": running split on "
@@ -1556,7 +1556,7 @@ int KvFlatBtreeAsync::remove_op(const string &key, index_data &idata,
       //the key does not exist in the object
       return err;
     }
-    case -EKEYREJECTED: {
+    case -ERANGE: {
       //the object needs to be split.
       do {
         if (verbose) cerr << "\t" << client_name << ": running rebalance on "

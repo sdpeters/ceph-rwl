@@ -277,7 +277,7 @@ static int check_writable_op(cls_method_context_t hctx,
 }
 
 /**
- * returns -EKEYREJECTED if size is outside of bound, according to comparator.
+ * returns -ERANGE if size is outside of bound, according to comparator.
  *
  * @bound: the limit to test
  * @comparator: should be CEPH_OSD_CMPXATTR_OP_[EQ|GT|LT]
@@ -299,17 +299,17 @@ static int assert_size_in_bound(cls_method_context_t hctx, int bound,
   switch (comparator) {
   case CEPH_OSD_CMPXATTR_OP_EQ:
     if (size != bound) {
-      return -EKEYREJECTED;
+      return -ERANGE;
     }
     break;
   case CEPH_OSD_CMPXATTR_OP_LT:
     if (size >= bound) {
-      return -EKEYREJECTED;
+      return -ERANGE;
     }
     break;
   case CEPH_OSD_CMPXATTR_OP_GT:
     if (size <= bound) {
-      return -EKEYREJECTED;
+      return -ERANGE;
     }
     break;
   default:
@@ -393,7 +393,7 @@ static int omap_insert(cls_method_context_t hctx,
 
   CLS_LOG(20, "asserting size is less than %d (bound is %d)", assert_bound, bound);
   if (old_size_int >= assert_bound) {
-    return -EKEYREJECTED;
+    return -ERANGE;
   }
 
   int new_size_int = old_size_int + omap.size() - (assert_bound - bound);
@@ -536,7 +536,7 @@ static int omap_remove(cls_method_context_t hctx,
 
   CLS_LOG(20, "asserting size is greater than %d", bound);
   if (old_size_int <= bound) {
-    return -EKEYREJECTED;
+    return -ERANGE;
   }
 
   int new_size_int = old_size_int - omap.size();
