@@ -2,6 +2,7 @@
 #define FS_CEPH_IOCTL_H
 
 #include "include/int_types.h"
+#include "acconfig.h"
 
 #if defined(__linux__)
 #include <linux/ioctl.h>

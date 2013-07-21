@@ -573,6 +573,20 @@ AC_CHECK_FUNCS([prctl])
 AC_CHECK_FUNCS([pipe2])
 AC_CHECK_FUNCS([posix_fadvise])
 
+AC_CHECK_TYPES(int8_t)
+AC_CHECK_TYPES(uint8_t)
+AC_CHECK_TYPES(int16_t)
+AC_CHECK_TYPES(uint16_t)
+AC_CHECK_TYPES(int32_t)
+AC_CHECK_TYPES(uint32_t)
+AC_CHECK_TYPES(int64_t)
+AC_CHECK_TYPES(uint64_t)
+
+dnl check for Linux types
+AC_CHECK_HEADERS([linux/types.h])
+AC_CHECK_TYPES([__u8, __s8, __u16, __s16, __u32, __s32, __u64, __s64, __le16,
+  __be16, __le32, __be32, __le64, __be64], [], [], [[#include <linux/types.h>]])
+
 # Checks for typedefs, structures, and compiler characteristics.
 #AC_HEADER_STDBOOL
 #AC_C_CONST
