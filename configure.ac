@@ -657,10 +657,15 @@ F_SETPIPE_SZ]])],
 	[AC_DEFINE([CEPH_HAVE_SETPIPE_SZ], [], [F_SETPIPE_SZ is supported])],
 	[AC_MSG_NOTICE(["F_SETPIPE_SZ not found, zero-copy may be less efficent"])])
 
+AC_CHECK_FUNC([extattr_set_fd],
+  [AC_DEFINE(HAVE_EXTATTR, 1, [Define if you have extattr_set_fd])])
 
 AC_CHECK_HEADERS([arpa/nameser_compat.h])
 AC_CHECK_FUNCS([posix_fallocate])
 AC_CHECK_HEADERS([sys/prctl.h])
+AC_CHECK_HEADERS([sys/extattr.h])
+AC_CHECK_HEADERS([sys/malloc.h])
+AC_CHECK_HEADERS([strings.h])
 AC_CHECK_FUNCS([prctl])
 AC_CHECK_FUNCS([pipe2])
 AC_CHECK_FUNCS([posix_fadvise])
