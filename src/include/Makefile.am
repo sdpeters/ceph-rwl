@@ -82,4 +82,5 @@ noinst_HEADERS += \
 	include/memory.h \
 	include/hash_namespace.h \
 	include/unordered_map.h \
-	include/unordered_set.h
+	include/unordered_set.h \
+	include/stat.h

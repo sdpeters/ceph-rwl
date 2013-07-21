@@ -578,6 +578,17 @@ AC_CHECK_FUNC([fallocate],
 	[AC_DEFINE([CEPH_HAVE_FALLOCATE], [], [fallocate(2) is supported])],
 	[])
 
+#
+# Test for time-related `struct stat` members.
+#
+
+AC_CHECK_MEMBER([struct stat.st_mtim.tv_nsec],
+  [AC_DEFINE(HAVE_STAT_TV_NSEC, 1,
+    [Define if you have struct stat.st_mtim.tv_nsec])])
+
+AC_CHECK_MEMBER([struct stat.st_mtimespec.tv_nsec],
+  [AC_DEFINE(HAVE_STAT_ST_TIMESPEC, 1,
+    [Define if you have struct stat.st_mtimespec.tv_nsec])])
 
 AC_CHECK_FUNC([extattr_set_fd],
   [AC_DEFINE(HAVE_EXTATTR, 1, [Define if you have extattr_set_fd])])
