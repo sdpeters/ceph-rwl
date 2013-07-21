@@ -298,22 +298,18 @@ AC_ARG_WITH([fuse],
             [AS_HELP_STRING([--without-fuse], [disable FUSE userspace client])],
             [],
             [with_fuse=yes])
-LIBFUSE=
-AS_IF([test "x$with_fuse" != xno],
-	    [AC_CHECK_LIB([fuse], [fuse_main],
-             [AC_SUBST([LIBFUSE], ["-lfuse"])
-               AC_DEFINE([HAVE_LIBFUSE], [1],
-                         [Define if you have fuse])
-               HAVE_LIBFUSE=1
-	       # look for fuse_getgroups and define FUSE_GETGROUPS if found
-           LIBS_saved="$LIBS"
-           LIBS="$LIBS -lfuse"
-	       AC_CHECK_FUNCS([fuse_getgroups])
-           LIBS="$LIBS_saved"
-              ],
-             [AC_MSG_FAILURE(
-                   [no FUSE found (use --without-fuse to disable)])])])
-AM_CONDITIONAL(WITH_FUSE, [test "$HAVE_LIBFUSE" = "1"])
+
+AS_IF([test "x$with_fuse" != "xno"], [
+   PKG_CHECK_MODULES([fuse], [fuse >= 2.6.0], [have_libfuse=yes],
+       [AC_MSG_FAILURE([no FUSE found (use --without-fuse to disable)])])
+   saved_LIBS="$LIBS"
+   LIBS="$LIBS $fuse_LIBS"
+   AC_CHECK_FUNC([fuse_main], [], # double check pkg-config results
+      [AC_MSG_FAILURE([no FUSE found (use --without-fuse to disable)])])
+   AC_CHECK_FUNCS([fuse_getgroups])
+   LIBS="$saved_LIBS"
+])
+AM_CONDITIONAL(WITH_FUSE, [test "x$have_libfuse" = "xyes"])
 
 # tcmalloc?
 AC_ARG_WITH([tcmalloc],
