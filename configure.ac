@@ -587,6 +587,18 @@ AC_CHECK_HEADERS([linux/types.h])
 AC_CHECK_TYPES([__u8, __s8, __u16, __s16, __u32, __s32, __u64, __s64, __le16,
   __be16, __le32, __be32, __le64, __be64], [], [], [[#include <linux/types.h>]])
 
+#
+# Check for pthread spinlock (depends on ACX_PTHREAD)
+#
+saved_LIBS="$LIBS"
+saved_CFLAGS="$CFLAGS"
+LIBS="$PTHREAD_LIBS $LIBS"
+CFLAGS="$PTHREAD_CFLAGS $CFLAGS"
+AC_CHECK_FUNC([pthread_spin_init],
+  [AC_DEFINE(HAVE_PTHREAD_SPINLOCK, 1, [Define if you have pthread_spin_init])])
+LIBS="$saved_LIBS"
+CFLAGS="$saved_CFLAGS"
+
 # Checks for typedefs, structures, and compiler characteristics.
 #AC_HEADER_STDBOOL
 #AC_C_CONST
