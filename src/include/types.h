@@ -103,7 +103,7 @@ CEPH_HASH_NAMESPACE_START
   };
 #endif
 
-#ifndef __LP64__
+#if !defined(__LP64__) || defined(__APPLE__)
 /*
  * FIXME: not sure how to test for this robustly yet, but on Mavericks with
  * C++11 these definitions are present.

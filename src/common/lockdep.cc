@@ -21,7 +21,7 @@
 #include "include/unordered_map.h"
 #include "include/hash_namespace.h"
 
-#if defined(__FreeBSD__) && defined(__LP64__)	// On FreeBSD pthread_t is a pointer.
+#if (defined(__FreeBSD__) || defined(__APPLE__)) && defined(__LP64__) // On FreeBSD pthread_t is a pointer.
 CEPH_HASH_NAMESPACE_START
   template<>
     struct hash<pthread_t>
