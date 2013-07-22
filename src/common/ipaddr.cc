@@ -4,6 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "acconfig.h"
+
+#ifdef DARWIN
+#ifndef s6_addr16
+#define s6_addr16 __u6_addr.__u6_addr16
+#endif
+#ifndef s6_addr32
+#define s6_addr32 __u6_addr.__u6_addr32
+#endif
+#endif
 
 static void netmask_ipv4(const struct in_addr *addr,
 			 unsigned int prefix_len,
