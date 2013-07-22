@@ -48,6 +48,18 @@ ostream& Pipe::_pipe_prefix(std::ostream *_dout) {
 		<< ").";
 }
 
+#ifndef MSG_MORE
+# define MSG_MORE 0
+#endif
+
+#ifndef MSG_NOSIGNAL
+# ifdef SO_NOSIGPIPE
+#  define MSG_NOSIGNAL SO_NOSIGPIPE
+# else
+#  error "Don't know how to block SIGPIPE
+# endif
+#endif
+
 
 
 /**************************************

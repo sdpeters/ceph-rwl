@@ -15,7 +15,6 @@
 #if defined(__FreeBSD__)
 #define	lseek64(fd, offset, whence)	lseek(fd, offset, whence)
 #define	ENODATA	61
-#define	MSG_MORE 0
 #endif /* !__FreeBSD__ */
 
 #ifndef TEMP_FAILURE_RETRY
