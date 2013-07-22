@@ -717,12 +717,12 @@ connect_to_cluster(rados_t *pcluster)
 		simple_err("Could not create cluster handle", r);
 		return r;
 	}
-	rados_conf_parse_env(*pcluster, NULL);
 	r = rados_conf_read_file(*pcluster, rbd_options.ceph_config);
 	if (r < 0) {
 		simple_err("Error reading Ceph config file", r);
 		goto failed_shutdown;
 	}
+	rados_conf_parse_env(*pcluster, NULL);
 	r = rados_connect(*pcluster);
 	if (r < 0) {
 		simple_err("Error connecting to cluster", r);

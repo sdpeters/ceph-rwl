@@ -498,12 +498,12 @@ create_image()
 		simple_err("Could not create cluster handle", r);
 		return r;
 	}
-	rados_conf_parse_env(cluster, NULL);
 	r = rados_conf_read_file(cluster, NULL);
 	if (r < 0) {
 		simple_err("Error reading ceph config file", r);
 		goto failed_shutdown;
 	}
+	rados_conf_parse_env(cluster, NULL);
 	r = rados_connect(cluster);
 	if (r < 0) {
 		simple_err("Error connecting to cluster", r);
