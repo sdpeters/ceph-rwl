@@ -46,14 +46,14 @@ public:
   }
 
   // read
-  void get_read() {
-    if (g_lockdep) id = lockdep_will_lock(name, id);
+  void get_read(bool no_lockdep=false) {
+    if (g_lockdep && !no_lockdep) id = lockdep_will_lock(name, id);
     pthread_rwlock_rdlock(&L);
-    if (g_lockdep) id = lockdep_locked(name, id);
+    if (g_lockdep && !no_lockdep) id = lockdep_locked(name, id);
   }
-  bool try_get_read() {
+  bool try_get_read(bool no_lockdep=false) {
     if (pthread_rwlock_tryrdlock(&L) == 0) {
-      if (g_lockdep) id = lockdep_locked(name, id);
+      if (g_lockdep && !no_lockdep) id = lockdep_locked(name, id);
       return true;
     }
     return false;
@@ -63,14 +63,14 @@ public:
   }
 
   // write
-  void get_write() {
-    if (g_lockdep) id = lockdep_will_lock(name, id);
+  void get_write(bool no_lockdep=false) {
+    if (g_lockdep && !no_lockdep) id = lockdep_will_lock(name, id);
     pthread_rwlock_wrlock(&L);
-    if (g_lockdep) id = lockdep_locked(name, id);
+    if (g_lockdep && !no_lockdep) id = lockdep_locked(name, id);
   }
-  bool try_get_write() {
+  bool try_get_write(bool no_lockdep=false) {
     if (pthread_rwlock_trywrlock(&L) == 0) {
-      if (g_lockdep) id = lockdep_locked(name, id);
+      if (g_lockdep && !no_lockdep) id = lockdep_locked(name, id);
       return true;
     }
     return false;
