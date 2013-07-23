@@ -139,6 +139,10 @@ namespace librbd {
       lock.Unlock();
       return r;
     }
+    ssize_t _get_return_value() {
+      assert(lock.is_locked());
+      return rval;
+    }
 
     void get() {
       lock.Lock();
@@ -151,6 +155,13 @@ namespace librbd {
       assert(!released);
       released = true;
       put_unlock();
+    }
+    void _release() {
+      assert(lock.is_locked());
+      assert(!released);
+      released = true;
+      int n = --ref;
+      assert(n > 0);
     }
     void put() {
       lock.Lock();
