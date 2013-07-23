@@ -2048,7 +2048,7 @@ reprotect_and_return_err:
       }
     }
 
-    ictx->md_lock.get_write();
+    ictx->md_lock.get_write(true);  // may recursively open parent
     r = ictx_refresh(ictx);
     ictx->md_lock.put_write();
     if (r < 0)
