@@ -110,13 +110,10 @@ namespace librbd {
 
   bool LibrbdWriteback::may_copy_on_write(const object_t& oid, uint64_t read_off, uint64_t read_len, snapid_t snapid)
   {
-    m_ictx->snap_lock.get_read();
-    librados::snap_t snap_id = m_ictx->snap_id;
     m_ictx->parent_lock.get_read();
     uint64_t overlap = 0;
-    m_ictx->get_parent_overlap(snap_id, &overlap);
+    m_ictx->get_parent_overlap(snapid, &overlap);
     m_ictx->parent_lock.put_read();
-    m_ictx->snap_lock.put_read();
 
     uint64_t object_no = oid_to_object_no(oid.name, m_ictx->object_prefix);
 
@@ -139,13 +136,10 @@ namespace librbd {
 			       uint64_t trunc_size, __u32 trunc_seq,
 			       Context *oncommit)
   {
-    m_ictx->snap_lock.get_read();
-    librados::snap_t snap_id = m_ictx->snap_id;
     m_ictx->parent_lock.get_read();
     uint64_t overlap = 0;
-    m_ictx->get_parent_overlap(snap_id, &overlap);
+    m_ictx->get_parent_overlap(LIBRADOS_SNAP_HEAD, &overlap);
     m_ictx->parent_lock.put_read();
-    m_ictx->snap_lock.put_read();
 
     uint64_t object_no = oid_to_object_no(oid.name, m_ictx->object_prefix);
     
@@ -161,7 +155,7 @@ namespace librbd {
     C_OrderedWrite *req_comp = new C_OrderedWrite(m_ictx->cct, result, this);
     AioWrite *req = new AioWrite(m_ictx, oid.name,
 				 object_no, off, objectx, object_overlap,
-				 bl, snapc, snap_id,
+				 bl, snapc, LIBRADOS_SNAP_HEAD,
 				 req_comp);
     req->send();
     return ++m_tid;
