@@ -2313,8 +2313,8 @@ reprotect_and_return_err:
   {
     Context *ctx = reinterpret_cast<Context *>(arg);
     AioCompletion *comp = reinterpret_cast<AioCompletion *>(cb);
-    ctx->complete(comp->get_return_value());
-    comp->release();
+    ctx->complete(comp->_get_return_value());  // caller already holds aioc lock
+    comp->_release();
   }
 
   int64_t read_iterate(ImageCtx *ictx, uint64_t off, uint64_t len,
