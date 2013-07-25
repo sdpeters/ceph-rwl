@@ -2171,8 +2171,7 @@ reprotect_and_return_err:
       bufferlist bl;
       string oid = ictx->get_object_name(ono);
       Context *comp = new C_SimpleThrottle(&throttle);
-      AioWrite *req = new AioWrite(ictx, oid, ono, 0, objectx, object_overlap,
-				   bl, snapc, CEPH_NOSNAP, comp);
+      AioWrite *req = new AioWrite(ictx, oid, ono, 0, objectx, bl, snapc, comp);
       r = req->send();
       if (r < 0) {
 	lderr(cct) << "failed to flatten object " << oid << dendl;
@@ -2917,11 +2916,10 @@ reprotect_and_return_err:
 	Striper::extent_to_file(ictx->cct, &ictx->layout,
 			      p->objectno, 0, ictx->layout.fl_object_size,
 			      objectx);
-	uint64_t object_overlap = ictx->prune_parent_extents(objectx, overlap);
+	ictx->prune_parent_extents(objectx, overlap);
 
 	AioWrite *req = new AioWrite(ictx, p->oid.name, p->objectno, p->offset,
-				     objectx, object_overlap,
-				     bl, snapc, snap_id, req_comp);
+				     objectx, bl, snapc, req_comp);
 	c->add_request();
 	r = req->send();
 	if (r < 0)
@@ -2993,15 +2991,14 @@ reprotect_and_return_err:
       }
 
       if (p->offset == 0 && p->length == ictx->layout.fl_object_size) {
-	req = new AioRemove(ictx, p->oid.name, p->objectno, objectx, object_overlap,
-			    snapc, snap_id, req_comp);
+	req = new AioRemove(ictx, p->oid.name, p->objectno, objectx, snapc,
+			    req_comp);
       } else if (p->offset + p->length == ictx->layout.fl_object_size) {
-	req = new AioTruncate(ictx, p->oid.name, p->objectno, p->offset, objectx, object_overlap,
-			      snapc, snap_id, req_comp);
+	req = new AioTruncate(ictx, p->oid.name, p->objectno, p->offset, objectx,
+			      snapc, req_comp);
       } else {
 	req = new AioZero(ictx, p->oid.name, p->objectno, p->offset, p->length,
-			  objectx, object_overlap,
-			  snapc, snap_id, req_comp);
+			  objectx, snapc, req_comp);
       }
 
       r = req->send();
