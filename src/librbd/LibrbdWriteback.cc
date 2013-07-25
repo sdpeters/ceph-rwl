@@ -108,13 +108,8 @@ namespace librbd {
     assert(r >= 0);
   }
 
-  bool LibrbdWriteback::may_copy_on_write(const object_t& oid, uint64_t read_off, uint64_t read_len, snapid_t snapid)
+  bool LibrbdWriteback::may_copy_on_write(const object_t& oid, uint64_t read_off, uint64_t read_len, snapid_t snapid, uint64_t image_overlap)
   {
-    m_ictx->parent_lock.get_read();
-    uint64_t overlap = 0;
-    m_ictx->get_parent_overlap(snapid, &overlap);
-    m_ictx->parent_lock.put_read();
-
     uint64_t object_no = oid_to_object_no(oid.name, m_ictx->object_prefix);
 
     // reverse map this object extent onto the parent
@@ -122,7 +117,8 @@ namespace librbd {
     Striper::extent_to_file(m_ictx->cct, &m_ictx->layout,
 			  object_no, 0, m_ictx->layout.fl_object_size,
 			  objectx);
-    uint64_t object_overlap = m_ictx->prune_parent_extents(objectx, overlap);
+    uint64_t object_overlap = m_ictx->prune_parent_extents(objectx,
+							   image_overlap);
     bool may = object_overlap > 0;
     ldout(m_ictx->cct, 10) << "may_copy_on_write " << oid << " " << read_off << "~" << read_len << " = " << may << dendl;
     return may;
@@ -134,13 +130,9 @@ namespace librbd {
 			       const SnapContext& snapc,
 			       const bufferlist &bl, utime_t mtime,
 			       uint64_t trunc_size, __u32 trunc_seq,
+			       uint64_t image_overlap,
 			       Context *oncommit)
   {
-    m_ictx->parent_lock.get_read();
-    uint64_t overlap = 0;
-    m_ictx->get_parent_overlap(LIBRADOS_SNAP_HEAD, &overlap);
-    m_ictx->parent_lock.put_read();
-
     uint64_t object_no = oid_to_object_no(oid.name, m_ictx->object_prefix);
     
     // reverse map this object extent onto the parent
@@ -148,7 +140,8 @@ namespace librbd {
     Striper::extent_to_file(m_ictx->cct, &m_ictx->layout,
 			  object_no, 0, m_ictx->layout.fl_object_size,
 			  objectx);
-    uint64_t object_overlap = m_ictx->prune_parent_extents(objectx, overlap);
+    uint64_t object_overlap = m_ictx->prune_parent_extents(objectx,
+							   image_overlap);
     write_result_d *result = new write_result_d(oid.name, oncommit);
     m_writes[oid.name].push(result);
     ldout(m_ictx->cct, 20) << "write will wait for result " << result << dendl;

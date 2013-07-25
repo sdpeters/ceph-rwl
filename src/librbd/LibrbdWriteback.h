@@ -29,13 +29,14 @@ namespace librbd {
 		      Context *onfinish);
 
     // Determine whether a read to this extent could be affected by a write-triggered copy-on-write
-    virtual bool may_copy_on_write(const object_t& oid, uint64_t read_off, uint64_t read_len, snapid_t snapid);
+    virtual bool may_copy_on_write(const object_t& oid, uint64_t read_off, uint64_t read_len, snapid_t snapid, uint64_t image_overlap);
 
     // Note that oloc, trunc_size, and trunc_seq are ignored
     virtual tid_t write(const object_t& oid, const object_locator_t& oloc,
 			uint64_t off, uint64_t len, const SnapContext& snapc,
 			const bufferlist &bl, utime_t mtime, uint64_t trunc_size,
-			__u32 trunc_seq, Context *oncommit);
+			__u32 trunc_seq, uint64_t image_overlap,
+			Context *oncommit);
 
     struct write_result_d {
       bool done;

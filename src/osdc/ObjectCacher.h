@@ -174,7 +174,7 @@ class ObjectCacher {
     xlist<Object*>::item set_item;
     object_locator_t oloc;
     uint64_t truncate_size, truncate_seq;
-    
+
     bool complete;
     bool exists;
 
@@ -307,8 +307,12 @@ class ObjectCacher {
   struct ObjectSet {
     void *parent;
 
+    // only for cephfs
     inodeno_t ino;
     uint64_t truncate_seq, truncate_size;
+
+    // only for rbd
+    uint64_t rbd_image_overlap;
 
     int64_t poolid;
     xlist<Object*> objects;
@@ -316,9 +320,10 @@ class ObjectCacher {
     int dirty_or_tx;
     bool return_enoent;
 
-    ObjectSet(void *p, int64_t _poolid, inodeno_t i)
+    ObjectSet(void *p, int64_t _poolid, inodeno_t i, uint64_t overlap)
       : parent(p), ino(i), truncate_seq(0),
-	truncate_size(0), poolid(_poolid), dirty_or_tx(0),
+	truncate_size(0), rbd_image_overlap(overlap),
+	poolid(_poolid), dirty_or_tx(0),
 	return_enoent(false) {}
 
   };

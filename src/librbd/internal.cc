@@ -1996,19 +1996,30 @@ reprotect_and_return_err:
 
   int _snap_set(ImageCtx *ictx, const char *snap_name)
   {
-    RWLock::WLocker l1(ictx->snap_lock);
-    RWLock::WLocker l2(ictx->parent_lock);
-    int r;
-    if ((snap_name != NULL) && (strlen(snap_name) != 0)) {
-      r = ictx->snap_set(snap_name);
-    } else {
-      ictx->snap_unset();
-      r = 0;
+    uint64_t overlap = 0;
+    
+    {
+      RWLock::WLocker l1(ictx->snap_lock);
+      RWLock::WLocker l2(ictx->parent_lock);
+      int r;
+      if ((snap_name != NULL) && (strlen(snap_name) != 0)) {
+	r = ictx->snap_set(snap_name);
+      } else {
+	ictx->snap_unset();
+	r = 0;
+      }
+      if (r < 0) {
+	return r;
+      }
+      refresh_parent(ictx);
+      assert(0 == ictx->get_parent_overlap(ictx->snap_id, &overlap));
     }
-    if (r < 0) {
-      return r;
-    }
-    refresh_parent(ictx);
+    /* overlap will only change when shrinking an image, which isn't
+     * safe while the image is in use. Thus, we don't need to keep
+     * snap_lock or parent_lock held. Dropping them before taking
+     * cache_lock avoids a lock ordering issue.
+     */
+    ictx->refresh_overlap(overlap);
     return 0;
   }
 
