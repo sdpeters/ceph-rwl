@@ -74,6 +74,7 @@ tid_t FakeWriteback::write(const object_t& oid,
 			   const SnapContext& snapc,
 			   const bufferlist &bl, utime_t mtime,
 			   uint64_t trunc_size, __u32 trunc_seq,
+			   uint64_t image_overlap,
 			   Context *oncommit)
 {
   C_Delay *wrapper = new C_Delay(m_cct, oncommit, m_lock, off, NULL, m_delay_ns);;
@@ -81,7 +82,7 @@ tid_t FakeWriteback::write(const object_t& oid,
   return m_tid.inc();
 }
 
-bool FakeWriteback::may_copy_on_write(const object_t&, uint64_t, uint64_t, snapid_t)
+bool FakeWriteback::may_copy_on_write(const object_t&, uint64_t, uint64_t, snapid_t, uint64_t)
 {
   return false;
 }

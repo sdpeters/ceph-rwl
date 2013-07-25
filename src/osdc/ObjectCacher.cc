@@ -812,6 +812,7 @@ void ObjectCacher::bh_write(BufferHead *bh)
 				      bh->start(), bh->length(),
 				      bh->snapc, bh->bl, bh->last_write,
 				      bh->ob->truncate_size, bh->ob->truncate_seq,
+				      bh->ob->oset->rbd_image_overlap,
 				      oncommit);
   ldout(cct, 20) << " tid " << tid << " on " << bh->ob->get_oid() << dendl;
 
@@ -848,7 +849,7 @@ void ObjectCacher::bh_write_commit(int64_t poolid, sobject_t oid, loff_t start,
       ldout(cct, 10) << "bh_write_commit marking exists on " << *ob << dendl;
       ob->exists = true;
 
-      if (writeback_handler.may_copy_on_write(ob->get_oid(), start, length, ob->get_snap())) {
+      if (writeback_handler.may_copy_on_write(ob->get_oid(), start, length, ob->get_snap(), ob->oset->rbd_image_overlap)) {
 	ldout(cct, 10) << "bh_write_commit may copy on write, clearing complete on " << *ob << dendl;
 	ob->complete = false;
       }
@@ -1054,7 +1055,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
       ldout(cct, 10) << "readx  object !exists, 1 extent..." << dendl;
 
       // should we worry about COW underneaeth us?
-      if (writeback_handler.may_copy_on_write(soid.oid, ex_it->offset, ex_it->length, soid.snap)) {
+      if (writeback_handler.may_copy_on_write(soid.oid, ex_it->offset, ex_it->length, soid.snap, oset->rbd_image_overlap)) {
 	ldout(cct, 20) << "readx  may copy on write" << dendl;
 	bool wait = false;
 	for (map<loff_t, BufferHead*>::iterator bh_it = o->data.begin();
