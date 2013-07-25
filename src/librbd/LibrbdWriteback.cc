@@ -146,10 +146,8 @@ namespace librbd {
     m_writes[oid.name].push(result);
     ldout(m_ictx->cct, 20) << "write will wait for result " << result << dendl;
     C_OrderedWrite *req_comp = new C_OrderedWrite(m_ictx->cct, result, this);
-    AioWrite *req = new AioWrite(m_ictx, oid.name,
-				 object_no, off, objectx, object_overlap,
-				 bl, snapc, LIBRADOS_SNAP_HEAD,
-				 req_comp);
+    AioWrite *req = new AioWrite(m_ictx, oid.name, object_no, off, objectx,
+				 bl, snapc, req_comp);
     req->send();
     return ++m_tid;
   }
