@@ -91,7 +91,7 @@ namespace librbd {
 				       cct->_conf->rbd_cache_target_dirty,
 				       cct->_conf->rbd_cache_max_dirty_age,
 				       cct->_conf->rbd_cache_block_writes_upfront);
-      object_set = new ObjectCacher::ObjectSet(NULL, data_ctx.get_id(), 0);
+      object_set = new ObjectCacher::ObjectSet(NULL, data_ctx.get_id(), 0, 0);
       object_set->return_enoent = true;
       object_cacher->start();
     }
@@ -468,6 +468,15 @@ namespace librbd {
       return -ENOENT;
     *overlap = p->second.parent.overlap;
     return 0;
+  }
+
+  void ImageCtx::refresh_overlap(uint64_t overlap)
+  {
+    if (!object_cacher)
+      return;
+    cache_lock.Lock();
+    object_set->rbd_image_overlap = overlap;
+    cache_lock.Unlock();
   }
 
   void ImageCtx::aio_read_from_cache(object_t o, bufferlist *bl, size_t len,

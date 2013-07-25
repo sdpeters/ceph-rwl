@@ -68,7 +68,7 @@ int stress_test(uint64_t num_ops, uint64_t num_objs,
 
   atomic_t outstanding_reads;
   vector<std::tr1::shared_ptr<op_data> > ops;
-  ObjectCacher::ObjectSet object_set(NULL, 0, 0);
+  ObjectCacher::ObjectSet object_set(NULL, 0, 0, 0);
   SnapContext snapc;
   ceph::buffer::ptr bp(max_op_len);
   ceph::bufferlist bl;

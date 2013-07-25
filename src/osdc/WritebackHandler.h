@@ -26,12 +26,15 @@ class WritebackHandler {
    * @param read_off read offset
    * @param read_len read length
    * @param snapid read snapid
+   * @param image_overlap for rbd, the offset through which a child
+   *                      image overlaps its parent
    */
-  virtual bool may_copy_on_write(const object_t& oid, uint64_t read_off, uint64_t read_len, snapid_t snapid) = 0;
+  virtual bool may_copy_on_write(const object_t& oid, uint64_t read_off, uint64_t read_len, snapid_t snapid, uint64_t image_overlap) = 0;
   virtual tid_t write(const object_t& oid, const object_locator_t& oloc,
 		      uint64_t off, uint64_t len, const SnapContext& snapc,
 		      const bufferlist &bl, utime_t mtime, uint64_t trunc_size,
-		      __u32 trunc_seq, Context *oncommit) = 0;
+		      __u32 trunc_seq, uint64_t image_overlap,
+		      Context *oncommit) = 0;
   virtual tid_t lock(const object_t& oid, const object_locator_t& oloc, int op,
 		     int flags, Context *onack, Context *oncommit) {
     assert(0 == "this WritebackHandler does not support the lock operation");
