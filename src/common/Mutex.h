@@ -16,6 +16,7 @@
 #define CEPH_MUTEX_H
 
 #include "include/assert.h"
+#include "include/stringify.h"
 #include "lockdep.h"
 #include "common/ceph_context.h"
 
@@ -33,7 +34,7 @@ enum {
 
 class Mutex {
 private:
-  const char *name;
+  std::string name;
   int id;
   bool recursive;
   bool lockdep;
@@ -50,16 +51,16 @@ private:
   Mutex( const Mutex &M ) {}
 
   void _register() {
-    id = lockdep_register(name);
+    id = lockdep_register(name.c_str());
   }
   void _will_lock() { // about to lock
-    id = lockdep_will_lock(name, id);
+    id = lockdep_will_lock(name.c_str(), id);
   }
   void _locked() {    // just locked
-    id = lockdep_locked(name, id, backtrace);
+    id = lockdep_locked(name.c_str(), id, backtrace);
   }
   void _will_unlock() {  // about to unlock
-    id = lockdep_will_unlock(name, id);
+    id = lockdep_will_unlock(name.c_str(), id);
   }
 
 public:
