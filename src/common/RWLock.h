@@ -17,22 +17,25 @@
 #ifndef CEPH_RWLock_Posix__H
 #define CEPH_RWLock_Posix__H
 
+#include <string>
 #include <pthread.h>
 #include "lockdep.h"
+#include "include/stringify.h"
 
 class RWLock
 {
   mutable pthread_rwlock_t L;
-  const char *name;
   int id;
+  std::string name;
 
 public:
   RWLock(const RWLock& other);
   const RWLock& operator=(const RWLock& other);
 
-  RWLock(const char *n) : name(n), id(-1) {
+  RWLock(const char *n) : id(-1) {
     pthread_rwlock_init(&L, NULL);
-    if (g_lockdep) id = lockdep_register(name);
+    name = std::string(n) + "-" + stringify(this);
+    if (g_lockdep) id = lockdep_register(name.c_str());
   }
 
   virtual ~RWLock() {
@@ -41,19 +44,19 @@ public:
   }
 
   void unlock() {
-    if (g_lockdep) id = lockdep_will_unlock(name, id);
+    if (g_lockdep) id = lockdep_will_unlock(name.c_str(), id);
     pthread_rwlock_unlock(&L);
   }
 
   // read
   void get_read(bool no_lockdep=false) {
-    if (g_lockdep && !no_lockdep) id = lockdep_will_lock(name, id);
+    //if (g_lockdep && !no_lockdep) id = lockdep_will_lock(name.c_str(), id);
     pthread_rwlock_rdlock(&L);
-    if (g_lockdep && !no_lockdep) id = lockdep_locked(name, id);
+    //if (g_lockdep && !no_lockdep) id = lockdep_locked(name.c_str(), id);
   }
   bool try_get_read(bool no_lockdep=false) {
     if (pthread_rwlock_tryrdlock(&L) == 0) {
-      if (g_lockdep && !no_lockdep) id = lockdep_locked(name, id);
+      if (g_lockdep && !no_lockdep) id = lockdep_locked(name.c_str(), id);
       return true;
     }
     return false;
@@ -64,13 +67,13 @@ public:
 
   // write
   void get_write(bool no_lockdep=false) {
-    if (g_lockdep && !no_lockdep) id = lockdep_will_lock(name, id);
+    if (g_lockdep && !no_lockdep) id = lockdep_will_lock(name.c_str(), id);
     pthread_rwlock_wrlock(&L);
-    if (g_lockdep && !no_lockdep) id = lockdep_locked(name, id);
+    if (g_lockdep && !no_lockdep) id = lockdep_locked(name.c_str(), id);
   }
   bool try_get_write(bool no_lockdep=false) {
     if (pthread_rwlock_trywrlock(&L) == 0) {
-      if (g_lockdep && !no_lockdep) id = lockdep_locked(name, id);
+      if (g_lockdep && !no_lockdep) id = lockdep_locked(name.c_str(), id);
       return true;
     }
     return false;

@@ -134,7 +134,7 @@ namespace librbd {
     }
 
     ssize_t get_return_value() {
-      lock.Lock();
+      lock.Lock(true);
       ssize_t r = rval;
       lock.Unlock();
       return r;
