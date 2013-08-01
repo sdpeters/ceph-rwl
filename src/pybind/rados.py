@@ -172,7 +172,10 @@ class Rados(object):
     """librados python wrapper"""
     def require_state(self, *args):
         """ 
-        Checks if the Rados object is in a special state
+        Checks if the ``Rados`` object is in a special state.
+        Typically used by other methods to ensure that the handle
+        is in a state such as "configuring," "connecting", 
+        "connected", etc. before proceeding with method operations.
 
         :raises: RadosStateError
         """
@@ -236,7 +239,7 @@ Rados object in state %s." % (self.state))
 
     def version(self):
         """
-        Get the version number of the ``librados`` C library.
+        Gets the version number of the ``librados`` C library.
     
         :returns: a tuple of ``(major, minor, extra)`` components of the
                   librados version
@@ -250,7 +253,7 @@ Rados object in state %s." % (self.state))
 
     def conf_read_file(self, path=None):
         """
-        Configure the cluster handle using a Ceph config file.
+        Configures the cluster handle using a Ceph config file.
 
         :param path: path to the config file
         :type path: str
@@ -265,8 +268,8 @@ Rados object in state %s." % (self.state))
 
     def conf_parse_argv(self, args):
         """
-        Parse known arguments from args, and remove; returned
-        args contain only those unknown to ceph
+        Parses known arguments from args, and removes; returned
+        args contain only those unknown to Ceph.
         """
         self.require_state("configuring", "connected")
         if not args:
@@ -288,12 +291,12 @@ Rados object in state %s." % (self.state))
 
     def conf_get(self, option):
         """
-        Get the value of a configuration option
+        Gets the value of a configuration option.
 
-        :param option: which option to read
+        :param option: The option to get.
         :type option: str
 
-        :returns: str - value of the option or None
+        :returns: str - The value of the option or None.
         :raises: :class:`TypeError`
         """
         self.require_state("configuring", "connected")
@@ -316,11 +319,11 @@ Rados object in state %s." % (self.state))
 
     def conf_set(self, option, val):
         """
-        Set the value of a configuration option
+        Sets the value of a configuration option.
 
-        :param option: which option to set
+        :param option: The option to set.
         :type option: str
-        :param option: value of the option
+        :param option: The value of the option.
         :type option: str
 
         :raises: :class:`TypeError`, :class:`ObjectNotFound`
@@ -337,7 +340,7 @@ Rados object in state %s." % (self.state))
 
     def connect(self, timeout=0):
         """
-        Connect to the cluster.
+        Connects to the cluster.
         """
         self.require_state("configuring")
         ret = run_in_thread(self.librados.rados_connect, (self.cluster,),
@@ -348,21 +351,21 @@ Rados object in state %s." % (self.state))
 
     def get_cluster_stats(self):
         """
-        Read usage info about the cluster
+        Reads usage info about the cluster.
         
-        This tells you total space, space used, space available, and number
-        of objects. These are not updated immediately when data is written,
-        they are eventually consistent.
+        Cluster stats tell you total space, space used, space available, and 
+        number of objects. Stats are not updated immediately when data is 
+        written, but they are eventually consistent.
 
-        :returns: dict - contains the following keys:
+        :returns: dict - Contains the following keys:
 
-            *``kb`` (int) - total space 
+            - ``kb`` (int) - Total space.
 
-            *``kb_used`` (int) - space used
+            - ``kb_used`` (int) - Space used.
 
-            *``kb_avail`` (int) - free space available
+            - ``kb_avail`` (int) - Free space available.
 
-            *``num_objects`` (int) - number of objects
+            - ``num_objects`` (int) - Number of objects.
 
         """
         stats = rados_cluster_stat_t()
@@ -380,11 +383,11 @@ Rados object in state %s." % (self.state))
         """
         Checks if a given pool exists.
 
-        :param pool_name: name of the pool to check
+        :param pool_name: The name of the pool to check.
         :type pool_name: str
 
         :raises: :class:`TypeError`, :class:`Error`
-        :returns: bool - whether the pool exists, false otherwise.
+        :returns: bool - True if the pool exists, false otherwise.
         """
         self.require_state("connected")
         if not isinstance(pool_name, str):
@@ -400,17 +403,17 @@ Rados object in state %s." % (self.state))
 
     def create_pool(self, pool_name, auid=None, crush_rule=None):
         """
-        Create a pool:
-        - with default settings: if auid=None and crush_rule=None
-        - owned by a specific auid: auid given and crush_rule=None
-        - with a specific CRUSH rule: if auid=None and crush_rule given
-        - with a specific CRUSH rule and auid: if auid and crush_rule given
+        Create a pool: \n
+        - **With default settings:** if ``auid=None`` and ``crush_rule=None`` \n
+        - **Owned by a specific auid:** auid given and ``crush_rule=None`` \n
+        - **With a specific CRUSH rule:** if ``auid=None`` and crush_rule given \n
+        - **With a specific CRUSH rule and auid:** if auid and crush_rule given \n
 
-        :param pool_name: name of the pool to create
+        :param pool_name: The name of the pool to create.
         :type pool_name: str
-        :param auid: the id of the owner of the new pool
+        :param auid: The id of the owner of the new pool.
         :type auid: int
-        :param crush_rule: rule to use for placement in the new pool
+        :param crush_rule: The rule to use for placement in the new pool.
         :type crush_rule: str
 
         :raises: :class:`TypeError`, :class:`Error`
@@ -443,12 +446,12 @@ Rados object in state %s." % (self.state))
 
     def delete_pool(self, pool_name):
         """
-        Delete a pool and all data inside it.
+        Deletes a pool and all data inside it.
 
         The pool is removed from the cluster immediately,
         but the actual data is deleted in the background.
 
-        :param pool_name: name of the pool to delete 
+        :param pool_name: The name of the pool to delete. 
         :type pool_name: str
 
         :raises: :class:`TypeError`, :class:`Error`
@@ -481,7 +484,7 @@ Rados object in state %s." % (self.state))
 
     def get_fsid(self):
         """
-        Get the fsid of the cluster as a hexadecimal string.
+        Get the ``fsid`` of the cluster as a hexadecimal string.
 
         :raises: :class:`Error`
         :returns: str - cluster fsid
@@ -497,12 +500,12 @@ Rados object in state %s." % (self.state))
 
     def open_ioctx(self, ioctx_name):
         """
-        Create an io context
+        Creates an I/O context.
 
-        The io context allows you to perform operations within a particular
+        The I/O context allows you to perform operations within a particular
         pool. 
 
-        :param ioctx_name: name of the pool 
+        :param ioctx_name: The name of the pool. 
         :type ioctx_name: str
 
         :raises: :class:`TypeError`, :class:`Error`
@@ -632,7 +635,7 @@ class ObjectIterator(object):
 
     def next(self):
         """
-        Get the next object name and locator in the pool
+        Get the next object name and locator in the pool.
 
         :raises: StopIteration
         :returns: next rados.Ioctx Object
@@ -660,10 +663,10 @@ class XattrIterator(object):
 
     def next(self):
         """
-        Get the next xattr on the object
+        Gets the next XATTR on the object.
 
         :raises: StopIteration
-        :returns: pair - of name and value of the next Xattr
+        :returns: pair - The name and value of the next XATTR.
         """
         name_ = c_char_p(0)
         val_ = c_char_p(0)
@@ -707,10 +710,10 @@ ioctx '%s'" % self.ioctx.name)
 
     def next(self):
         """
-        Get the next Snapshot
+        Gets the next snapshot.
 
         :raises: :class:`Error`, StopIteration 
-        :returns: Snap - next snapshot
+        :returns: Snap - The next snapshot.
         """
         if (self.cur_snap >= self.max_snap):
             raise StopIteration
@@ -770,7 +773,7 @@ class Completion(object):
 
         This does not imply that the safe callback has finished.
 
-        :returns: whether the operation is safe
+        :returns: True if the operation is safe.
         """
         return run_in_thread(self.ioctx.librados.rados_aio_is_safe,
                              (self.rados_comp,))
@@ -892,21 +895,21 @@ class Ioctx(object):
     def aio_write(self, object_name, to_write, offset=0,
                   oncomplete=None, onsafe=None):
         """
-        Write data to an object asynchronously
+        Writes data to an object asynchronously.
 
         Queues the write and returns.
 
-        :param object_name: name of the object
+        :param object_name: The name of the object.
         :type object_name: str
-        :param to_write: data to write
+        :param to_write: The data to write.
         :type to_write: str
-        :param offset: byte offset in the object to begin writing at
+        :param offset: The beginning byte offset.
         :type offset: int
-        :param oncomplete: what to do when the write is safe and complete in memory
-            on all replicas
+        :param oncomplete: What to do when the write is safe and complete in memory
+            on all replicas.
         :type oncomplete: completion
-        :param onsafe:  what to do when the write is safe and complete on storage
-            on all replicas
+        :param onsafe:  What to do when the write is safe and complete on storage
+            on all replicas.
         :type onsafe: completion
 
         :raises: :class:`Error`
@@ -924,21 +927,21 @@ class Ioctx(object):
     def aio_write_full(self, object_name, to_write,
                        oncomplete=None, onsafe=None):
         """
-        Asychronously write an entire object
+        Asychronously writes an entire object.
 
         The object is filled with the provided data. If the object exists,
         it is atomically truncated and then written.
         Queues the write and returns.
 
-        :param object_name: name of the object
+        :param object_name: The name of the object.
         :type object_name: str
-        :param to_write: data to write
+        :param to_write: The data to write.
         :type to_write: str
-        :param oncomplete: what to do when the write is safe and complete in memory
-            on all replicas
+        :param oncomplete: What to do when the write is safe and complete in memory
+            on all replicas.
         :type oncomplete: completion
-        :param onsafe:  what to do when the write is safe and complete on storage
-            on all replicas
+        :param onsafe:  What to do when the write is safe and complete on storage
+            on all replicas.
         :type onsafe: completion
 
         :raises: :class:`Error`
@@ -955,21 +958,21 @@ class Ioctx(object):
 
     def aio_append(self, object_name, to_append, oncomplete=None, onsafe=None):
         """
-        Asychronously append data to an object
+        Asychronously appends data to an object.
 
         Queues the write and returns.
 
-        :param object_name: name of the object
+        :param object_name: The name of the object.
         :type object_name: str
-        :param to_append: data to append
+        :param to_append: The data to append.
         :type to_append: str
-        :param offset: byte offset in the object to begin writing at
+        :param offset: The beginning byte offset.
         :type offset: int
-        :param oncomplete: what to do when the write is safe and complete in memory
-            on all replicas
+        :param oncomplete: What to do when the write is safe and complete in memory
+            on all replicas.
         :type oncomplete: completion
-        :param onsafe:  what to do when the write is safe and complete on storage
-            on all replicas
+        :param onsafe:  What to do when the write is safe and complete on storage
+            on all replicas.
         :type onsafe: completion
 
         :raises: :class:`Error`
@@ -986,7 +989,7 @@ class Ioctx(object):
 
     def aio_flush(self):
         """
-        Block until all pending writes in an io context are safe
+        Blocks until all pending writes in an I/O context are safe.
 
         :raises: :class:`Error`
         """
@@ -996,20 +999,20 @@ class Ioctx(object):
 
     def aio_read(self, object_name, length, offset, oncomplete):
         """
-        Asychronously read data from an object
+        Asychronously reads data from an object.
 
-        oncomplete will be called with the returned read value as
+        ``oncomplete`` will be called with the returned read value as
         well as the completion:
 
         oncomplete(completion, data_read)
 
-        :param object_name: name of the object to read from
+        :param object_name: The name of the object.
         :type object_name: str
-        :param length: the number of bytes to read
+        :param length: The number of bytes to read.
         :type length: int
-        :param offset: byte offset in the object to begin reading from
+        :param offset: The beginning byte offset. 
         :type offset: int
-        :param oncomplete: what to do when the read is complete
+        :param oncomplete: What to do when the read is complete.
         :type oncomplete: completion
 
         :raises: :class:`Error`
@@ -1029,7 +1032,7 @@ class Ioctx(object):
 
     def require_ioctx_open(self):
         """
-        Checks if the rados.Ioctx object state is 'open'
+        Checks if the rados.Ioctx object state is ``open``.
 
         :raises: IoctxStateError
         """
@@ -1038,7 +1041,7 @@ class Ioctx(object):
 
     def change_auid(self, auid):
         """
-        Attempt to change an io context's associated auid "owner."
+        Attempts to change an I/O context's associated auid "owner."
 
         Requires that you have write permission on both the current and new
         auid.
@@ -1054,15 +1057,15 @@ class Ioctx(object):
 
     def set_locator_key(self, loc_key):
         """
-        Set the key for mapping objects to pgs within an io context.
+        Sets the key for mapping objects to placement groups within an I/O context.
 
         The key is used instead of the object name to determine which
         placement groups an object is put in. This affects all subsequent
-        operations of the io context - until a different locator key is
-        set, all objects in this io context will be placed in the same pg.
+        operations of the I/O context - until a different locator key is
+        set, all objects in this I/O context will be placed in the same PG.
 
-        :param loc_key: the key to use as the object locator, or NULL to discard
-            any previously set key
+        :param loc_key: The key to use as the object locator, or NULL to discard
+            any previously set key.
         :type loc_key: str
 
         :raises: :class:`TypeError`
@@ -1076,7 +1079,7 @@ class Ioctx(object):
 
     def get_locator_key(self):
         """
-        Get the locator_key of context
+        Gets the ``locator_key`` of the context.
 
         :returns: locator_key
         """
@@ -1084,11 +1087,11 @@ class Ioctx(object):
 
     def close(self):
         """
-        Close a rados.Ioctx object.
+        Closes a ``rados.Ioctx`` object.
 
-        This just tells librados that you no longer need to use the io context.
+        Tells ``librados`` that you no longer need to use the I/O context.
         It may not be freed immediately if there are pending asynchronous
-        requests on it, but you should not use an io context again after
+        requests on it, but you should not use an I/O context again after
         calling this function on it.
         """
         if self.state == "open":
@@ -1098,13 +1101,13 @@ class Ioctx(object):
 
     def write(self, key, data, offset=0):
         """
-        Write data to an object synchronously
+        Write data to an object synchronously.
 
-        :param key: name of the object
+        :param key: The name of the object.
         :type key: str
-        :param data: data to write
+        :param data: The data to write.
         :type data: str
-        :param offset: byte offset in the object to begin writing at
+        :param offset: The beginning byte offset.
         :type offset: int
 
         :raises: :class:`TypeError`
@@ -1134,14 +1137,14 @@ written." % (self.name, ret, length))
 
     def write_full(self, key, data):
         """
-        Write an entire object synchronously.
+        Writes an entire object synchronously.
 
         The object is filled with the provided data. If the object exists,
         it is atomically truncated and then written.
 
-        :param key: name of the object
+        :param key: The name of the object.
         :type key: str
-        :param data: data to write
+        :param data: The data to write.
         :type data: str
 
         :raises: :class:`TypeError`
@@ -1165,18 +1168,18 @@ written." % (self.name, ret, length))
 
     def read(self, key, length=8192, offset=0):
         """
-        Write data to an object synchronously
+        Writes data to an object synchronously.
 
-        :param key: name of the object
+        :param key: The name of the object.
         :type key: str
-        :param length: the number of bytes to read (default=8192)
+        :param length: The number of bytes to read (default=8192).
         :type length: int 
-        :param offset: byte offset in the object to begin reading at
+        :param offset: The beginning byte offset.
         :type offset: int
 
         :raises: :class:`TypeError`
         :raises: :class:`Error`
-        :returns: str - data read from object
+        :returns: str - Data read from the object.
         """
         self.require_ioctx_open()
         if not isinstance(key, str):
@@ -1191,34 +1194,34 @@ written." % (self.name, ret, length))
 
     def get_stats(self):
         """
-        Get pool usage statistics
+        Gets pool usage statistics.
 
-        :returns: dict - contains the following keys:
+        :returns: dict - Contains the following keys:
 
-            *``num_bytes`` (int) - size of pool in bytes
+            - ``num_bytes`` (int) - Size of pool in bytes. \n
 
-            *``num_kb`` (int) - size of pool in kbytes
+            - ``num_kb`` (int) - Size of pool in kbytes. \n
 
-            *``num_objects`` (int) - number of objects in the pool
+            - ``num_objects`` (int) - Number of objects in the pool. \n
 
-            *``num_object_clones`` (int) - number of object clones
+            - ``num_object_clones`` (int) - Number of object clones. \n
 
-            *``num_object_copies`` (int) - number of object copies
+            - ``num_object_copies`` (int) - Number of object copies. \n
 
-            *``num_objects_missing_on_primary`` (int) - number of objets
+            - ``num_objects_missing_on_primary`` (int) - Number of objects. \n
                 missing on primary
 
-            *``num_objects_unfound`` (int) - number of unfound objects
+            - ``num_objects_unfound`` (int) - Number of unfound objects. \n
 
-            *``num_objects_degraded`` (int) - number of degraded objects
+            - ``num_objects_degraded`` (int) - Number of degraded objects. \n
 
-            *``num_rd`` (int) - bytes read
+            - ``num_rd`` (int) - Bytes read. \n
 
-            *``num_rd_kb`` (int) - kbytes read
+            - ``num_rd_kb`` (int) - Kbytes read. \n
 
-            *``num_wr`` (int) - bytes written
+            - ``num_wr`` (int) - Bytes written. \n
 
-            *``num_wr_kb`` (int) - kbytes written
+            - ``num_wr_kb`` (int) - Kbytes written. \n
         """
         self.require_ioctx_open()
         stats = rados_pool_stat_t()
@@ -1241,16 +1244,16 @@ written." % (self.name, ret, length))
 
     def remove_object(self, key):
         """
-        Delete an object
+        Deletes an object.
 
         This does not delete any snapshots of the object.
 
-        :param key: the name of the object to delete
+        :param key: The name of the object to delete.
         :type key: str
 
         :raises: :class:`TypeError`
         :raises: :class:`Error`
-        :returns: bool - True on success
+        :returns: bool - True on success.
         """
         self.require_ioctx_open()
         if not isinstance(key, str):
@@ -1263,19 +1266,19 @@ written." % (self.name, ret, length))
 
     def trunc(self, key, size):
         """
-        Resize an object
+        Resizes an object.
 
         If this enlarges the object, the new area is logically filled with
         zeroes. If this shrinks the object, the excess data is removed.
 
-        :param key: the name of the object to resize
+        :param key: The name of the object to resize.
         :type key: str
-        :param size: the new size of the object in bytes
+        :param size: The new size of the object in bytes.
         :type size: int
 
         :raises: :class:`TypeError`
         :raises: :class:`Error`
-        :returns: int - 0 on success, otherwise raises error
+        :returns: int - 0 on success, otherwise raises error.
         """
         
         self.require_ioctx_open()
@@ -1289,9 +1292,9 @@ written." % (self.name, ret, length))
 
     def stat(self, key):
         """
-        Get object stats (size/mtime)
+        Gets object stats (size/mtime).
         
-        :param key: the name of the object to get stats from
+        :param key: The name of the object.
         :type key: str
 
         :raises: :class:`TypeError`
@@ -1313,16 +1316,16 @@ written." % (self.name, ret, length))
 
     def get_xattr(self, key, xattr_name):
         """
-        Get the value of an extended attribute on an object.
+        Gets the value of an extended attribute on an object.
         
-        :param key: the name of the object to get xattr from
+        :param key: The name of the object.
         :type key: str
-        :param xattr_name: which extended attribute to read
+        :param xattr_name: The name of the extended attribute.
         :type xattr_name: str
 
         :raises: :class:`TypeError`
         :raises: :class:`Error`
-        :returns: str - value of the xattr
+        :returns: str - The value of the extended attribute.
         """
         self.require_ioctx_open()
         if not isinstance(xattr_name, str):
@@ -1343,9 +1346,9 @@ written." % (self.name, ret, length))
 
     def get_xattrs(self, oid):
         """
-        Start iterating over xattrs on an object.
+        Start iterating over XATTRs on an object.
         
-        :param oid: the name of the object to get xattrs from
+        :param oid: The name of the object.
         :type key: str
 
         :raises: :class:`TypeError`
@@ -1359,23 +1362,23 @@ written." % (self.name, ret, length))
         ret = run_in_thread(self.librados.rados_getxattrs,
                             (self.io, oid, byref(it)))
         if ret != 0:
-            raise make_ex(ret, "Failed to get rados xattrs for object %r" % oid)
+            raise make_ex(ret, "Failed to get RADOS XATTRS for object %r" % oid)
         return XattrIterator(self, it, oid)
 
     def set_xattr(self, key, xattr_name, xattr_value):
         """
-        Set an extended attribute on an object.
+        Sets an extended attribute on an object.
         
-        :param key: the name of the object to set xattr to
+        :param key: The name of the object.
         :type key: str
-        :param xattr_name: which extended attribute to set
+        :param xattr_name: The name of the extended attribute to set.
         :type xattr_name: str
-        :param xattr_value: the value of the  extended attribute
+        :param xattr_value: The value of the extended attribute.
         :type xattr_value: str
 
         :raises: :class:`TypeError`
         :raises: :class:`Error`
-        :returns: bool - True on success, otherwise raise an error
+        :returns: bool - True on success, otherwise raise an error.
         """
         self.require_ioctx_open()
         if not isinstance(key, str):
@@ -1395,9 +1398,9 @@ written." % (self.name, ret, length))
         """
         Removes an extended attribute on from an object.
         
-        :param key: the name of the object to remove xattr from
+        :param key: The name of the object.
         :type key: str
-        :param xattr_name: which extended attribute to remove
+        :param xattr_name: The name of the extended attribute to remove.
         :type xattr_name: str
 
         :raises: :class:`TypeError`
@@ -1418,7 +1421,7 @@ written." % (self.name, ret, length))
 
     def list_objects(self):
         """ 
-        Get ObjectIterator on rados.Ioctx object.
+        Gets ``ObjectIterator`` on ``rados.Ioctx`` object.
 
         :returns: ObjectIterator
         """
@@ -1427,7 +1430,7 @@ written." % (self.name, ret, length))
 
     def list_snaps(self):
         """ 
-        Get SnapIterator on rados.Ioctx object.
+        Gets ``SnapIterator`` on ``rados.Ioctx`` object.
 
         :returns: SnapIterator
         """
@@ -1436,9 +1439,9 @@ written." % (self.name, ret, length))
 
     def create_snap(self, snap_name):
         """
-        Create a pool-wide snapshot
+        Creates a pool-wide snapshot.
 
-        :param snap_name: the name of the snapshot
+        :param snap_name: The name of the snapshot.
         :type snap_name: str
 
         :raises: :class:`TypeError`
@@ -1454,9 +1457,9 @@ written." % (self.name, ret, length))
 
     def remove_snap(self, snap_name):
         """
-        Removes a pool-wide snapshot
+        Removes a pool-wide snapshot.
 
-        :param snap_name: the name of the snapshot
+        :param snap_name: The name of the snapshot.
         :type snap_name: str
 
         :raises: :class:`TypeError`
@@ -1472,14 +1475,14 @@ written." % (self.name, ret, length))
 
     def lookup_snap(self, snap_name):
         """
-        Get the id of a pool snapshot
+        Lookup a pool's snapshot by name. 
 
-        :param snap_name: the name of the snapshot to lookop
+        :param snap_name: The name of the snapshot to lookup.
         :type snap_name: str
 
         :raises: :class:`TypeError`
         :raises: :class:`Error`
-        :returns: Snap - on success
+        :returns: Snap - On success.
         """
         self.require_ioctx_open()
         if not isinstance(snap_name, str):
@@ -1493,12 +1496,12 @@ written." % (self.name, ret, length))
 
     def get_last_version(self):
         """
-        Return the version of the last object read or written to.
+        Returns the version of the last object read or written.
 
         This exposes the internal version number of the last object read or
-        written via this io context
+        written via this I/O context.
 
-        :returns: version of the last object used
+        :returns: The version of the last object used.
         """
         self.require_ioctx_open()
         return run_in_thread(self.librados.rados_get_last_version, (self.io,))
@@ -1531,28 +1534,69 @@ class Object(object):
         if self.state != "exists":
             raise ObjectStateError("The object is %s" % self.state)
 
-    @set_object_locator
+    
     def read(self, length = 1024*1024):
+        """
+        Writes data to an object synchronously.
+
+        :param length: The number of bytes to read (default=8192).
+        :type length: int 
+        :param offset: The beginning byte offset.
+        :type offset: int
+
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        :returns: str - Data read from the object.
+        """
         self.require_object_exists()
         ret = self.ioctx.read(self.key, length, self.offset)
         self.offset += len(ret)
         return ret
 
-    @set_object_locator
+
     def write(self, string_to_write):
+        """
+        Write data to an object synchronously.
+
+        :param data: The data to write.
+        :type data: str
+        :param offset: The beginning byte offset.
+        :type offset: int
+
+        :raises: :class:`TypeError`
+        :raises: :class:`IncompleteWriteError`
+        :raises: :class:`LogicError`
+        :returns: int - number of bytes written 
+        """
         self.require_object_exists()
         ret = self.ioctx.write(self.key, string_to_write, self.offset)
         self.offset += ret
         return ret
 
-    @set_object_locator
+    
     def remove(self):
+        """
+        Deletes the object.
+
+        This does not delete any snapshots of the object.
+
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        :returns: bool - True on success.
+        """
         self.require_object_exists()
         self.ioctx.remove_object(self.key)
         self.state = "removed"
 
-    @set_object_locator
+    
     def stat(self):
+        """
+        Gets object stats (size/mtime).
+        
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        :returns: (size,timestamp)
+        """
         self.require_object_exists()
         return self.ioctx.stat(self.key)
 
@@ -1560,23 +1604,64 @@ class Object(object):
         self.require_object_exists()
         self.offset = position
 
-    @set_object_locator
+    
     def get_xattr(self, xattr_name):
+        """
+        Gets the value of an extended attribute on the object.
+        
+        :param xattr_name: The name of the extended attribute.
+        :type xattr_name: str
+
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        :returns: str - The value of the extended attribute.
+        """
         self.require_object_exists()
         return self.ioctx.get_xattr(self.key, xattr_name)
 
-    @set_object_locator
+    
     def get_xattrs(self):
+        """
+        Start iterating over XATTRs on the object.
+        
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        :returns: XattrIterator
+        """		
         self.require_object_exists()
         return self.ioctx.get_xattrs(self.key)
 
-    @set_object_locator
+    
     def set_xattr(self, xattr_name, xattr_value):
+        """
+        Sets an extended attribute on the object.
+        
+        :param xattr_name: The name of the extended attribute to set.
+        :type xattr_name: str
+        :param xattr_value: The value of the extended attribute.
+        :type xattr_value: str
+
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        :returns: bool - True on success, otherwise raise an error.
+        """
+		
         self.require_object_exists()
         return self.ioctx.set_xattr(self.key, xattr_name, xattr_value)
 
-    @set_object_locator
+    
     def rm_xattr(self, xattr_name):
+        """
+        Removes an extended attribute on from the object.
+        
+        :param xattr_name: The name of the extended attribute to remove.
+        :type xattr_name: str
+
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        :returns: bool - True on success, otherwise raise an error
+        """
+		
         self.require_object_exists()
         return self.ioctx.rm_xattr(self.key, xattr_name)
 
