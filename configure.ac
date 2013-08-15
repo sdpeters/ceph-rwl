@@ -435,23 +435,15 @@ AC_LANG_PUSH([C++])
 AC_CHECK_HEADER([leveldb/filter_policy.h], [AC_DEFINE([HAVE_LEVELDB_FILTER_POLICY], [1], [Defined if LevelDB supports bloom filters ])])
 AC_LANG_POP([C++])
 
-# use system libs3?
-AC_ARG_WITH([system-libs3],
-	[AS_HELP_STRING([--with-system-libs3], [use system libs3])],
-	,
-	[with_system_libs3=no])
-AS_IF([test "x$with_system_libs3" = xyes],
-            [AC_CHECK_LIB([s3], [S3_initialize], [true], [AC_MSG_FAILURE([libs3 not found])], [-lpthread])])
-AS_IF([test "x$with_system_libs3" = xcheck],
-            [AC_SEARCH_LIBS([S3_initialize], [s3], [with_system_libs3=yes], [true], [-lpthread])])
-AM_CONDITIONAL(WITH_SYSTEM_LIBS3, [ test "$with_system_libs3" = "yes" ])
-
 # rest-bench?
 AC_ARG_WITH([rest-bench],
 	    [AS_HELP_STRING([--with-rest-bench], [enables rest-bench])],
 	    [],
 	    [with_rest_bench=no])
 AM_CONDITIONAL(WITH_REST_BENCH, [ test "$with_rest_bench" = "yes" ])
+
+AS_IF([test "x$with_rest_bench" != xno],
+	    [AC_CHECK_LIB([s3], [S3_initialize], [true], AC_MSG_FAILURE([libs3 not found]))])
 
 # use libaio?
 AC_ARG_WITH([libaio],
