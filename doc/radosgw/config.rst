@@ -92,8 +92,12 @@ filtered out by Apache. The rewrite rule is not necessary for the OpenStack
 Swift-compatible interface. Turn on the rewrite engine and add the following
 rewrite rule to your Virtual Host configuration. :: 
 
-	RewriteEngine On
-	RewriteRule ^/([a-zA-Z0-9-_.]*)([/]?.*) /s3gw.fcgi?page=$1&params=$2&%{QUERY_STRING} [E=HTTP_AUTHORIZATION:%{HTTP:Authorization},L]
+	<VirtualHost *:80>
+		...
+		RewriteEngine On
+		RewriteRule ^/([a-zA-Z0-9-_.]*)([/]?.*) /s3gw.fcgi?page=$1&params=$2&%{QUERY_STRING} [E=HTTP_AUTHORIZATION:%{HTTP:Authorization},L]
+		...
+	</VirtualHost>
 	
 Since the ``<VirtualHost>`` is running ``mod_fastcgi.c``, you must include a
 section in your ``<VirtualHost>`` configuration for the ``mod_fastcgi.c`` module. 
