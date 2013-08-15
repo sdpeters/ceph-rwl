@@ -799,9 +799,14 @@ void md_config_t::get_my_sections(std::vector <std::string> &sections) const
 void md_config_t::_get_my_sections(std::vector <std::string> &sections) const
 {
   assert(lock.is_locked());
-  sections.push_back(name.to_str());
 
-  sections.push_back(name.get_type_name());
+  string s = name.to_str();
+  sections.push_back(s);
+  size_t pos = s.rfind('.');
+  while (pos > 0 && pos != string::npos) {
+    sections.push_back(s.substr(0, pos));
+    pos = s.rfind('.', pos - 1);
+  }
 
   sections.push_back("global");
 }
