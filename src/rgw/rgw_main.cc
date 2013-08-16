@@ -238,7 +238,11 @@ void RGWProcess::run()
     }
   }
 
+  dout(1) << "RGWProcess: starting thread pool" << dendl;
+
   m_tp.start();
+
+  dout(1) << "RGWProcess: ready for accepting incoming requetss" << dendl;
 
   for (;;) {
     RGWRequest *req = new RGWRequest;
@@ -487,24 +491,35 @@ int main(int argc, const char **argv)
 
     global_init_daemonize(g_ceph_context, 0);
   }
+
+  dout(1) << "radosgw: init start" << dendl;
   Mutex mutex("main");
   SafeTimer init_timer(g_ceph_context, mutex);
   init_timer.init();
+  dout(5) << "radosgw: set init timeout for " << g_conf->rgw_init_timeout << " seconds" << dendl;
   mutex.Lock();
   init_timer.add_event_after(g_conf->rgw_init_timeout, new C_InitTimeout);
   mutex.Unlock();
 
+  dout(5) << "radosgw: common init_finish()" << dendl;
   common_init_finish(g_ceph_context);
 
+  dout(5) << "radosgw: rgw_tools_init()" << dendl;
   rgw_tools_init(g_ceph_context);
 
+  dout(5) << "radosgw: rgw_init_resolver()" << dendl;
   rgw_init_resolver();
+
+  dout(5) << "radosgw: rgw_rest_init()" << dendl;
   rgw_rest_init(g_ceph_context);
   
+  dout(5) << "radosgw: curl_global_init()" << dendl;
   curl_global_init(CURL_GLOBAL_ALL);
   
+  dout(5) << "radosgw: FCGX_Init()" << dendl;
   FCGX_Init();
 
+  dout(5) << "radosgw: initializing storage client" << dendl;
   int r = 0;
   RGWRados *store = RGWStoreManager::get_storage(g_ceph_context, true);
   if (!store) {
@@ -538,19 +553,25 @@ int main(int argc, const char **argv)
     apis_map[*li] = true;
   }
 
-  if (apis_map.count("s3") > 0)
+  if (apis_map.count("s3") > 0) {
+    dout(5) << "radosgw: registering s3 REST manager" << dendl;
     rest.register_default_mgr(set_logging(new RGWRESTMgr_S3));
+  }
 
   if (apis_map.count("swift") > 0) {
     do_swift = true;
     swift_init(g_ceph_context);
+    dout(5) << "radosgw: registering swift REST manager" << dendl;
     rest.register_resource(g_conf->rgw_swift_url_prefix, set_logging(new RGWRESTMgr_SWIFT));
   }
 
-  if (apis_map.count("swift_auth") > 0)
+  if (apis_map.count("swift_auth") > 0) {
+    dout(5) << "radosgw: registering swift-auth REST manager" << dendl;
     rest.register_resource(g_conf->rgw_swift_auth_entry, set_logging(new RGWRESTMgr_SWIFT_Auth));
+  }
 
   if (apis_map.count("admin") > 0) {
+    dout(5) << "radosgw: registering admin REST manager" << dendl;
     RGWRESTMgr_Admin *admin_resource = new RGWRESTMgr_Admin;
     admin_resource->register_resource("usage", new RGWRESTMgr_Usage);
     admin_resource->register_resource("user", new RGWRESTMgr_User);
@@ -568,12 +589,14 @@ int main(int argc, const char **argv)
   OpsLogSocket *olog = NULL;
 
   if (!g_conf->rgw_ops_log_socket_path.empty()) {
+    dout(5) << "radosgw: initializing ops log socket, path=" << g_conf->rgw_ops_log_socket_path << dendl;
     olog = new OpsLogSocket(g_ceph_context, g_conf->rgw_ops_log_data_backlog);
     olog->init(g_conf->rgw_ops_log_socket_path);
   }
 
   pprocess = new RGWProcess(g_ceph_context, store, olog, g_conf->rgw_thread_pool_size, &rest);
 
+  dout(5) << "radosgw: registering async signal handlers" << dendl;
   init_async_signal_handler();
   register_async_signal_handler(SIGHUP, sighup_handler);
   register_async_signal_handler(SIGTERM, handle_sigterm);
@@ -583,35 +606,51 @@ int main(int argc, const char **argv)
   sighandler_alrm = signal(SIGALRM, godown_alarm);
 
   pprocess->run();
-  derr << "shutting down" << dendl;
 
+  derr << "shutting down" << dendl;
+  dout(5) << "radosgw: shutting down" << dendl;
+
+  dout(5) << "radosgw: unregistering signal handlers" << dendl;
   unregister_async_signal_handler(SIGHUP, sighup_handler);
   unregister_async_signal_handler(SIGTERM, handle_sigterm);
   unregister_async_signal_handler(SIGINT, handle_sigterm);
   unregister_async_signal_handler(SIGUSR1, handle_sigterm);
+
+  dout(5) << "radosgw: shutting down async signal handler" << dendl;
   shutdown_async_signal_handler();
 
+  dout(5) << "radosgw: unregistering signal handlers" << dendl;
   delete pprocess;
 
   if (do_swift) {
+    dout(5) << "radosgw: unregistering signal handlers" << dendl;
     swift_finalize();
   }
 
+  dout(5) << "radosgw: finalizing usage logging" << dendl;
   rgw_log_usage_finalize();
 
   delete olog;
 
+  dout(5) << "radosgw: stop perf" << dendl;
   rgw_perf_stop(g_ceph_context);
 
+  dout(5) << "radosgw: finalizing backing storage handler" << dendl;
   RGWStoreManager::close_storage(store);
 
+  dout(5) << "radosgw: tools cleanup" << dendl;
   rgw_tools_cleanup();
+
+  dout(5) << "radosgw: shutting down resolver" << dendl;
   rgw_shutdown_resolver();
+
+  dout(5) << "radosgw: curl global cleanup" << dendl;
   curl_global_cleanup();
 
-  dout(1) << "final shutdown" << dendl;
+  dout(5) << "radosgw: dropping ceph context" << dendl;
   g_ceph_context->put();
 
+  dout(5) << "radosgw: crypto shutdown" << dendl;
   ceph::crypto::shutdown();
 
   return 0;
