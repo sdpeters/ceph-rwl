@@ -315,6 +315,90 @@ void RGWZoneParams::init_name(CephContext *cct, RGWRegion& region)
   }
 }
 
+enum PoolParamGroup {
+  PPG_UNKNOWN,
+  PPG_CONF_ROOT,
+  PPG_DOMAIN_ROOT,
+  PPG_CONTROL,
+  PPG_GC,
+  PPG_LOG,
+  PPG_INTENT_LOG,
+  PPG_USAGE_LOG,
+  PPG_USER_KEYS,
+  PPG_USER_EMAIL,
+  PPG_USER_SWIFT,
+  PPG_USER_UID,
+  PPG_PLACEMENT,
+};
+
+struct PoolParamInfo {
+  PoolParamGroup group;
+  list<string> config_fields;
+
+  PoolParamInfo() : group(PPG_UNKNOWN) {}
+
+  int check(const string& field, PoolParamGroup check_group) {
+    if (group != PPG_UNKNOWN && check_group != group) {
+      return -EINVAL;
+    }
+    group = check_group;
+    config_fields.push_back(field);
+    return 0;
+  }
+};
+
+/*
+ * check whether configured pools don't collide, unless we allow them to
+ */
+int RGWZoneParams::verify_pools_valid(CephContext *cct)
+{
+  map<string, pair<string, PoolParamGroup> > check_map;
+
+  check_map[domain_root.name] = make_pair<>("zone_params:domain_root", PPG_DOMAIN_ROOT);
+  check_map[control_pool.name] = make_pair<>("zone_params:control_pool", PPG_CONTROL);
+  check_map[gc_pool.name] = make_pair<>("zone_params:gc_pool", PPG_GC);
+  check_map[log_pool.name] = make_pair<>("zone_params:log_pool", PPG_LOG);
+  check_map[intent_log_pool.name] = make_pair<>("zone_params:inten_log_pool", PPG_INTENT_LOG);
+  check_map[usage_log_pool.name] = make_pair<>("zone_params:usage_log_pool", PPG_USAGE_LOG);
+  check_map[user_keys_pool.name] = make_pair<>("zone_params:user_keys_pool", PPG_USER_KEYS);
+  check_map[user_email_pool.name] = make_pair<>("zone_params:user_email_pool", PPG_USER_EMAIL);
+  check_map[user_uid_pool.name] = make_pair<>("zone_params:user_uid_pool", PPG_USER_UID);
+
+  check_map[cct->_conf->rgw_zone_root_pool] = make_pair<>("conf:rgw_zone_root_pool", PPG_CONF_ROOT);
+  check_map[cct->_conf->rgw_region_root_pool] = make_pair<>("conf:rgw_region_root_pool", PPG_CONF_ROOT);
+
+
+  map<string, RGWZonePlacementInfo>::iterator piter;
+  for (piter = placement_pools.begin(); piter != placement_pools.end(); ++piter) {
+    string prefix = string("zone_params:placement:") + piter->first;
+    check_map[piter->second.index_pool] = make_pair<>(prefix + "index", PPG_PLACEMENT);
+    check_map[piter->second.data_pool] = make_pair<>(prefix + "data", PPG_PLACEMENT);
+  }
+
+  map<string, PoolParamInfo> pools_map;
+  map<string, pair<string, PoolParamGroup> >::iterator iter;
+  for (iter = check_map.begin(); iter != check_map.end(); ++iter) {
+    const string& name = iter->first;
+    const string& field = iter->second.first;
+    PoolParamGroup group = iter->second.second;
+
+    PoolParamInfo& ppi = pools_map[name];
+    int ret = ppi.check(field, group);
+    if (ret < 0) {
+      string s;
+      for (list<string>::iterator liter = ppi.config_fields.begin(); liter != ppi.config_fields.end(); ++liter) {
+        if (!s.empty())
+          s.append(", ");
+        s.append(*liter);
+      }
+      ldout(cct, 0) << "ERROR: zone configuration error, pools collision: " << field << " collides with: " << s << dendl;
+      return ret;
+    }
+  }
+
+  return 0;
+}
+
 int RGWZoneParams::init(CephContext *cct, RGWRados *store, RGWRegion& region)
 {
   init_name(cct, region);
@@ -337,7 +421,7 @@ int RGWZoneParams::init(CephContext *cct, RGWRados *store, RGWRegion& region)
     return -EIO;
   }
 
-  return 0;
+  return verify_pools_valid(cct);
 }
 
 int RGWZoneParams::store_info(CephContext *cct, RGWRados *store, RGWRegion& region)
@@ -851,12 +935,17 @@ int RGWRados::init_rados()
     return -ENOMEM;
 
   ret = rados->init_with_context(cct);
-  if (ret < 0)
+  if (ret < 0) {
+    lderr(cct) << "ERROR: rados->init_with_context() failed: returned " << ret << dendl;
    return ret;
+  }
 
+  ldout(cct, 5) << __func__ << ": connecting to RADOS backend" << dendl;
   ret = rados->connect();
-  if (ret < 0)
+  if (ret < 0) {
+   lderr(cct) << "ERROR: rados->init_with_context() failed: returned " << ret << dendl;
    return ret;
+  }
 
   meta_mgr = new RGWMetadataManager(cct, this);
   data_log = new RGWDataChangesLog(cct, this);
@@ -872,13 +961,18 @@ int RGWRados::init_complete()
 {
   int ret;
 
+  ldout(cct, 5) << __func__ << ": initializing region" << dendl;
   ret = region.init(cct, this);
-  if (ret < 0)
+  if (ret < 0) {
+    lderr(cct) << "region.init() failed: returned " << ret << dendl;
     return ret;
+  }
 
   ret = zone.init(cct, this, region);
-  if (ret < 0)
+  if (ret < 0) {
+    lderr(cct) << "zone.init() failed: returned " << ret << dendl;
     return ret;
+  }
 
   ret = region_map.read(cct, this);
   if (ret < 0) {
@@ -922,12 +1016,16 @@ int RGWRados::init_complete()
   }
 
   ret = open_root_pool_ctx();
-  if (ret < 0)
+  if (ret < 0) {
+    lderr(cct) << "ERROR: failed opening root pool context: ret=" << ret << dendl;
     return ret;
+  }
 
   ret = open_gc_pool_ctx();
-  if (ret < 0)
+  if (ret < 0) {
+    lderr(cct) << "ERROR: failed opening garbage collection pool context: ret=" << ret << dendl;
     return ret;
+  }
 
   pools_initialized = true;
 
@@ -948,6 +1046,7 @@ int RGWRados::initialize()
 {
   int ret;
 
+  ldout(cct, 5) << __func__ << ": init RADOS" << dendl;
   ret = init_rados();
   if (ret < 0)
     return ret;

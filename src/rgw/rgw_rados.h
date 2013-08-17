@@ -438,6 +438,8 @@ struct RGWZoneParams {
   void init_default(RGWRados *store);
   int store_info(CephContext *cct, RGWRados *store, RGWRegion& region);
 
+  int verify_pools_valid(CephContext *cct);
+
   void encode(bufferlist& bl) const {
     ENCODE_START(4, 1, bl);
     ::encode(domain_root, bl);
