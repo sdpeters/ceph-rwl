@@ -1450,7 +1450,13 @@ public:
     if (ret < 0)
       return ret;
 
-    ret = rgw_unlink_bucket(store, be.owner, entry);
+    /*
+     * Note that we unlink the bucket but don't want the entry point to be updated
+     * as we're going to remove it immediately after that. Another reason why we
+     * do that is that if we update the entry point, we'll also need to update
+     * objv_tracker, otherwise the following bucket obj removal is going to fail.
+     */
+    ret = rgw_unlink_bucket(store, be.owner, entry, false);
     if (ret < 0) {
       lderr(store->ctx()) << "could not unlink bucket=" << entry << " owner=" << be.owner << dendl;
     }
