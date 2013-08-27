@@ -98,4 +98,11 @@ cmp /tmp/img1 /tmp/img1.export
 rbd snap rm --snap=snap1 testimg1
 sudo dd if=/dev/rbd/rbd/testimg1@snap1 of=/tmp/img1.snap1 2>&1 | grep 'Input/output error'
 
+sudo dd if=/tmp/img1 of=/dev/rbd/rbd/testimg1 &
+for i in $(seq 2 50);
+do
+    rbd snap create testimg1@snap$i
+done
+sudo dd if=/tmp/img1 of=/dev/rbd/rbd/testimg1
+
 echo OK
