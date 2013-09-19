@@ -83,19 +83,31 @@ libcommon_crc_la_SOURCES = \
 	common/sctp_crc32.c \
 	common/crc32c.cc \
 	common/crc32c_intel_baseline.c \
-	common/crc32c_intel_fast.c
+	common/crc32c_intel_fast.c \
+	common/crc32c_neon.c
+
+libcommon_crc_la_CFLAGS = ${AM_CFLAGS}
+libcommon_crc_la_CXXFLAGS = ${AM_CXXFLAGS}
 
 if WITH_GOOD_YASM_ELF64
 libcommon_crc_la_SOURCES += common/crc32c_intel_fast_asm.S
 libcommon_crc_la_LIBTOOLFLAGS = --tag=CC
 endif
+
+if ENABLE_FPU_NEON
+libcommon_crc_la_CFLAGS += -mfpu=neon
+libcommon_crc_la_CXXFLAGS += -mfpu=neon
+endif
+
 LIBCOMMON_DEPS += libcommon_crc.la
 noinst_LTLIBRARIES += libcommon_crc.la
+
 
 noinst_HEADERS += \
 	common/sctp_crc32.h \
 	common/crc32c_intel_baseline.h \
-	common/crc32c_intel_fast.h
+	common/crc32c_intel_fast.h \
+	common/crc32c_neon.h
 
 
 # important; libmsg before libauth!
