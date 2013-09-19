@@ -192,7 +192,8 @@ public:
   int put_obj_meta(void *ctx, rgw_obj& obj, uint64_t size, time_t *mtime,
                    map<std::string, bufferlist>& attrs, RGWObjCategory category, int flags,
                    map<std::string, bufferlist>* rmattrs, const bufferlist *data,
-                   RGWObjManifest *manifest, const string *ptag, list<string> *remove_objs);
+                   RGWObjManifest *manifest, const string *ptag, list<string> *remove_objs,
+                   time_t *set_mtime);
 
   int put_obj_data(void *ctx, rgw_obj& obj, const char *data,
               off_t ofs, size_t len, bool exclusive);
@@ -352,7 +353,8 @@ template <class T>
 int RGWCache<T>::put_obj_meta(void *ctx, rgw_obj& obj, uint64_t size, time_t *mtime,
                               map<std::string, bufferlist>& attrs, RGWObjCategory category, int flags,
                               map<std::string, bufferlist>* rmattrs, const bufferlist *data,
-                              RGWObjManifest *manifest, const string *ptag, list<string> *remove_objs)
+                              RGWObjManifest *manifest, const string *ptag, list<string> *remove_objs,
+                              time_t *set_mtime)
 {
   rgw_bucket bucket;
   string oid;
@@ -369,7 +371,7 @@ int RGWCache<T>::put_obj_meta(void *ctx, rgw_obj& obj, uint64_t size, time_t *mt
       info.flags |= CACHE_FLAG_DATA;
     }
   }
-  int ret = T::put_obj_meta(ctx, obj, size, mtime, attrs, category, flags, rmattrs, data, manifest, ptag, remove_objs);
+  int ret = T::put_obj_meta(ctx, obj, size, mtime, attrs, category, flags, rmattrs, data, manifest, ptag, remove_objs, set_mtime);
   if (cacheable) {
     string name = normal_name(bucket, oid);
     if (ret >= 0) {

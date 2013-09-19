@@ -466,7 +466,8 @@ public:
   virtual int put_obj_meta(void *ctx, rgw_obj& obj, uint64_t size, time_t *mtime,
               map<std::string, bufferlist>& attrs, RGWObjCategory category, int flags,
               map<std::string, bufferlist>* rmattrs, const bufferlist *data,
-              RGWObjManifest *manifest, const string *ptag, list<string> *remove_objs);
+              RGWObjManifest *manifest, const string *ptag, list<string> *remove_objs,
+              time_t *set_mtime = NULL);
   virtual int put_obj_data(void *ctx, rgw_obj& obj, const char *data,
               off_t ofs, size_t len, bool exclusive);
   virtual int aio_put_obj_data(void *ctx, rgw_obj& obj, bufferlist& bl,
@@ -519,6 +520,7 @@ public:
     return clone_objs(ctx, dst_obj, v, attrs, category, pmtime, truncate_dest, exclusive, xattr_cond);
   }
 
+  int rewrite_obj(rgw_obj& obj);
   /**
    * Copy an object.
    * dest_obj: the object to copy into
@@ -544,6 +546,7 @@ public:
                rgw_obj& dest_obj,
                rgw_obj& src_obj,
 	       time_t *mtime,
+               time_t *set_mtime,
                map<string, bufferlist>& attrs,
                RGWObjCategory category,
                struct rgw_err *err);

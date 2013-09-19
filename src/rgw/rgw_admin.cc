@@ -159,6 +159,7 @@ enum {
   OPT_TEMP_REMOVE,
   OPT_OBJECT_RM,
   OPT_OBJECT_UNLINK,
+  OPT_OBJECT_REWRITE,
   OPT_GC_LIST,
   OPT_GC_PROCESS,
   OPT_CLUSTER_INFO,
@@ -327,6 +328,8 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       return OPT_OBJECT_RM;
     if (strcmp(cmd, "unlink") == 0)
       return OPT_OBJECT_UNLINK;
+    if (strcmp(cmd, "rewrite") == 0)
+      return OPT_OBJECT_REWRITE;
   } else if (strcmp(prev_cmd, "cluster") == 0) {
     if (strcmp(cmd, "info") == 0)
       return OPT_CLUSTER_INFO;
@@ -1751,6 +1754,16 @@ next:
 
   if (opt_cmd == OPT_OBJECT_RM) {
     int ret = remove_object(store, bucket, object);
+
+    if (ret < 0) {
+      cerr << "ERROR: object remove returned: " << cpp_strerror(-ret) << std::endl;
+      return 1;
+    }
+  }
+
+  if (opt_cmd == OPT_OBJECT_REWRITE) {
+    rgw_obj obj(bucket, object);
+    int ret = store->rewrite_obj(obj);
 
     if (ret < 0) {
       cerr << "ERROR: object remove returned: " << cpp_strerror(-ret) << std::endl;

@@ -1038,7 +1038,8 @@ int RGWRados::put_obj_meta(void *ctx, rgw_obj& obj,  uint64_t size,
                   const bufferlist *data,
                   RGWObjManifest *manifest,
 		  const string *ptag,
-                  list<string> *remove_objs)
+                  list<string> *remove_objs,
+                  time_t *set_mtime)
 {
   rgw_bucket bucket;
   std::string oid, key;
@@ -1125,6 +1126,10 @@ int RGWRados::put_obj_meta(void *ctx, rgw_obj& obj,  uint64_t size,
   if (r < 0)
     return r;
 
+  if (set_mtime) {
+    op.mtime(set_mtime);
+  }
+
   r = io_ctx.operate(oid, &op);
   if (r < 0)
     goto done_cancel;
@@ -1136,7 +1141,11 @@ int RGWRados::put_obj_meta(void *ctx, rgw_obj& obj,  uint64_t size,
     ldout(cct, 0) << "ERROR: complete_atomic_overwrite returned r=" << r << dendl;
   }
 
-  ut = ceph_clock_now(cct);
+  if (!set_mtime) {
+    ut = ceph_clock_now(cct);
+  } else {
+    ut = utime_t(*set_mtime, 0);
+  }
   r = complete_update_index(bucket, obj.object, index_tag, epoch, size,
                             ut, etag, content_type, &acl_bl, category, remove_objs);
   if (r < 0)
@@ -1231,6 +1240,31 @@ bool RGWRados::aio_completed(void *handle)
   AioCompletion *c = (AioCompletion *)handle;
   return c->is_complete();
 }
+
+
+int RGWRados::rewrite_obj(rgw_obj& obj)
+{
+  map<string, bufferlist> attrset;
+  off_t ofs = 0;
+  off_t end = -1;
+  void *handle = NULL;
+
+  time_t mtime;
+  uint64_t total_len;
+  uint64_t obj_size;
+  RGWRadosCtx rctx(this);
+  int ret = prepare_get_obj((void *)&rctx, obj, &ofs, &end, &attrset,
+                            NULL, NULL, &mtime, NULL, NULL, &total_len,
+                            &obj_size, &handle, NULL);
+  if (ret < 0)
+    return ret;
+
+  attrset.erase(RGW_ATTR_ID_TAG);
+
+  return copy_obj_data((void *)&rctx, handle, end, obj, obj, NULL, &mtime, attrset, RGW_OBJ_CATEGORY_MAIN, NULL);
+}
+
+
 /**
  * Copy an object.
  * dest_obj: the object to copy into
@@ -1313,7 +1347,7 @@ int RGWRados::copy_obj(void *ctx,
   }
 
   if (copy_data) { /* refcounting tail wouldn't work here, just copy the data */
-    return copy_obj_data(ctx, handle, end, dest_obj, src_obj, mtime, attrset, category, err);
+    return copy_obj_data(ctx, handle, end, dest_obj, src_obj, mtime, NULL, attrset, category, err);
   }
 
   map<uint64_t, RGWObjManifestPart>::iterator miter = astate->manifest.objs.begin();
@@ -1412,6 +1446,7 @@ int RGWRados::copy_obj_data(void *ctx,
                rgw_obj& dest_obj,
                rgw_obj& src_obj,
 	       time_t *mtime,
+               time_t *set_mtime,
                map<string, bufferlist>& attrs,
                RGWObjCategory category,
                struct rgw_err *err)
@@ -1470,7 +1505,7 @@ int RGWRados::copy_obj_data(void *ctx,
   }
   manifest.obj_size = ofs;
 
-  ret = put_obj_meta(ctx, dest_obj, end + 1, NULL, attrs, category, PUT_OBJ_CREATE, NULL, &first_chunk, &manifest, NULL, NULL);
+  ret = put_obj_meta(ctx, dest_obj, end + 1, NULL, attrs, category, PUT_OBJ_CREATE, NULL, &first_chunk, &manifest, NULL, NULL, set_mtime);
   if (mtime)
     obj_stat(ctx, dest_obj, NULL, mtime, NULL, NULL, NULL);
 
