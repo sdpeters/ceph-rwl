@@ -848,6 +848,9 @@ int main(int argc, char **argv)
   string caps;
   int check_objects = false;
 
+  uint64_t min_rewrite_size = 4 * 1024 * 1024;
+  uint64_t max_rewrite_size = ULLONG_MAX;
+
   std::string val;
   std::ostringstream errs;
   long long tmp = 0;
@@ -900,6 +903,10 @@ int main(int argc, char **argv)
 	cerr << errs.str() << std::endl;
 	exit(EXIT_FAILURE);
       }
+    } else if (ceph_argparse_witharg(args, i, &val, "--min-rewrite-size", (char*)NULL)) {
+      min_rewrite_size = (uint64_t)atoll(val.c_str());
+    } else if (ceph_argparse_witharg(args, i, &val, "--max-rewrite-size", (char*)NULL)) {
+      max_rewrite_size = (uint64_t)atoll(val.c_str());
     } else if (ceph_argparse_witharg(args, i, &val, "--max-buckets", (char*)NULL)) {
       max_buckets = atoi(val.c_str());
     } else if (ceph_argparse_witharg(args, i, &val, "--date", "--time", (char*)NULL)) {
@@ -1788,6 +1795,24 @@ next:
       return EINVAL;
     }
 
+    uint64_t start_epoch = 0;
+    uint64_t end_epoch = 0;
+
+    if (!end_date.empty()) {
+      int ret = parse_date(end_date, &end_epoch);
+      if (ret < 0) {
+        cerr << "ERROR: failed to parse end date" << std::endl;
+        return EINVAL;
+      }
+    }
+    if (!start_date.empty()) {
+      int ret = parse_date(start_date, &start_epoch);
+      if (ret < 0) {
+        cerr << "ERROR: failed to parse start date" << std::endl;
+        return EINVAL;
+      }
+    }
+
     bool is_truncated = true;
 
     string marker;
@@ -1813,19 +1838,27 @@ next:
       map<string, RGWObjEnt>::iterator iter;
       for (iter = result.begin(); iter != result.end(); ++iter) {
         string name = iter->first;
+        RGWObjEnt& entry = iter->second;
 
         formatter->open_object_section("object");
-        formatter->dump_string("name", iter->first);
-        formatter->dump_int("size", iter->second.size);
-        utime_t ut(iter->second.mtime, 0);
+        formatter->dump_string("name", name);
+        formatter->dump_int("size", entry.size);
+        utime_t ut(entry.mtime, 0);
         ut.gmtime(formatter->dump_stream("mtime"));
 
-        rgw_obj obj(bucket, name);
-        r = store->rewrite_obj(obj);
-        if (r == 0) {
-          formatter->dump_string("status", "Success");
+        if ((entry.size < min_rewrite_size) ||
+            (entry.size > max_rewrite_size) ||
+            (start_epoch > 0 && start_epoch > (uint64_t)ut.sec()) ||
+            (end_epoch > 0 && end_epoch < (uint64_t)ut.sec())) {
+          formatter->dump_string("status", "Skipped");
         } else {
-          formatter->dump_string("status", cpp_strerror(-r));
+          rgw_obj obj(bucket, name);
+          r = store->rewrite_obj(obj);
+          if (r == 0) {
+            formatter->dump_string("status", "Success");
+          } else {
+            formatter->dump_string("status", cpp_strerror(-r));
+          }
         }
 
         formatter->close_section();
