@@ -1679,12 +1679,20 @@ next:
   }
 
   if (opt_cmd == OPT_OBJECT_REWRITE) {
+    if (bucket_name.empty()) {
+      cerr << "ERROR: bucket not specified" << std::endl;
+      return EINVAL;
+    }
+    if (object.empty()) {
+      cerr << "ERROR: object not specified" << std::endl;
+      return EINVAL;
+    }
     rgw_obj obj(bucket, object);
     int ret = store->rewrite_obj(obj);
 
     if (ret < 0) {
       cerr << "ERROR: object remove returned: " << cpp_strerror(-ret) << std::endl;
-      return 1;
+      return -ret;
     }
   }
 
