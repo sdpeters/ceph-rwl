@@ -201,6 +201,7 @@ enum {
   OPT_OBJECT_RM,
   OPT_OBJECT_UNLINK,
   OPT_OBJECT_STAT,
+  OPT_OBJECT_REWRITE,
   OPT_GC_LIST,
   OPT_GC_PROCESS,
   OPT_REGION_GET,
@@ -351,6 +352,8 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       return OPT_OBJECT_UNLINK;
     if (strcmp(cmd, "stat") == 0)
       return OPT_OBJECT_STAT;
+    if (strcmp(cmd, "rewrite") == 0)
+      return OPT_OBJECT_REWRITE;
   } else if (strcmp(prev_cmd, "region") == 0) {
     if (strcmp(cmd, "get") == 0)
       return OPT_REGION_GET;
@@ -1672,6 +1675,16 @@ next:
     if (ret < 0) {
       cerr << "ERROR: object remove returned: " << cpp_strerror(-ret) << std::endl;
       return -ret;
+    }
+  }
+
+  if (opt_cmd == OPT_OBJECT_REWRITE) {
+    rgw_obj obj(bucket, object);
+    int ret = store->rewrite_obj(obj);
+
+    if (ret < 0) {
+      cerr << "ERROR: object remove returned: " << cpp_strerror(-ret) << std::endl;
+      return 1;
     }
   }
 
