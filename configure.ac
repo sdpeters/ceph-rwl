@@ -35,6 +35,8 @@ AM_PROG_CC_C_O
 AM_PROG_LIBTOOL
 AM_PROG_AS
 
+AC_CHECK_HEADERS([endian.h])
+AC_C_BIGENDIAN
 
 # enable make V=0 (if automake >1.11)
 AM_INIT_AUTOMAKE([foreign])

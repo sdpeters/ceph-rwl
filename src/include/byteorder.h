@@ -7,18 +7,12 @@
 #ifndef CEPH_BYTEORDER_H
 #define CEPH_BYTEORDER_H
 
-#if defined(__linux__)
-#include <endian.h>
-#elif defined(__FreeBSD__)
-#include <sys/endian.h>
-#else
-#error "Your platform is not yet supported."
-#endif
+#include "acconfig.h"
 
-#if defined(__FreeBSD__)
-#define	__BYTE_ORDER _BYTE_ORDER
-#define	__BIG_ENDIAN _BIG_ENDIAN
-#define	__LITTLE_ENDIAN _LITTLE_ENDIAN
+#include "include/int_types.h"
+
+#ifdef HAVE_ENDIAN_H
+#include <endian.h>
 #endif
 
 static __inline__ __u16 swab16(__u16 val) 
@@ -44,18 +38,22 @@ static __inline__ uint64_t swab64(uint64_t val)
 	  ((val << 56)));
 }
 
-#if !defined(__BYTE_ORDER) || !defined(__BIG_ENDIAN) || !defined(__LITTLE_ENDIAN)
-#error "Endianess is unknown!"
+#ifndef BYTE_ORDER
+# ifdef WORDS_BIGENDIAN
+#  define BYTE_ORDER BIG_ENDIAN
+# else
+#  define BYTE_ORDER LITTLE_ENDIAN
+# endif
 #endif
 
 // mswab == maybe swab (if not LE)
-#if __BYTE_ORDER == __BIG_ENDIAN
+#if BYTE_ORDER == BIG_ENDIAN
 # define mswab64(a) swab64(a)
 # define mswab32(a) swab32(a)
 # define mswab16(a) swab16(a)
 #else
-# if __BYTE_ORDER != __LITTLE_ENDIAN
-#  warning __BYTE_ORDER is not defined, assuming little endian
+# if BYTE_ORDER != LITTLE_ENDIAN
+#  warning BYTE_ORDER is not defined, assuming little endian
 # endif
 # define mswab64(a) (a)
 # define mswab32(a) (a)

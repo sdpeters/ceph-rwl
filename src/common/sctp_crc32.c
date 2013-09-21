@@ -42,10 +42,10 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_crc32.c,v 1.8 2007/05/08 17:01:10 rrs E
 
 #include <stdint.h>
 
-#if defined(__FreeBSD__)
-#include <sys/endian.h>
-#else
+#ifdef HAVE_ENDIAN_H
 #include <endian.h>
+#elif HAVE_SYS_ENDIAN_H
+#include <sys/endian.h>
 #endif
 
 #ifndef SCTP_USE_ADLER32
