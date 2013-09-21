@@ -130,8 +130,26 @@ AS_CASE([$ac_cv_search_uuid_parse],
 LIBS="${saved_LIBS}"
 AC_SUBST([UUID_LIBS])
 
+#
+# Check for res_nquery in libresolv. At least on OSX, res_nquery is a macro
+# defined in resolv.h, so the typical AC_CHECK_LIB doesn't work. This will
+# defined RESOLV_LIBS for linking.
+#
+AC_CHECK_HEADER([resolv.h])
+AC_MSG_CHECKING([if res_nquery will link])
+RESOLV_LIBS="-lresolv"
+saved_LIBS="${LIBS}"
+LIBS="${RESOLV_LIBS} ${LIBS}"
+AC_LINK_IFELSE([AC_LANG_PROGRAM([[
+# include <resolv.h>
+    ]], [[res_nquery(0, 0, 0, 0, 0, 0);]])],
+    AC_MSG_RESULT([yes]),
+    [AC_MSG_RESULT([no])
+    AC_MSG_FAILURE([libresolv not found])])
+LIBS="${saved_LIBS}"
+AC_SUBST([RESOLV_LIBS])
+
 AC_CHECK_LIB([m], [pow], [true], AC_MSG_FAILURE([libm not found]))
-AC_CHECK_LIB([resolv], [__res_nquery], [true], AC_MSG_FAILURE([libresolv not found]))
 if test x"$linux" = x"yes"; then
 	AC_CHECK_LIB([keyutils], [add_key], [true], AC_MSG_FAILURE([libkeyutils not found]))
 fi
