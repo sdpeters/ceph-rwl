@@ -38,6 +38,8 @@ AM_PROG_AS
 AC_CHECK_HEADERS([endian.h])
 AC_C_BIGENDIAN
 
+#AX_CHECK_LINK_FLAG(["-Wl,--as-needed"],
+
 # enable make V=0 (if automake >1.11)
 AM_INIT_AUTOMAKE([foreign])
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
