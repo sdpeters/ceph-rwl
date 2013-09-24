@@ -168,6 +168,8 @@ AC_SUBST(KEYUTILS_LIB)
 AC_CHECK_LIB([m], [pow], [true], AC_MSG_FAILURE([libm not found]))
 AC_CHECK_FUNCS([syncfs], AC_DEFINE([HAVE_SYS_SYNCFS], [1], [we have syncfs]), [])
 
+AC_CHECK_FUNCS([on_exit])
+
 # Find some crypto library for us to use, while letting user to decide which one to use.
 AC_ARG_WITH([cryptopp],
 	[AS_HELP_STRING([--with-cryptopp], [Use cryptographic functions from cryptopp])],
