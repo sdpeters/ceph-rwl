@@ -640,15 +640,15 @@ int FileStore::mkfs()
     goto close_fsid_fd;
   }
 
-  if (basefs.f_type == BTRFS_SUPER_MAGIC) {
 #if defined(__linux__)
+  if (basefs.f_type == BTRFS_SUPER_MAGIC) {
     backend = new BtrfsFileStoreBackend(this);
-#endif
   } else if (basefs.f_type == ZFS_SUPER_MAGIC) {
 #ifdef HAVE_LIBZFS
     backend = new ZFSFileStoreBackend(this);
 #endif
   }
+#endif
 
   ret = backend->create_current();
   if (ret < 0) {
@@ -2769,7 +2769,11 @@ int FileStore::_zero(coll_t cid, const ghobject_t& oid, uint64_t offset, size_t 
     ret = _write(cid, oid, offset, len, bl);
   }
 
+#ifdef CEPH_HAVE_FALLOCATE
+# if !defined(DARWIN) && !defined(__FreeBSD__)
  out:
+#endif
+#endif
   dout(20) << "zero " << cid << "/" << oid << " " << offset << "~" << len << " = " << ret << dendl;
   return ret;
 }
