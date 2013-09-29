@@ -19,6 +19,10 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 
+#ifndef MAP_ANONYMOUS
+# define MAP_ANONYMOUS MAP_ANON
+#endif
+
 /* We put our cross-process semaphore into a page of memory mapped with mmap. */
 struct cross_process_sem_data_t
 {
