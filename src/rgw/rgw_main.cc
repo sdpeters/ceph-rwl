@@ -61,6 +61,8 @@
 #include "include/types.h"
 #include "common/BackTrace.h"
 
+#include "include/compat.h"
+
 #define dout_subsys ceph_subsys_rgw
 
 using namespace std;
