@@ -35,7 +35,6 @@
 #endif
 #ifndef O_DIRECTORY
 #define O_DIRECTORY 0x100000
-void	*valloc(size_t);
 #endif
 
 #endif
