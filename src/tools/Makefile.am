@@ -20,7 +20,7 @@ endif # LINUX
 bin_PROGRAMS += ceph_filestore_dump
 
 monmaptool_SOURCES = tools/monmaptool.cc
-monmaptool_LDADD = $(CEPH_GLOBAL)
+monmaptool_LDADD = $(LIBCOMMON) $(CEPH_GLOBAL)
 bin_PROGRAMS += monmaptool
 
 crushtool_SOURCES = tools/crushtool.cc
@@ -76,11 +76,11 @@ endif # WITH_SYSTEM_LIBS3
 endif # WITH_REST_BENCH
 
 ceph_conf_SOURCES = tools/ceph_conf.cc
-ceph_conf_LDADD = $(CEPH_GLOBAL)
+ceph_conf_LDADD = $(LIBCOMMON) $(CEPH_GLOBAL)
 bin_PROGRAMS += ceph-conf
 
 ceph_authtool_SOURCES = tools/ceph_authtool.cc
-ceph_authtool_LDADD = $(CEPH_GLOBAL)
+ceph_authtool_LDADD = $(LIBCOMMON) $(CEPH_GLOBAL)
 bin_PROGRAMS += ceph-authtool
 
 ceph_mon_store_converter_SOURCES = tools/mon_store_converter.cc
