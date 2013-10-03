@@ -459,6 +459,7 @@ int librados::RadosClient::pool_create_async(string& name, PoolAsyncCompletionIm
   Context *onfinish = new C_PoolAsync_Safe(c);
   int r = objecter->create_pool(name, onfinish, auid, crush_rule);
   if (r < 0) {
+    c->put();
     delete onfinish;
   }
   return r;
