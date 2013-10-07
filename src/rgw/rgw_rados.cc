@@ -2232,12 +2232,13 @@ int RGWRados::put_obj_meta_impl(void *ctx, rgw_obj& obj,  uint64_t size,
     if (!(flags & PUT_OBJ_CREATE))
 	return -EINVAL;
     op.create(true); // exclusive create
-  } else {
+  } /* else {
     bool reset_obj = (flags & PUT_OBJ_CREATE) != 0;
     r = prepare_atomic_for_write(rctx, obj, op, &state, reset_obj, ptag);
     if (r < 0)
       return r;
-  }
+  } */
+#warning disabled code
 
   if (objv_tracker) {
     objv_tracker->prepare_op_for_write(&op);
