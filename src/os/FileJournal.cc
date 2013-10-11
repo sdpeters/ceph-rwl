@@ -58,7 +58,11 @@ int FileJournal::_open(bool forwrite, bool create)
   if (forwrite) {
     flags = O_RDWR;
     if (directio)
+#ifdef O_DSYNC
       flags |= O_DIRECT | O_DSYNC;
+#else
+      flags |= O_DIRECT | O_SYNC;
+#endif
   } else {
     flags = O_RDONLY;
   }
