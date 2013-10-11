@@ -132,7 +132,7 @@ saved_LIBS="${LIBS}"
 AC_SEARCH_LIBS([uuid_parse], [uuid], [], AC_MSG_FAILURE([no uuid library found]))
 AS_CASE([$ac_cv_search_uuid_parse],
     ["none required"], [], [no], [],
-    [uuid_LIBS="${ac_cv_search_uuid_parse}"])
+    [UUID_LIBS="${ac_cv_search_uuid_parse}"])
 LIBS="${saved_LIBS}"
 AC_SUBST([UUID_LIBS])
 
