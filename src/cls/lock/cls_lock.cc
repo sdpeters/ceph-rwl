@@ -27,6 +27,7 @@
 #include "cls/lock/cls_lock_ops.h"
 
 #include "global/global_context.h"
+#include "include/compat.h"
 
 
 using namespace rados::cls::lock;

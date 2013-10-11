@@ -4,6 +4,7 @@
 #include "cls/rgw/cls_rgw_ops.h"
 #include "cls/rgw/cls_rgw_client.h"
 #include "include/rados/librados.hpp"
+#include "include/compat.h"
 
 #include "common/debug.h"
 

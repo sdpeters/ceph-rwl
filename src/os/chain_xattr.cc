@@ -17,6 +17,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "include/assert.h"
+#include "include/compat.h"
 
 #if defined(__linux__)
 #include <linux/fs.h>

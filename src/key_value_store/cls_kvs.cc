@@ -11,7 +11,7 @@
 #include "include/types.h"
 #include <iostream>
 #include <climits>
-
+#include "include/compat.h"
 
 cls_handle_t h_class;
 cls_method_handle_t h_get_idata_from_key;
