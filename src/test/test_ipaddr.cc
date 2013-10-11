@@ -2,6 +2,7 @@
 #include "gtest/gtest.h"
 
 #include <arpa/inet.h>
+#include <sys/socket.h>
 
 static void ipv4(struct sockaddr_in *addr, const char *s) {
   int err;
