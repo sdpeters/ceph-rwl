@@ -3,10 +3,11 @@
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 
 #include "acconfig.h"
 
-#ifdef DARWIN
+#if defined(DARWIN) || defined(__FreeBSD__)
 #ifndef s6_addr16
 #define s6_addr16 __u6_addr.__u6_addr16
 #endif
