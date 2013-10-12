@@ -35,6 +35,10 @@
 #include <sys/malloc.h>
 #endif
 
+#ifdef HAVE_EXTATTR
+#include <errno.h>
+#endif
+
 #include "common/xattr.h"
 
 /*
