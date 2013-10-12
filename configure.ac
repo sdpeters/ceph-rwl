@@ -143,18 +143,31 @@ AC_SUBST([UUID_LIBS])
 # defined in resolv.h, so the typical AC_CHECK_LIB doesn't work. This will
 # defined RESOLV_LIBS for linking.
 #
-AC_CHECK_HEADER([resolv.h])
-AC_MSG_CHECKING([if res_nquery will link])
-RESOLV_LIBS="-lresolv"
-saved_LIBS="${LIBS}"
-LIBS="${RESOLV_LIBS} ${LIBS}"
-AC_LINK_IFELSE([AC_LANG_PROGRAM([[
-# include <resolv.h>
-    ]], [[res_nquery(0, 0, 0, 0, 0, 0);]])],
-    AC_MSG_RESULT([yes]),
-    [AC_MSG_RESULT([no])
-    AC_MSG_FAILURE([libresolv not found])])
-LIBS="${saved_LIBS}"
+AC_CHECK_HEADER([resolv.h], [], [], [#include <netinet/in.h>])
+
+AC_DEFUN([CHECK_RESOLV_LIBS], [{
+  AC_MSG_CHECKING([if res_nquery will link (LIBS=$1)])
+  saved_LIBS="${LIBS}"
+  LIBS="$1"
+  AC_LINK_IFELSE([AC_LANG_PROGRAM([[
+        #include <netinet/in.h>
+        #include <resolv.h>
+      ]], [[res_nquery(0, 0, 0, 0, 0, 0);]])],
+      [AC_MSG_RESULT([yes])
+      [$2]],
+      AC_MSG_RESULT([no]))
+  LIBS="${saved_LIBS}"
+}])
+
+RESOLV_LIBS=""
+CHECK_RESOLV_LIBS([$RESOLV_LIBS], [resolv_libs="ok"])
+if test x"$resolv_libs" != "xok"; then
+  RESOLV_LIBS="-lresolv"
+  CHECK_RESOLV_LIBS([$RESOLV_LIBS], [resolv_libs="ok"])
+  if test x"$resolv_libs" != "xok"; then
+    AC_MSG_FAILURE([no resolv library found])
+  fi
+fi
 AC_SUBST([RESOLV_LIBS])
 
 #
