@@ -2626,6 +2626,7 @@ int FileStore::fiemap(coll_t cid, const ghobject_t& oid,
     }
     free(fiemap);
   }
+  free(fiemap);
 
 done:
   if (r >= 0) {
