@@ -170,6 +170,40 @@ if test x"$resolv_libs" != "xok"; then
 fi
 AC_SUBST([RESOLV_LIBS])
 
+
+#
+# Check for libexecinfo.  On some platforms this is part of libc, on others it
+# is a separate library.
+#
+AC_CHECK_HEADER([execinfo.h], [], [], [])
+
+AC_MSG_CHECKING([which linker flags are needed by backtrace()])
+# Checks whether backtrace() can compile with the supplied linker flag
+# AC_CHECK_EXECINFO_FLAGS(FLAG_TO_TEST, VARIABLE_TO_SET_IF_SUPPORTED)
+AC_DEFUN([AC_CHECK_EXECINFO_FLAGS],
+[{
+       AC_LANG_PUSH([C])
+       saved_LIBS="${LIBS}"
+       LIBS="${LIBS} $1"
+       AC_LINK_IFELSE([AC_LANG_PROGRAM([[
+#include <execinfo.h>
+       ]], [[(void)backtrace((void**)0, 0);]])],
+                       [AC_MSG_RESULT([yes]); AC_SUBST([$2], ["$1"])],
+                       [AC_MSG_RESULT([no])]
+                       )
+       LIBS="$saved_LIBS"
+       AC_LANG_POP([C])
+}])
+
+EXECINFO_LIBS="error"
+# FIXME: it would be nice if we did not uncondtionally run AC_CHECK_EXEC...
+# twice, but rather only run the second time if the first time failed. See above
+# in the revamped CHECK_RESOLV_LIBS.
+AC_CHECK_EXECINFO_FLAGS([""], [EXECINFO_LIBS])
+AC_CHECK_EXECINFO_FLAGS([-lexecinfo], [EXECINFO_LIBS])
+AS_IF([test "$EXECINFO_LIBS" = "error"],
+      AC_MSG_FAILURE([libexecinfo missing and not found]))
+
 #
 # Check for libkeyutils
 #
