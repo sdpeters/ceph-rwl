@@ -282,6 +282,9 @@ public:
     list_bucket_handler.listBucketCallback = list_bucket_callback;
 
   }
+  ~RESTDispatcher() {
+    req_wq.stop();
+  }
   void process_context(req_context *ctx);
   void get_obj(req_context *ctx);
   void put_obj(req_context *ctx);
