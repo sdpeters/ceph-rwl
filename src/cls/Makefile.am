@@ -67,23 +67,23 @@ libcls_refcount_client_la_SOURCES = \
 noinst_LTLIBRARIES += libcls_refcount_client.la
 DENCODER_DEPS += libcls_refcount_client.la
 
-libcls_version_client_a_SOURCES =  \
+libcls_version_client_la_SOURCES =  \
 	cls/version/cls_version_client.cc \
 	cls/version/cls_version_types.cc
-noinst_LIBRARIES += libcls_version_client.a
+noinst_LTLIBRARIES += libcls_version_client.la
 
-libcls_log_client_a_SOURCES = cls/log/cls_log_client.cc
-noinst_LIBRARIES += libcls_log_client.a
+libcls_log_client_la_SOURCES = cls/log/cls_log_client.cc
+noinst_LTLIBRARIES += libcls_log_client.la
 
-libcls_statelog_client_a_SOURCES = cls/statelog/cls_statelog_client.cc
-noinst_LIBRARIES += libcls_statelog_client.a
+libcls_statelog_client_la_SOURCES = cls/statelog/cls_statelog_client.cc
+noinst_LTLIBRARIES += libcls_statelog_client.la
 
-libcls_replica_log_client_a_SOURCES = \
+libcls_replica_log_client_la_SOURCES = \
 	cls/replica_log/cls_replica_log_types.cc \
 	cls/replica_log/cls_replica_log_ops.cc \
 	cls/replica_log/cls_replica_log_client.cc
-noinst_LIBRARIES += libcls_replica_log_client.a
-DENCODER_DEPS += libcls_replica_log_client.a
+noinst_LTLIBRARIES += libcls_replica_log_client.la
+DENCODER_DEPS += libcls_replica_log_client.la
 
 libcls_rgw_client_la_SOURCES = \
 	cls/rgw/cls_rgw_client.cc \

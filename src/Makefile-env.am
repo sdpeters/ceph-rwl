@@ -132,6 +132,7 @@ LIBCLIENT = libclient.la
 LIBCLIENT_FUSE = libclient_fuse.la
 LIBRADOS = librados.la
 LIBRGW = librgw.la
+LIBRGWPROCESS = librgwprocess.la
 LIBRBD = librbd.la
 LIBCEPHFS = libcephfs.la
 
@@ -169,6 +170,7 @@ CEPH_GLOBAL = $(LIBGLOBAL) $(PTHREAD_LIBS) -lm $(CRYPTO_LIBS) $(EXTRALIBS)
 LIBCOMMON_DEPS =
 LIBRADOS_DEPS =
 LIBRGW_DEPS =
+LIBRGWPROCESS_DEPS =
 
 # This is used by the dencoder test
 DENCODER_SOURCES =

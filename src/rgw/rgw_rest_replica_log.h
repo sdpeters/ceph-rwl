@@ -133,12 +133,13 @@ protected:
   RGWOp *op_delete();
   RGWOp *op_post();
 
-  int read_permissions(RGWOp*) {
-    return 0;
-  }
 public:
   RGWHandler_ReplicaLog() : RGWHandler_Auth_S3() {}
   virtual ~RGWHandler_ReplicaLog() {}
+
+  int read_permissions(RGWOp*) {
+    return 0;
+  }
 };
 
 class RGWRESTMgr_ReplicaLog : public RGWRESTMgr {
