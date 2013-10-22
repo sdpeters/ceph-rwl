@@ -101,6 +101,8 @@ req_info::req_info(CephContext *cct, class RGWEnv *e) : env(e) {
   if (pos >= 0) {
     request_params = request_uri.substr(pos + 1);
     request_uri = request_uri.substr(0, pos);
+  } else {
+    request_params = env->get("QUERY_STRING", "");
   }
   host = env->get("HTTP_HOST");
 }

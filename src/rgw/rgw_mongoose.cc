@@ -44,6 +44,11 @@ void RGWMongoose::init_env(CephContext *cct)
       continue;
     }
 
+    if (strcasecmp(header->name, "content-type") == 0) {
+      env.set("CONTENT_TYPE", header->value);
+      continue;
+    }
+
     int len = strlen(header->name) + 5; /* HTTP_ prepended */
     char buf[len + 1];
     memcpy(buf, "HTTP_", 5);
@@ -94,7 +99,7 @@ int RGWMongoose::send_100_continue()
 {
   char buf[] = "HTTP/1.1 100 CONTINUE\r\n\r\n";
 
-  return mg_write(event->conn, buf, sizeof(buf));
+  return mg_write(event->conn, buf, sizeof(buf) - 1);
 }
 
 int RGWMongoose::complete_header()
