@@ -184,8 +184,8 @@ void req_info::init_meta_info(bool *found_bad_meta)
 {
   x_meta_map.clear();
 
-  map<string, string>& m = env->get_map();
-  map<string, string>::iterator iter;
+  map<string, string, ltstr_nocase>& m = env->get_map();
+  map<string, string, ltstr_nocase>::iterator iter;
   for (iter = m.begin(); iter != m.end(); ++iter) {
     const char *prefix;
     const string& header_name = iter->first;
