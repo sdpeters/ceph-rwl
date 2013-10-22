@@ -4,12 +4,13 @@
 #include "rgw_client_io.h"
 
 
+struct mg_event;
 struct mg_connection;
 
 
 class RGWMongoose : public RGWClientIO
 {
-  mg_connection *conn;
+  mg_event *event;
 
   bufferlist header_data;
 
@@ -26,7 +27,7 @@ protected:
   int complete_header();
 
 public:
-  RGWMongoose(mg_connection *_conn);
+  RGWMongoose(mg_event *_event);
   void flush();
 };
 
