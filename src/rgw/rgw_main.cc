@@ -439,6 +439,9 @@ static void *mongoose_callback(enum mg_event event,
   RGWREST *rest = pe->rest;
   OpsLogSocket *olog = pe->olog;
 
+  if (event != MG_NEW_REQUEST)
+    return NULL;
+
   RGWRequest *req = new RGWRequest;
   int ret;
   RGWMongoose client_io(conn);

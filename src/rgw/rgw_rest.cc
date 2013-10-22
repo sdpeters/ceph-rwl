@@ -440,10 +440,15 @@ void end_header(struct req_state *s, RGWOp *op, const char *content_type)
     s->formatter->close_section();
     dump_content_length(s, s->formatter->get_len());
   }
-  int r = s->cio->print("Content-type: %s\r\n\r\n", content_type);
+  int r = s->cio->print("Content-type: %s\r\n", content_type);
   if (r < 0) {
     ldout(s->cct, 0) << "ERROR: s->cio->print() returned err=" << r << dendl;
   }
+  r = s->cio->complete_header();
+  if (r < 0) {
+    ldout(s->cct, 0) << "ERROR: s->cio->complete_header() returned err=" << r << dendl;
+  }
+
   s->cio->set_account(true);
   rgw_flush_formatter_and_reset(s, s->formatter);
 }
