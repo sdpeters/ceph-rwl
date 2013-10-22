@@ -14,15 +14,15 @@ int RGWMongoose::write_data(const char *buf, int len)
     return 0;
   }
   dout(0) << buf << dendl;
-  return mg_write(conn, buf, len);
+  return mg_write(event->conn, buf, len);
 }
 
-RGWMongoose::RGWMongoose(mg_connection *_conn) : conn(_conn), sent_header(false) {
+RGWMongoose::RGWMongoose(mg_event *_event) : event(_event), sent_header(false) {
 }
 
 int RGWMongoose::read_data(char *buf, int len)
 {
-  return mg_read(conn, buf, len);
+  return mg_read(event->conn, buf, len);
 }
 
 void RGWMongoose::flush()
@@ -32,7 +32,7 @@ void RGWMongoose::flush()
 void RGWMongoose::init_env(CephContext *cct)
 {
   env.init(cct);
-  struct mg_request_info *info = mg_get_request_info(conn);
+  struct mg_request_info *info = event->request_info;
   if (!info)
     return;
 
@@ -94,7 +94,7 @@ int RGWMongoose::send_100_continue()
 {
   char buf[] = "HTTP/1.1 100 CONTINUE\r\n\r\n";
 
-  return mg_write(conn, buf, sizeof(buf));
+  return mg_write(event->conn, buf, sizeof(buf));
 }
 
 int RGWMongoose::complete_header()

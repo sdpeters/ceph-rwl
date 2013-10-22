@@ -431,20 +431,18 @@ done:
 }
 
 
-static void *mongoose_callback(enum mg_event event,
-                      struct mg_connection *conn) {
-  const struct mg_request_info *request_info = mg_get_request_info(conn);
-  RGWProcessEnv *pe = (RGWProcessEnv *)request_info->user_data;
+static int mongoose_callback(struct mg_event *event) {
+  RGWProcessEnv *pe = (RGWProcessEnv *)event->user_data;
   RGWRados *store = pe->store;
   RGWREST *rest = pe->rest;
   OpsLogSocket *olog = pe->olog;
 
-  if (event != MG_NEW_REQUEST)
-    return NULL;
+  if (event->type != MG_REQUEST_BEGIN)
+    return 0;
 
   RGWRequest *req = new RGWRequest;
   int ret;
-  RGWMongoose client_io(conn);
+  RGWMongoose client_io(event);
 
   client_io.init(g_ceph_context);
 
@@ -559,7 +557,7 @@ done:
   delete req;
 
 // Mark as processed
-  return (void *)"";
+  return 1;
 }
 
 #ifdef HAVE_CURL_MULTI_WAIT
@@ -733,7 +731,7 @@ int main(int argc, const char **argv)
 
   RGWProcessEnv pe = { store, &rest, olog };
 
-  ctx = mg_start(&mongoose_callback, &pe, options);
+  ctx = mg_start((const char **)&options, &mongoose_callback, &pe);
   assert(ctx);
 
   RGWProcess *pprocess = new RGWProcess(g_ceph_context, &pe, g_conf->rgw_thread_pool_size);
