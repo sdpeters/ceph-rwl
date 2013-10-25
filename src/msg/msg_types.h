@@ -45,6 +45,9 @@ public:
   static const int TYPE_OSD = CEPH_ENTITY_TYPE_OSD;
   static const int TYPE_CLIENT = CEPH_ENTITY_TYPE_CLIENT;
 
+  // viable?
+  static const int TYPE_GENERIC_SERVER  = CEPH_ENTITY_TYPE_ANY;
+
   static const int NEW = -1;
 
   // cons
@@ -59,6 +62,8 @@ public:
   static entity_name_t OSD(int i=NEW) { return entity_name_t(TYPE_OSD, i); }
   static entity_name_t CLIENT(int i=NEW) { return entity_name_t(TYPE_CLIENT, i); }
   
+  static entity_name_t GENERIC(int i=NEW) { return entity_name_t(TYPE_GENERIC_SERVER, i); }
+
   int64_t num() const { return _num; }
   int type() const { return _type; }
   const char *type_str() const {
@@ -435,9 +440,5 @@ inline ostream& operator<<(ostream& out, const ceph_entity_inst &i)
   entity_inst_t n = i;
   return out << n;
 }
-
-
-
-
 
 #endif
