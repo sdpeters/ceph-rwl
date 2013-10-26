@@ -8,7 +8,7 @@ using namespace std;
 
 int ObjectCache::get(string& name, ObjectCacheInfo& info, uint32_t mask)
 {
-  Mutex::Locker l(lock);
+  RWLock::RLocker l(lock);
 
   map<string, ObjectCacheEntry>::iterator iter = cache_map.find(name);
   if (iter == cache_map.end()) {
@@ -17,7 +17,10 @@ int ObjectCache::get(string& name, ObjectCacheInfo& info, uint32_t mask)
     return -ENOENT;
   }
 
+#warning remove me
+#if 0
   touch_lru(name, iter->second.lru_iter);
+#endif
 
   ObjectCacheInfo& src = iter->second.info;
   if ((src.flags & mask) != mask) {
@@ -35,7 +38,7 @@ int ObjectCache::get(string& name, ObjectCacheInfo& info, uint32_t mask)
 
 void ObjectCache::put(string& name, ObjectCacheInfo& info)
 {
-  Mutex::Locker l(lock);
+  RWLock::WLocker l(lock);
 
   ldout(cct, 10) << "cache put: name=" << name << dendl;
   map<string, ObjectCacheEntry>::iterator iter = cache_map.find(name);
@@ -93,7 +96,7 @@ void ObjectCache::put(string& name, ObjectCacheInfo& info)
 
 void ObjectCache::remove(string& name)
 {
-  Mutex::Locker l(lock);
+  RWLock::WLocker l(lock);
 
   map<string, ObjectCacheEntry>::iterator iter = cache_map.find(name);
   if (iter == cache_map.end())
