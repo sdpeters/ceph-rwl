@@ -7,6 +7,7 @@
 #include "include/types.h"
 #include "include/utime.h"
 #include "include/assert.h"
+#include "common/RWLock.h"
 
 enum {
   UPDATE_OBJ,
@@ -132,7 +133,7 @@ class ObjectCache {
   std::map<string, ObjectCacheEntry> cache_map;
   std::list<string> lru;
   unsigned long lru_size;
-  Mutex lock;
+  RWLock lock;
   CephContext *cct;
 
   void touch_lru(string& name, std::list<string>::iterator& lru_iter);
