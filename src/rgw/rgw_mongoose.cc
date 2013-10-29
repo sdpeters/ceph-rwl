@@ -20,7 +20,7 @@ int RGWMongoose::write_data(const char *buf, int len)
   return mg_write(conn, buf, len);
 }
 
-RGWMongoose::RGWMongoose(mg_connection *_conn) : conn(_conn), header_done(false), sent_header(false), has_content_length(false),
+RGWMongoose::RGWMongoose(mg_connection *_conn, int _port) : conn(_conn), port(_port), header_done(false), sent_header(false), has_content_length(false),
                                                  explicit_keepalive(false)
 {
 }
@@ -117,7 +117,7 @@ void RGWMongoose::init_env(CephContext *cct)
   env.set("SCRIPT_URI", info->uri); /* FIXME */
 
   char port[16];
-  snprintf(port, sizeof(port), "%d", cct->_conf->rgw_standalone_server_port);
+  snprintf(port, sizeof(port), "%d", port);
   env.set("SERVER_PORT", port);
 }
 
