@@ -6,7 +6,7 @@
 #include <list>
 #include <map>
 #include <set>
-#include <tr1/memory>
+#include "include/memory.h"
 #include <vector>
 #include <utility>
 #include "buffer.h"
@@ -73,7 +73,7 @@ namespace librados
     friend class IoCtx;
   private:
     void get_next();
-    std::tr1::shared_ptr < ObjListCtx > ctx;
+    ceph::shared_ptr < ObjListCtx > ctx;
     std::pair<std::string, std::string> cur_obj;
   };
 
