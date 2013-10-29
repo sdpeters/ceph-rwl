@@ -18,7 +18,6 @@
 #include "global/global_init.h"
 
 #include "include/unordered_map.h"
-using unordered_map;
 
 int dupstore(ObjectStore* src, ObjectStore* dst)
 {

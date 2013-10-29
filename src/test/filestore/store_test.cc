@@ -30,7 +30,6 @@
 #include <gtest/gtest.h>
 
 #include "include/unordered_map.h"
-using unordered_map;
 typedef boost::mt11213b gen_type;
 
 class StoreTest : public ::testing::Test {
