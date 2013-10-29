@@ -42,7 +42,7 @@
 
 #include <map>
 #include <memory>
-#include <tr1/memory>
+#include "include/memory.h"
 using namespace std;
 
 #include <ext/hash_map>
@@ -179,7 +179,7 @@ class HistoricOpsSocketHook;
 class TestOpsSocketHook;
 struct C_CompleteSplits;
 
-typedef std::tr1::shared_ptr<ObjectStore::Sequencer> SequencerRef;
+typedef ceph::shared_ptr<ObjectStore::Sequencer> SequencerRef;
 
 class DeletingState {
   Mutex lock;
@@ -279,7 +279,7 @@ public:
     return status != DELETED_DIR;
   } ///< @return true if we don't need to recreate the collection
 };
-typedef std::tr1::shared_ptr<DeletingState> DeletingStateRef;
+typedef ceph::shared_ptr<DeletingState> DeletingStateRef;
 
 class OSD;
 class OSDService {

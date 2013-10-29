@@ -97,7 +97,7 @@
 
 #include <map>
 #include <set>
-#include <tr1/memory>
+#include "include/memory.h"
 #include "include/buffer.h"
 
 using namespace std;
@@ -233,7 +233,7 @@ namespace ceph {
                        map<int, bufferlist> *decoded) = 0;
   };
 
-  typedef std::tr1::shared_ptr<ErasureCodeInterface> ErasureCodeInterfaceRef;
+  typedef ceph::shared_ptr<ErasureCodeInterface> ErasureCodeInterfaceRef;
 
 }
 

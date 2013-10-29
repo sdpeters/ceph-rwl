@@ -23,7 +23,7 @@
 #include <boost/statechart/transition.hpp>
 #include <boost/statechart/event_base.hpp>
 #include <boost/scoped_ptr.hpp>
-#include <tr1/memory>
+#include "include/memory.h"
 
 // re-include our assert to clobber boost's
 #include "include/assert.h" 
@@ -551,7 +551,7 @@ protected:
   pg_stat_t pg_stats_publish;
 
   // for ordering writes
-  std::tr1::shared_ptr<ObjectStore::Sequencer> osr;
+  ceph::shared_ptr<ObjectStore::Sequencer> osr;
 
   void publish_stats_to_osd();
   void clear_publish_stats();
@@ -957,7 +957,7 @@ public:
     const boost::statechart::event_base &get_event() { return *evt; }
     string get_desc() { return desc; }
   };
-  typedef std::tr1::shared_ptr<CephPeeringEvt> CephPeeringEvtRef;
+  typedef ceph::shared_ptr<CephPeeringEvt> CephPeeringEvtRef;
   list<CephPeeringEvtRef> peering_queue;  // op queue
   list<CephPeeringEvtRef> peering_waiters;
 
