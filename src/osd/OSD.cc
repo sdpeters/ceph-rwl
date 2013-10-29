@@ -1007,7 +1007,7 @@ bool OSD::asok_command(string command, cmdmap_t& cmdmap, string format,
     list<obj_watch_item_t> watchers;
     osd_lock.Lock();
     // scan pg's
-    for (hash_map<pg_t,PG*>::iterator it = pg_map.begin();
+    for (ceph::unordered_map<pg_t,PG*>::iterator it = pg_map.begin();
 	 it != pg_map.end();
 	 ++it) {
 
@@ -1517,7 +1517,7 @@ int OSD::shutdown()
   cct->_conf->apply_changes(NULL);
   
   // Shutdown PGs
-  for (hash_map<pg_t, PG*>::iterator p = pg_map.begin();
+  for (ceph::unordered_map<pg_t, PG*>::iterator p = pg_map.begin();
        p != pg_map.end();
        ++p) {
     dout(20) << " kicking pg " << p->first << dendl;
@@ -1613,7 +1613,7 @@ int OSD::shutdown()
 #ifdef PG_DEBUG_REFS
   service.dump_live_pgids();
 #endif
-  for (hash_map<pg_t, PG*>::iterator p = pg_map.begin();
+  for (ceph::unordered_map<pg_t, PG*>::iterator p = pg_map.begin();
        p != pg_map.end();
        ++p) {
     dout(20) << " kicking pg " << p->first << dendl;
@@ -2074,7 +2074,7 @@ void OSD::build_past_intervals_parallel()
   // calculate untion of map range
   epoch_t end_epoch = superblock.oldest_map;
   epoch_t cur_epoch = superblock.newest_map;
-  for (hash_map<pg_t, PG*>::iterator i = pg_map.begin();
+  for (ceph::unordered_map<pg_t, PG*>::iterator i = pg_map.begin();
        i != pg_map.end();
        ++i) {
     PG *pg = i->second;
@@ -2649,7 +2649,7 @@ void OSD::maybe_update_heartbeat_peers()
 
   // build heartbeat from set
   if (is_active()) {
-    for (hash_map<pg_t, PG*>::iterator i = pg_map.begin();
+    for (ceph::unordered_map<pg_t, PG*>::iterator i = pg_map.begin();
 	 i != pg_map.end();
 	 ++i) {
       PG *pg = i->second;
@@ -4134,7 +4134,7 @@ void OSD::do_command(Connection *con, tid_t tid, vector<string>& cmd, bufferlist
     }
 
     std::set <pg_t> keys;
-    for (hash_map<pg_t, PG*>::const_iterator pg_map_e = pg_map.begin();
+    for (ceph::unordered_map<pg_t, PG*>::const_iterator pg_map_e = pg_map.begin();
 	 pg_map_e != pg_map.end(); ++pg_map_e) {
       keys.insert(pg_map_e->first);
     }
@@ -4142,7 +4142,7 @@ void OSD::do_command(Connection *con, tid_t tid, vector<string>& cmd, bufferlist
     fout << "*** osd " << whoami << ": dump_missing ***" << std::endl;
     for (std::set <pg_t>::iterator p = keys.begin();
 	 p != keys.end(); ++p) {
-      hash_map<pg_t, PG*>::iterator q = pg_map.find(*p);
+      ceph::unordered_map<pg_t, PG*>::iterator q = pg_map.find(*p);
       assert(q != pg_map.end());
       PG *pg = q->second;
       pg->lock();
@@ -4714,7 +4714,7 @@ void OSD::handle_scrub(MOSDScrub *m)
   }
 
   if (m->scrub_pgs.empty()) {
-    for (hash_map<pg_t, PG*>::iterator p = pg_map.begin();
+    for (ceph::unordered_map<pg_t, PG*>::iterator p = pg_map.begin();
 	 p != pg_map.end();
 	 ++p) {
       PG *pg = p->second;
@@ -5401,9 +5401,9 @@ void OSD::advance_map(ObjectStore::Transaction& t, C_Contexts *tfin)
   }
 
   // scan pg creations
-  hash_map<pg_t, create_pg_info>::iterator n = creating_pgs.begin();
+  ceph::unordered_map<pg_t, create_pg_info>::iterator n = creating_pgs.begin();
   while (n != creating_pgs.end()) {
-    hash_map<pg_t, create_pg_info>::iterator p = n++;
+    ceph::unordered_map<pg_t, create_pg_info>::iterator p = n++;
     pg_t pgid = p->first;
 
     // am i still primary?
@@ -5468,7 +5468,7 @@ void OSD::consume_map()
   list<PGRef> to_remove;
 
   // scan pg's
-  for (hash_map<pg_t,PG*>::iterator it = pg_map.begin();
+  for (ceph::unordered_map<pg_t,PG*>::iterator it = pg_map.begin();
        it != pg_map.end();
        ++it) {
     PG *pg = it->second;
@@ -5505,7 +5505,7 @@ void OSD::consume_map()
   service.publish_map(osdmap);
 
   // scan pg's
-  for (hash_map<pg_t,PG*>::iterator it = pg_map.begin();
+  for (ceph::unordered_map<pg_t,PG*>::iterator it = pg_map.begin();
        it != pg_map.end();
        ++it) {
     PG *pg = it->second;

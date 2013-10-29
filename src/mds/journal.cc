@@ -237,11 +237,11 @@ void LogSegment::try_to_expire(MDS *mds, C_GatherBuilder &gather_bld)
   }
 
   // pending commit atids
-  for (map<int, hash_set<version_t> >::iterator p = pending_commit_tids.begin();
+  for (map<int, ceph::unordered_set<version_t> >::iterator p = pending_commit_tids.begin();
        p != pending_commit_tids.end();
        ++p) {
     MDSTableClient *client = mds->get_table_client(p->first);
-    for (hash_set<version_t>::iterator q = p->second.begin();
+    for (ceph::unordered_set<version_t>::iterator q = p->second.begin();
 	 q != p->second.end();
 	 ++q) {
       dout(10) << "try_to_expire " << get_mdstable_name(p->first) << " transaction " << *q 

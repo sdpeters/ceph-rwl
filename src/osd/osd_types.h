@@ -30,6 +30,7 @@
 #include "common/hobject.h"
 #include "Watch.h"
 #include "OpRequest.h"
+#include "include/hash_namespace.h"
 
 #define CEPH_OSD_ONDISK_MAGIC "ceph osd volume v026"
 
@@ -72,14 +73,14 @@ inline bool operator<=(const osd_reqid_t& l, const osd_reqid_t& r) {
 inline bool operator>(const osd_reqid_t& l, const osd_reqid_t& r) { return !(l <= r); }
 inline bool operator>=(const osd_reqid_t& l, const osd_reqid_t& r) { return !(l < r); }
 
-namespace __gnu_cxx {
+CEPH_HASH_NAMESPACE_START
   template<> struct hash<osd_reqid_t> {
     size_t operator()(const osd_reqid_t &r) const { 
       static hash<uint64_t> H;
       return H(r.name.num() ^ r.tid ^ r.inc);
     }
   };
-}
+CEPH_HASH_NAMESPACE_END
 
 
 // -----
@@ -344,7 +345,7 @@ inline bool operator>=(const pg_t& l, const pg_t& r) {
 
 ostream& operator<<(ostream& out, const pg_t &pg);
 
-namespace __gnu_cxx {
+CEPH_HASH_NAMESPACE_START
   template<> struct hash< pg_t >
   {
     size_t operator()( const pg_t& x ) const
@@ -353,7 +354,7 @@ namespace __gnu_cxx {
       return H((x.pool() & 0xffffffff) ^ (x.pool() >> 32) ^ x.ps() ^ x.preferred());
     }
   };
-}
+CEPH_HASH_NAMESPACE_END
 
 
 // ----------------------
@@ -437,7 +438,7 @@ inline ostream& operator<<(ostream& out, const coll_t& c) {
   return out;
 }
 
-namespace __gnu_cxx {
+CEPH_HASH_NAMESPACE_START
   template<> struct hash<coll_t> {
     size_t operator()(const coll_t &c) const { 
       size_t h = 0;
@@ -454,7 +455,7 @@ namespace __gnu_cxx {
       return h;
     }
   };
-}
+CEPH_HASH_NAMESPACE_END
 
 inline ostream& operator<<(ostream& out, const ceph_object_layout &ol)
 {

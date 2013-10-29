@@ -20,7 +20,6 @@
 #include <iostream>
 #include <map>
 #include <ext/rope>
-using namespace __gnu_cxx;
 
 #include "common/Mutex.h"
 

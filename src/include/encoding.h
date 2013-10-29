@@ -290,8 +290,8 @@ inline void decode(T &o, bufferlist& bl)
 #ifndef _BACKWARD_BACKWARD_WARNING_H
 #define _BACKWARD_BACKWARD_WARNING_H   // make gcc 4.3 shut up about hash_*
 #endif
-#include <ext/hash_map>
-#include <ext/hash_set>
+#include "include/unordered_map.h"
+#include "include/unordered_set.h"
 
 #include "triple.h"
 
@@ -624,19 +624,19 @@ inline void decode(std::multimap<T,U>& m, bufferlist::iterator& p)
   }
 }
 
-// hash_map
+// ceph::unordered_map
 template<class T, class U>
-inline void encode(const __gnu_cxx::hash_map<T,U>& m, bufferlist& bl)
+inline void encode(const unordered_map<T,U>& m, bufferlist& bl)
 {
   __u32 n = m.size();
   encode(n, bl);
-  for (typename __gnu_cxx::hash_map<T,U>::const_iterator p = m.begin(); p != m.end(); ++p) {
+  for (typename unordered_map<T,U>::const_iterator p = m.begin(); p != m.end(); ++p) {
     encode(p->first, bl);
     encode(p->second, bl);
   }
 }
 template<class T, class U>
-inline void decode(__gnu_cxx::hash_map<T,U>& m, bufferlist::iterator& p)
+inline void decode(unordered_map<T,U>& m, bufferlist::iterator& p)
 {
   __u32 n;
   decode(n, p);
@@ -648,17 +648,17 @@ inline void decode(__gnu_cxx::hash_map<T,U>& m, bufferlist::iterator& p)
   }
 }
 
-// hash_set
+// ceph::unordered_set
 template<class T>
-inline void encode(const __gnu_cxx::hash_set<T>& m, bufferlist& bl)
+inline void encode(const ceph::unordered_set<T>& m, bufferlist& bl)
 {
   __u32 n = m.size();
   encode(n, bl);
-  for (typename __gnu_cxx::hash_set<T>::const_iterator p = m.begin(); p != m.end(); ++p)
+  for (typename ceph::unordered_set<T>::const_iterator p = m.begin(); p != m.end(); ++p)
     encode(*p, bl);
 }
 template<class T>
-inline void decode(__gnu_cxx::hash_set<T>& m, bufferlist::iterator& p)
+inline void decode(ceph::unordered_set<T>& m, bufferlist::iterator& p)
 {
   __u32 n;
   decode(n, p);

@@ -55,9 +55,8 @@
 #include <string>
 using namespace std;
 
-#include <ext/hash_map>
-#include <ext/hash_set>
-using namespace __gnu_cxx;
+#include "include/unordered_map.h"
+#include "include/unordered_set.h"
 
 
 //#define DEBUG_RECOVERY_OIDS   // track set of recovering oids explicitly, to find counting bugs

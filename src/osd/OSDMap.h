@@ -41,8 +41,8 @@
 #include "include/memory.h"
 using namespace std;
 
-#include <ext/hash_set>
-using __gnu_cxx::hash_set;
+#include "include/unordered_set.h"
+using ceph::unordered_set;
 
 /*
  * we track up to two intervals during which the osd was alive and
@@ -205,7 +205,7 @@ private:
   ceph::shared_ptr< vector<uuid_d> > osd_uuid;
   vector<osd_xinfo_t> osd_xinfo;
 
-  hash_map<entity_addr_t,utime_t> blacklist;
+  ceph::unordered_map<entity_addr_t,utime_t> blacklist;
 
   epoch_t cluster_snapshot_epoch;
   string cluster_snapshot;
