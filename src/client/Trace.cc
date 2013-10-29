@@ -19,7 +19,6 @@
 
 #include <iostream>
 #include <map>
-#include <ext/rope>
 
 #include "common/Mutex.h"
 
