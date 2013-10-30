@@ -52,6 +52,7 @@
 #include "rgw_tools.h"
 #include "rgw_resolve.h"
 #include "rgw_mongoose.h"
+#include "rgw_nxweb.h"
 
 #include "mongoose/mongoose.h"
 
@@ -682,6 +683,7 @@ int main(int argc, const char **argv)
 
   struct mg_context *mongoose_ctx = NULL;
   RGWProcessEnv *mongoose_pe = NULL;
+  RGWProcessEnv *nxweb_pe = NULL;
   
   RGWProcessEnv fcgi_pe = { store, &rest, olog, 0 };
 
@@ -707,6 +709,13 @@ int main(int argc, const char **argv)
       cb.begin_request = mongoose_callback;
       mongoose_ctx = mg_start(&cb, mongoose_pe, (const char **)&options);
       assert(mongoose_ctx);
+    } else if (fiter->first == "nxweb") {
+      nxweb_pe = new RGWProcessEnv;
+      *nxweb_pe = { store, &rest, olog, port };
+
+
+      rgw_nxweb_init(port);
+      rgw_nxweb_run();
     }
   }
 
