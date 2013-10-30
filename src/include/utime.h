@@ -238,6 +238,22 @@ public:
 		    bdt.tm_hour, bdt.tm_min, bdt.tm_sec, usec());
   }
 
+  static time_t my_timegm (struct tm *tm) {
+    time_t ret;
+    char *tz;
+
+    tz = getenv("TZ");
+    setenv("TZ", "", 1);
+    tzset();
+    ret = mktime(tm);
+    if (tz)
+      setenv("TZ", tz, 1);
+    else
+      unsetenv("TZ");
+    tzset();
+    return ret;
+  }
+
   static int parse_date(const string& date, uint64_t *epoch, uint64_t *nsec,
                         string *out_date=NULL, string *out_time=NULL) {
     struct tm tm;
@@ -274,7 +290,7 @@ public:
     } else {
       return -EINVAL;
     }
-    time_t t = timegm(&tm);
+    time_t t = my_timegm(&tm);
     if (epoch)
       *epoch = (uint64_t)t;
 
