@@ -531,6 +531,7 @@ OPTION(rgw_resolve_cname, OPT_BOOL, false)  // should rgw try to resolve hostnam
 OPTION(rgw_obj_stripe_size, OPT_INT, 4 << 20)
 OPTION(rgw_extended_http_attrs, OPT_STR, "") // list of extended attrs that can be set on objects (beyond the default)
 OPTION(rgw_exit_timeout_secs, OPT_INT, 120) // how many seconds to wait for process to go down before exiting unconditionally
+OPTION(rgw_admin_uid, OPT_STR, "") // user that can access all data
 
 OPTION(mutex_perf_counter, OPT_BOOL, false) // enable/disable mutex perf counter
 
