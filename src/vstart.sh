@@ -241,7 +241,7 @@ if [ -n "$ip" ]; then
     IP="$ip"
 else
     echo hostname $HOSTNAME
-    RAW_IP=`hostname --ip-address`
+    RAW_IP=`hostname --all-ip-addresses`
     # filter out IPv6 and localhost addresses
     IP="$(echo "$RAW_IP"|tr ' ' '\012'|grep -v :|grep -v '^127\.'|head -n1)"
     # if that left nothing, then try to use the raw thing, it might work

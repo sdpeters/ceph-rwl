@@ -274,6 +274,7 @@ void RGWProcess::handle_request(RGWRequest *req)
   int ret;
   RGWEnv rgw_env;
   RGWFCGX client_io(fcgx);
+  bool admin_user = false;
 
   req->log_init();
 
@@ -324,11 +325,15 @@ void RGWProcess::handle_request(RGWRequest *req)
     goto done;
   }
 
+  admin_user = (s->user.user_id == g_conf->rgw_admin_uid);
+
   req->log(s, "verifying op permissions");
   ret = op->verify_permission();
   if (ret < 0) {
-    abort_early(s, ret);
-    goto done;
+    if ((ret != -EACCES && ret != -EPERM) || !admin_user) {
+      abort_early(s, ret);
+      goto done;
+    }
   }
 
   req->log(s, "verifying op params");
@@ -345,7 +350,9 @@ void RGWProcess::handle_request(RGWRequest *req)
   op->execute();
   op->complete();
 done:
-  rgw_log_op(store, s, (op ? op->name() : "unknown"), olog);
+  if (!admin_user) {
+    rgw_log_op(store, s, (op ? op->name() : "unknown"), olog);
+  }
 
   int http_ret = s->err.http_ret;
 
