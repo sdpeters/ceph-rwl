@@ -1684,13 +1684,14 @@ PG *OSD::_open_lock_pg(
   assert(osd_lock.is_locked());
 
   PG* pg = _make_pg(createmap, pgid);
+  pg->lock(no_lockdep_check);
 
   {
     RWLock::WLocker l(pg_map_lock);
     pg_map[pgid] = pg;
+    wake_pg_waiters(pg, pgid);
   }
 
-  pg->lock(no_lockdep_check);
   pg->get("PGMap");  // because it's in pg_map
   return pg;
 }
@@ -1722,6 +1723,7 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
   {
     RWLock::WLocker l(pg_map_lock);
     pg_map[pg->info.pgid] = pg;
+    wake_pg_waiters(pg, pg->info.pgid);
   }
   dout(10) << "Adding newly split pg " << *pg << dendl;
   vector<int> up, acting;
@@ -1743,7 +1745,6 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
     }
     peering_wait_for_split.erase(to_wake);
   }
-  wake_pg_waiters(pg->info.pgid);
   if (!service.get_osdmap()->have_pg_pool(pg->info.pgid.pool()))
     _remove_pg(pg);
 }
@@ -2212,9 +2213,6 @@ void OSD::handle_pg_peering_evt(
 
       dout(10) << *pg << " is new" << dendl;
 
-      // kick any waiters
-      wake_pg_waiters(pg->info.pgid);
-      
       pg->queue_peering_event(evt);
       pg->unlock();
       return;
@@ -2239,9 +2237,6 @@ void OSD::handle_pg_peering_evt(
       dispatch_context(rctx, pg, osdmap);
 
       dout(10) << *pg << " is new (resurrected)" << dendl;
-
-      // kick any waiters
-      wake_pg_waiters(pg->info.pgid);
 
       pg->queue_peering_event(evt);
       pg->unlock();
@@ -2269,9 +2264,6 @@ void OSD::handle_pg_peering_evt(
       dispatch_context(rctx, parent, osdmap);
 
       dout(10) << *parent << " is new" << dendl;
-
-      // kick any waiters
-      wake_pg_waiters(parent->info.pgid);
 
       assert(service.splitting(info.pgid));
       peering_wait_for_split[info.pgid].push_back(evt);
@@ -6033,7 +6025,6 @@ void OSD::handle_pg_create(OpRequestRef op)
 	*rctx.transaction);
       pg->info.last_epoch_started = pg->info.history.last_epoch_started;
       creating_pgs.erase(pgid);
-      wake_pg_waiters(pg->info.pgid);
       pg->handle_create(&rctx);
       pg->write_if_dirty(*rctx.transaction);
       pg->publish_stats_to_osd();
