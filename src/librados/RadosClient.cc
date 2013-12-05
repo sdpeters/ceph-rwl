@@ -75,6 +75,7 @@ librados::RadosClient::RadosClient(CephContext *cct_)
     instance_id(0),
     objecter(NULL),
     lock("librados::RadosClient::lock"),
+    pool_cache_rwl("librados::RadosClient::pool_cache_rwl"),
     timer(cct, lock),
     refcnt(1),
     log_last_version(0), log_cb(NULL), log_cb_arg(NULL),
@@ -85,11 +86,26 @@ librados::RadosClient::RadosClient(CephContext *cct_)
 
 int64_t librados::RadosClient::lookup_pool(const char *name)
 {
-  Mutex::Locker l(lock);
+  pool_cache_rwl.get_read();
+  map<string, int64_t>::iterator iter = pool_cache.find(name);
+  if (iter != pool_cache.end()) {
+    uint64_t val = iter->second;
+    pool_cache_rwl.unlock();
+    return val;
+  }
+
+  pool_cache_rwl.unlock();
+    
+  lock.Lock();
   wait_for_osdmap();
   int64_t ret = osdmap.lookup_pg_pool_name(name);
+  lock.Unlock();
   if (ret < 0)
     return -ENOENT;
+
+  pool_cache_rwl.get_write();
+  pool_cache[name] = ret;
+  pool_cache_rwl.unlock();
   return ret;
 }
 
