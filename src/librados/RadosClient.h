@@ -16,6 +16,7 @@
 
 #include "common/Cond.h"
 #include "common/Mutex.h"
+#include "common/RWLock.h"
 #include "common/Timer.h"
 #include "include/rados/librados.h"
 #include "include/rados/librados.hpp"
@@ -62,7 +63,10 @@ private:
 
   Objecter *objecter;
 
+  map<string, int64_t> pool_cache;
+
   Mutex lock;
+  RWLock pool_cache_rwl;
   Cond cond;
   SafeTimer timer;
   int refcnt;
