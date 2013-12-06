@@ -91,7 +91,13 @@ using namespace std;
 
 #define  tout(cct)       if (!cct->_conf->client_trace.empty()) traceout
 
+#ifndef O_RSYNC
+# define O_RSYNC O_SYNC
+#endif
 
+#ifndef O_DSYNC
+# define O_DSYNC O_SYNC
+#endif
 
 void client_flush_set_callback(void *p, ObjectCacher::ObjectSet *oset)
 {
