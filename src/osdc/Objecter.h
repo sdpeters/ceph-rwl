@@ -804,12 +804,12 @@ class Objecter {
  public:  
   Messenger *messenger;
   MonClient *monc;
-  OSDMap    *osdmap;
   CephContext *cct;
 
   bool initialized;
  
  private:
+  OSDMap    *osdmap;
   tid_t last_tid;
   int client_inc;
   uint64_t max_linger_id;
@@ -1288,8 +1288,9 @@ public:
  public:
   Objecter(CephContext *cct_, Messenger *m, MonClient *mc,
 	   OSDMap *om, Mutex& l, SafeTimer& t) : 
-    messenger(m), monc(mc), osdmap(om), cct(cct_),
+    messenger(m), monc(mc), cct(cct_),
     initialized(false),
+    osdmap(om),
     last_tid(0), client_inc(-1), max_linger_id(0),
     num_unacked(0), num_uncommitted(0),
     global_op_flags(0),
@@ -1902,6 +1903,10 @@ public:
   void ms_handle_reset(Connection *con);
   void ms_handle_remote_reset(Connection *con);
   void blacklist_self(bool set);
+
+  int snap_list(int64_t poolid, vector<uint64_t> *snaps);
+  int find_snap(int64_t poolid, const char *snap_name, int64_t *snapid);
+  int snap_by_id(int64_t poolid, snapid_t snapid, pool_snap_info_t *si);
 };
 
 #endif

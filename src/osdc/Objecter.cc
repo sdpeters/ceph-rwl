@@ -2552,3 +2552,53 @@ void Objecter::_finish_command(CommandOp *c, int r, string rs)
 
   logger->set(l_osdc_command_active, command_ops.size());
 }
+
+int Objecter::snap_list(int64_t poolid, vector<uint64_t> *snaps)
+{
+  assert(client_lock.is_locked());
+  const pg_pool_t *pi = osdmap->get_pg_pool(poolid);
+  if (!pi)
+    return -ENOENT;
+  for (map<snapid_t,pool_snap_info_t>::const_iterator p = pi->snaps.begin();
+       p != pi->snaps.end();
+       ++p) {
+    snaps->push_back(p->first);
+  }
+  return 0;
+}
+
+int Objecter::find_snap(int64_t poolid, const char *snap_name, int64_t *snapid)
+{
+  assert(client_lock.is_locked());
+  string sName(snap_name);
+
+  snapid_t snap;
+  const map<int64_t, pg_pool_t>& pools = osdmap->get_pools();
+  map<int64_t, pg_pool_t>::const_iterator iter = pools.find(poolid);
+  if (iter == pools.end())
+    return -ENOENT;
+  const pg_pool_t& pg_pool = iter->second;
+  map<snapid_t, pool_snap_info_t>::const_iterator p;
+  for (p = pg_pool.snaps.begin();
+       p != pg_pool.snaps.end();
+       ++p) {
+    if (p->second.name == snap_name) {
+      *snapid = p->first;
+      return 0;
+    }
+  }
+  return -ENOENT;
+}
+
+int Objecter::snap_by_id(int64_t poolid, snapid_t snapid, pool_snap_info_t *si)
+{
+  assert(client_lock.is_locked());
+  const pg_pool_t *pi = osdmap->get_pg_pool(poolid);
+  if (!pi)
+    return -ENOENT;
+  map<snapid_t,pool_snap_info_t>::const_iterator p = pi->snaps.find(snapid);
+  if (p == pi->snaps.end())
+    return -ENOENT;
+  *si = p->second;
+  return 0;
+}

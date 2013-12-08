@@ -243,23 +243,12 @@ int librados::IoCtxImpl::rollback(const object_t& oid, const char *snapName)
   string sName(snapName);
 
   lock->Lock();
-  snapid_t snap;
-  const map<int64_t, pg_pool_t>& pools = objecter->osdmap->get_pools();
-  const pg_pool_t& pg_pool = pools.find(poolid)->second;
-  map<snapid_t, pool_snap_info_t>::const_iterator p;
-  for (p = pg_pool.snaps.begin();
-       p != pg_pool.snaps.end();
-       ++p) {
-    if (p->second.name == snapName) {
-      snap = p->first;
-      break;
-    }
-  }
-  if (p == pg_pool.snaps.end()) {
-    lock->Unlock();
-    return -ENOENT;
-  }
+  int64_t snap;
+  int ret = objecter->find_snap(poolid, snapName, &snap);
   lock->Unlock();
+
+  if (ret < 0)
+    return ret;
 
   return selfmanaged_snap_rollback_object(oid, snapc, snap);
 }
@@ -314,48 +303,42 @@ int librados::IoCtxImpl::pool_change_auid_async(unsigned long long auid,
 int librados::IoCtxImpl::snap_list(vector<uint64_t> *snaps)
 {
   Mutex::Locker l(*lock);
-  const pg_pool_t *pi = objecter->osdmap->get_pg_pool(poolid);
-  for (map<snapid_t,pool_snap_info_t>::const_iterator p = pi->snaps.begin();
-       p != pi->snaps.end();
-       ++p)
-    snaps->push_back(p->first);
+  int ret = objecter->snap_list(poolid, snaps);
+  if (ret < 0)
+    return ret;
+
   return 0;
 }
 
 int librados::IoCtxImpl::snap_lookup(const char *name, uint64_t *snapid)
 {
   Mutex::Locker l(*lock);
-  const pg_pool_t *pi = objecter->osdmap->get_pg_pool(poolid);
-  for (map<snapid_t,pool_snap_info_t>::const_iterator p = pi->snaps.begin();
-       p != pi->snaps.end();
-       ++p) {
-    if (p->second.name == name) {
-      *snapid = p->first;
-      return 0;
-    }
-  }
-  return -ENOENT;
+  int ret = objecter->find_snap(poolid, name, (int64_t *)snapid);
+  if (ret < 0)
+    return ret;
+
+  return 0;
 }
 
 int librados::IoCtxImpl::snap_get_name(uint64_t snapid, std::string *s)
 {
   Mutex::Locker l(*lock);
-  const pg_pool_t *pi = objecter->osdmap->get_pg_pool(poolid);
-  map<snapid_t,pool_snap_info_t>::const_iterator p = pi->snaps.find(snapid);
-  if (p == pi->snaps.end())
-    return -ENOENT;
-  *s = p->second.name.c_str();
+  pool_snap_info_t si;
+  int ret = objecter->snap_by_id(poolid, snapid, &si);
+  if (ret < 0)
+    return ret;
+  *s = si.name;
   return 0;
 }
 
 int librados::IoCtxImpl::snap_get_stamp(uint64_t snapid, time_t *t)
 {
   Mutex::Locker l(*lock);
-  const pg_pool_t *pi = objecter->osdmap->get_pg_pool(poolid);
-  map<snapid_t,pool_snap_info_t>::const_iterator p = pi->snaps.find(snapid);
-  if (p == pi->snaps.end())
-    return -ENOENT;
-  *t = p->second.stamp.sec();
+  pool_snap_info_t si;
+  int ret = objecter->snap_by_id(poolid, snapid, &si);
+  if (ret < 0)
+    return ret;
+  *t = si.stamp.sec();
   return 0;
 }
 
