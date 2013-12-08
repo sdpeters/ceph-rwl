@@ -220,6 +220,13 @@ void Journaler::_finish_read_head(int r, bufferlist& bl)
     return;
   }
 
+  if (cct->_conf->journaler_force_write_pos) {
+    lderr(cct) << " forcing write_pos "
+	       << cct->_conf->journaler_force_write_posh.write_pos
+	       << " (was " << h.write_pos << ")" << dendl;
+    h.write_pos = cct->_conf->journaler_force_write_pos;
+  }
+
   prezeroing_pos = prezero_pos = write_pos = flush_pos = safe_pos = h.write_pos;
   read_pos = requested_pos = received_pos = expire_pos = h.expire_pos;
   trimmed_pos = trimming_pos = h.trimmed_pos;
