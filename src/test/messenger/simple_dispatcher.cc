@@ -8,10 +8,12 @@
 #include "simple_dispatcher.h"
 #include "messages/MPing.h"
 
-SimpleDispatcher::SimpleDispatcher(Messenger *msgr) :
+SimpleDispatcher::SimpleDispatcher(Messenger *msgr, Mutex *l, Cond *c) :
 	Dispatcher(msgr->cct),
 	active(false),
-	messenger(msgr) {
+	messenger(msgr),
+        lock(l),
+        cond(c) {
 
 }
 
@@ -25,15 +27,18 @@ bool SimpleDispatcher::ms_dispatch(Message *m)
 
 	switch (m->get_type()) {
 	case CEPH_MSG_PING:
-		if (active) {
-			cout << "pong!" << std::endl;
-		} else {
-			cout << "ping!" << std::endl;
-			conn = m->get_connection();
-			messenger->send_message(new MPing(), conn);
-		}
-		m->put();
-		break;
+          if (cond) {
+            lock->Lock();
+            cond->Signal();
+            lock->Unlock();
+          }
+
+          if (!active) {
+            conn = m->get_connection();
+            messenger->send_message(new MPing(), conn);
+          }
+          m->put();
+          break;
 	default:
 		abort();
 	}

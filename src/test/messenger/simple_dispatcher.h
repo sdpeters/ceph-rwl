@@ -10,13 +10,17 @@
 
 #include "msg/Dispatcher.h"
 #include "msg/Messenger.h"
+#include "common/Cond.h"
+#include "common/Mutex.h"
 
 class SimpleDispatcher: public Dispatcher {
 private:
 	bool active;
 	Messenger *messenger;
+        Mutex *lock;
+        Cond *cond;
 public:
-	SimpleDispatcher(Messenger *msgr);
+	SimpleDispatcher(Messenger *msgr, Mutex *l, Cond *c);
 	virtual ~SimpleDispatcher();
 
 	void set_active() {

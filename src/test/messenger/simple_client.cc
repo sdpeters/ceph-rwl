@@ -57,23 +57,33 @@ int main(int argc, const char **argv)
 	entity_addr_from_url(&dest_addr, "tcp://localhost:1234");
 	entity_inst_t dest_server(entity_name_t::GENERIC(), dest_addr);
 
-	dispatcher = new SimpleDispatcher(messenger);
+        Mutex lock("simple_client");
+        Cond cond;
+	dispatcher = new SimpleDispatcher(messenger, &lock, &cond);
 	messenger->add_dispatcher_head(dispatcher);
 
 	dispatcher->set_active(); // this side is the pinger
 
 	r = messenger->start();
-	if (r < 0)
-		goto out;
+	if (r < 0) {
+          cerr << "ERROR: messenger->start() returned" << -r << std::endl;
+		return r;
+        }
 
 	conn = messenger->get_connection(dest_server);
 
+        utime_t start = ceph_clock_now(NULL);
 	// do stuff
-	while (1) {
+
+	for (int i = 0; i < 10000; i++) {
 	  messenger->send_message(new MPing(), conn);
-	  sleep(1);
+          Mutex::Locker l(lock);
+          cond.Wait(lock);
 	}
 
-out:
-	return r;
+        utime_t end = ceph_clock_now(NULL);
+
+        cout << end - start << std::endl;
+
+        return 0;
 }
