@@ -77,6 +77,8 @@ Pipe::Pipe(SimpleMessenger *r, int st, Connection *con)
     delay_thread(NULL),
     msgr(r),
     conn_id(r->dispatch_queue.get_id()),
+    recv_ofs(0),
+    recv_len(0),
     sd(-1), port(0),
     peer_type(-1),
     pipe_lock("SimpleMessenger::Pipe::pipe_lock"),
@@ -107,6 +109,9 @@ Pipe::Pipe(SimpleMessenger *r, int st, Connection *con)
   msgr->timeout = msgr->cct->_conf->ms_tcp_read_timeout * 1000; //convert to ms
   if (msgr->timeout == 0)
     msgr->timeout = -1;
+
+  recv_max_prefetch = MIN(MAX_RECV_LEN, msgr->cct->_conf->ms_tcp_prefetch_max_size);
+  recv_buf = (char *)malloc(recv_max_prefetch);
 }
 
 Pipe::~Pipe()
@@ -115,6 +120,7 @@ Pipe::~Pipe()
   assert(sent.empty());
   delete session_security;
   delete delay_thread;
+  free(recv_buf);
 }
 
 void Pipe::handle_ack(uint64_t seq)
@@ -261,6 +267,8 @@ int Pipe::accept()
 
   // used for reading in the remote acked seq on connect
   uint64_t newly_acked_seq = 0;
+
+  recv_reset();
 
   set_socket_options();
 
@@ -827,6 +835,7 @@ int Pipe::connect()
     goto fail;
   }
 
+  recv_reset();
   // connect!
   ldout(msgr->cct,10) << "connecting to " << peer_addr << dendl;
   rc = ::connect(sd, (sockaddr*)&peer_addr.addr, peer_addr.addr_size());
@@ -1661,6 +1670,9 @@ void Pipe::writer()
 	m->set_connection(connection_state.get());
 
 	uint64_t features = connection_state->get_features();
+
+        pipe_lock.Unlock();
+
 	if (m->empty_payload())
 	  ldout(msgr->cct,20) << "writer encoding " << m->get_seq() << " features " << features
 			      << " " << m << " " << *m << dendl;
@@ -1695,8 +1707,6 @@ void Pipe::writer()
 	bufferlist blist = m->get_payload();
 	blist.append(m->get_middle());
 	blist.append(m->get_data());
-
-	pipe_lock.Unlock();
 
         ldout(msgr->cct,20) << "writer sending " << m->get_seq() << " " << m << dendl;
 	int rc = write_message(header, footer, blist);
@@ -1775,7 +1785,7 @@ int Pipe::read_message(Message **pm)
   ceph_msg_header header; 
   ceph_msg_footer footer;
   __u32 header_crc;
-  
+
   if (connection_state->has_feature(CEPH_FEATURE_NOSRCADDR)) {
     if (tcp_read((char*)&header, sizeof(header)) < 0)
       return -1;
@@ -1953,7 +1963,6 @@ int Pipe::read_message(Message **pm)
   //
   //  Check the signature if one should be present.  A zero return indicates success. PLR
   //
-
   if (session_security == NULL) {
     ldout(msgr->cct, 10) << "No session security set" << dendl;
   } else {
@@ -2246,7 +2255,7 @@ int Pipe::tcp_read(char *buf, int len)
 	::shutdown(sd, SHUT_RDWR);
       }
     }
-
+ 
     if (tcp_read_wait() < 0)
       return -1;
 
@@ -2274,6 +2283,9 @@ int Pipe::tcp_read_wait()
   pfd.events |= POLLRDHUP;
 #endif
 
+  if (has_pending_data())
+    return 0;
+
   if (poll(&pfd, 1, msgr->timeout) <= 0)
     return -1;
 
@@ -2290,19 +2302,78 @@ int Pipe::tcp_read_wait()
   return 0;
 }
 
-int Pipe::tcp_read_nonblocking(char *buf, int len)
+int Pipe::do_recv(char *buf, size_t len, int flags)
 {
 again:
-  int got = ::recv( sd, buf, len, MSG_DONTWAIT );
+  int got = ::recv( sd, buf, len, flags );
   if (got < 0) {
     if (errno == EAGAIN || errno == EINTR) {
       goto again;
-    } else {
-      ldout(msgr->cct, 10) << "tcp_read_nonblocking socket " << sd << " returned "
-		     << got << " errno " << errno << " " << cpp_strerror(errno) << dendl;
-      return -1;
     }
-  } else if (got == 0) {
+    return -1;
+  }
+  if (got == 0) {
+    return -1;
+  }
+  return got;
+}
+
+int Pipe::buffered_recv(char *buf, size_t len, int flags)
+{
+  int left = len;
+  int total_recv = 0;
+  if (recv_len > recv_ofs) {
+    int to_read = MIN(recv_len - recv_ofs, left);
+    memcpy(buf, &recv_buf[recv_ofs], to_read);
+    recv_ofs += to_read;
+    left -= to_read;
+    if (left == 0) {
+      return to_read;
+    }
+    buf += to_read;
+    total_recv += to_read;
+  }
+
+  /* nothing left in the prefetch buffer */
+
+  if (len > (size_t)recv_max_prefetch) {
+    /* this was a large read, we don't prefetch for these */
+    int ret = do_recv(buf, left, flags );
+    if (ret < 0) {
+      if (total_recv > 0)
+        return total_recv;
+      return ret;
+    }
+    total_recv += ret;
+    return total_recv;
+  }
+
+
+  int got = do_recv(recv_buf, recv_max_prefetch, flags);
+  if (got < 0) {
+    if (total_recv > 0)
+      return total_recv;
+
+    return got;
+  }
+
+  recv_len = got;
+  got = MIN(left, got);
+  memcpy(buf, recv_buf, got);
+  recv_ofs = got;
+  total_recv += got;
+  return total_recv;
+}
+
+int Pipe::tcp_read_nonblocking(char *buf, int len)
+{
+  int got = buffered_recv(buf, len, MSG_DONTWAIT );
+  if (got < 0) {
+    ldout(msgr->cct, 10) << "tcp_read_nonblocking socket " << sd << " returned "
+		         << got << " " << cpp_strerror(errno) << dendl;
+    return -1;
+  }
+  if (got == 0) {
     /* poll() said there was data, but we didn't read any - peer
      * sent a FIN.  Maybe POLLRDHUP signals this, but this is
      * standard socket behavior as documented by Stevens.
