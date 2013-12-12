@@ -877,6 +877,22 @@ ceph_test_get_blkdev_size_SOURCES = test/test_get_blkdev_size.cc
 ceph_test_get_blkdev_size_LDADD = $(LIBCOMMON)
 bin_DEBUGPROGRAMS += ceph_test_get_blkdev_size
 
+ceph_test_simple_server_SOURCES = test/messenger/simple_server.cc \
+				  test/messenger/address_helper.cc \
+				  test/messenger/simple_dispatcher.cc
+ceph_test_simple_server_LDADD = $(LIBCOMMON) \
+	$(LIBRADOS) $(CEPH_GLOBAL) \
+	-luuid -lboost_regex
+bin_DEBUGPROGRAMS += ceph_test_simple_server
+
+ceph_test_simple_client_SOURCES = test/messenger/simple_client.cc \
+				  test/messenger/address_helper.cc \
+				  test/messenger/simple_dispatcher.cc
+ceph_test_simple_client_LDADD = $(LIBCOMMON) \
+	$(LIBRADOS) $(CEPH_GLOBAL) \
+	-luuid -lboost_regex
+bin_DEBUGPROGRAMS += ceph_test_simple_client
+
 noinst_HEADERS += \
 	test/osd/RadosModel.h \
 	test/osd/Object.h \

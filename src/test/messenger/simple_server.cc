@@ -67,7 +67,7 @@ int main(int argc, const char **argv)
 	//global_init_daemonize(g_ceph_context, 0);
 	common_init_finish(g_ceph_context);
 
-	dispatcher = new SimpleDispatcher(messenger);
+	dispatcher = new SimpleDispatcher(messenger, NULL, NULL);
 
 	messenger->add_dispatcher_head(dispatcher); // should reach ready()
 	messenger->start();
