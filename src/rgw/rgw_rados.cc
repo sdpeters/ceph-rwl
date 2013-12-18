@@ -4127,7 +4127,6 @@ struct get_obj_data : public RefCountedObject {
 
     c->wait_for_complete_and_cb();
     int r = c->get_return_value();
-    c->release();
 
     lock.Lock();
     completion_map.erase(cur_ofs);
@@ -4136,6 +4135,8 @@ struct get_obj_data : public RefCountedObject {
       *done = true;
     }
     lock.Unlock();
+
+    c->release();
     
     return r;
   }
@@ -4290,21 +4291,33 @@ done:
 
 int RGWRados::flush_read_list(struct get_obj_data *d)
 {
-  Mutex::Locker l(d->data_lock);
+  d->data_lock.Lock();
+  list<bufferlist> l;
+  l.swap(d->read_list);
+  d->get();
+  d->read_list.clear();
+
+  d->data_lock.Unlock();
+
+  int r = 0;
+
   list<bufferlist>::iterator iter;
-  for (iter = d->read_list.begin(); iter != d->read_list.end(); ++iter) {
+  for (iter = l.begin(); iter != l.end(); ++iter) {
     bufferlist& bl = *iter;
-    int r = d->client_cb->handle_data(bl, 0, bl.length());
+    r = d->client_cb->handle_data(bl, 0, bl.length());
     if (r < 0) {
       dout(0) << "ERROR: flush_read_list(): d->client_c->handle_data() returned " << r << dendl;
-      d->set_cancelled(r);
       break;
     }
   }
 
-  d->read_list.clear();
-
-  return 0;
+  d->data_lock.Lock();
+  d->put();
+  if (r < 0) {
+    d->set_cancelled(r);
+  }
+  d->data_lock.Unlock();
+  return r;
 }
 
 int RGWRados::get_obj_iterate_cb(void *ctx, RGWObjState *astate,
