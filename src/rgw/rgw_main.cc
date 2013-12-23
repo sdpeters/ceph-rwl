@@ -52,9 +52,9 @@
 #include "rgw_log.h"
 #include "rgw_tools.h"
 #include "rgw_resolve.h"
-#include "rgw_mongoose.h"
+#include "rgw_civetweb.h"
 
-#include "mongoose/mongoose.h"
+#include "civetweb/civetweb.h"
 
 #include <map>
 #include <string>
@@ -514,7 +514,7 @@ void RGWProcess::handle_request(RGWFCGXRequest *req)
 }
 
 
-static int mongoose_callback(struct mg_connection *conn) {
+static int civetweb_callback(struct mg_connection *conn) {
   struct mg_request_info *req_info = mg_get_request_info(conn);
   RGWProcessEnv *pe = (RGWProcessEnv *)req_info->user_data;
   RGWRados *store = pe->store;
@@ -713,7 +713,7 @@ public:
 
     struct mg_callbacks cb;
     memset((void *)&cb, 0, sizeof(cb));
-    cb.begin_request = mongoose_callback;
+    cb.begin_request = civetweb_callback;
     ctx = mg_start(&cb, &env, (const char **)&options);
 
     if (!ctx) {
@@ -907,7 +907,7 @@ int main(int argc, const char **argv)
       RGWProcessEnv fcgi_pe = { store, &rest, olog, 0 };
 
       fe = new RGWFCGXFrontend(fcgi_pe, config);
-    } else if (framework == "mongoose") {
+    } else if (framework == "civetweb" || framework == "mongoose") {
       string err;
 
       int port;
