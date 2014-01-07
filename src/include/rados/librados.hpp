@@ -26,39 +26,88 @@ namespace librados
   struct PoolAsyncCompletionImpl;
   class RadosClient;
 
-  typedef void *list_ctx_t;
-  typedef uint64_t auid_t;
+  /**
+   * @typedef config_t
+   *
+   * A handle to the ceph runtime configuration structure (internally
+   * a CephContext).
+   */
   typedef void *config_t;
 
+  /**
+   * @struct cluster_stat_t
+   *
+   * Information about cluster utilization
+   *
+   * FIXME v3: use bytes not kb
+   */
   struct cluster_stat_t {
-    uint64_t kb, kb_used, kb_avail;
-    uint64_t num_objects;
+    uint64_t kb, kb_used, kb_avail;  ///< kilobytes total, used, available
+    uint64_t num_objects;            ///< number of objects stored
   };
 
+  /**
+   * @struct pool_stat_t
+   *
+   * Per-pool utilization stats
+   *
+   * FIXME v3: drop redundant num_kb
+   */
   struct pool_stat_t {
-    uint64_t num_bytes;    // in bytes
-    uint64_t num_kb;       // in KB
-    uint64_t num_objects;
-    uint64_t num_object_clones;
-    uint64_t num_object_copies;  // num_objects * num_replicas
-    uint64_t num_objects_missing_on_primary;
-    uint64_t num_objects_unfound;
-    uint64_t num_objects_degraded;
-    uint64_t num_rd, num_rd_kb, num_wr, num_wr_kb;
+    uint64_t num_bytes;    ///< bytes stored
+    uint64_t num_kb;       ///< kilobytes stored
+    uint64_t num_objects;  ///< objects stored
+    uint64_t num_object_clones;  ///< object clones (for snapshots)
+    uint64_t num_object_copies;  ///< num_objects * num_replicas
+    uint64_t num_objects_missing_on_primary;  ///< objects degraded on primary replica
+    uint64_t num_objects_unfound;  ///< objects whose location is unknown
+    uint64_t num_objects_degraded; ///< objects missing or not stored in their location
+    uint64_t num_rd, num_rd_kb, num_wr, num_wr_kb;  ///< total read/write operations (or bytes)
   };
 
+  /**
+   * @struct locker_t
+   *
+   * Metadata about an entity holding a lock (see the rados class
+   * cls_lock).
+   */
   typedef struct {
     std::string client;
     std::string cookie;
     std::string address;
   } locker_t;
 
+  /**
+   * @typedef stats_map
+   *
+   * Map of pool names to pool stats
+   */
   typedef std::map<std::string, pool_stat_t> stats_map;
 
+  /**
+   * @typedef completion_t
+   *
+   * Opaque handle referencing an AioCompletion for the purposes of a
+   * callback function.
+   *
+   * FIXME v3: we should just use AioCompletion.
+   */
   typedef void *completion_t;
+
+  /**
+   * @typedef callback_t
+   *
+   * A callback function for async IO completion notification.
+   */
   typedef void (*callback_t)(completion_t cb, void *arg);
 
-  class ObjectIterator : public std::iterator <std::forward_iterator_tag, std::string> {
+  /**
+   * @struct ObjectIterator
+   *
+   * An iterator for listing objects in a pool.
+   */
+  class ObjectIterator
+    : public std::iterator <std::forward_iterator_tag, std::string> {
   public:
     static const ObjectIterator __EndObjectIterator;
     ObjectIterator() {}
@@ -68,8 +117,8 @@ namespace librados
     bool operator!=(const ObjectIterator& rhs) const;
     const std::pair<std::string, std::string>& operator*() const;
     const std::pair<std::string, std::string>* operator->() const;
-    ObjectIterator &operator++(); // Preincrement
-    ObjectIterator operator++(int); // Postincrement
+    ObjectIterator &operator++(); ///< Preincrement
+    ObjectIterator operator++(int); ///< Postincrement
     friend class IoCtx;
 
     /// get current hash position of the iterator, rounded to the current pg
@@ -84,12 +133,33 @@ namespace librados
     std::pair<std::string, std::string> cur_obj;
   };
 
+  /**
+   * @struct WatchCtx
+   *
+   * An interface for sending notifications for the watch/notify
+   * framework.  The user should create a child class that implements
+   * the notify() method.
+   */
   class WatchCtx {
   public:
     virtual ~WatchCtx();
     virtual void notify(uint8_t opcode, uint64_t ver, bufferlist& bl) = 0;
   };
 
+  /**
+   * @struct AioCompletion
+   *
+   * An asynchronous IO completion object.  This structure is
+   * associated with any async IO request.  There are methods to check
+   * on progress, and methods to set completion callbacks for
+   * notification.
+   *
+   * This structure is internally reference counted.  Any user with a
+   * reference will need to call the release() method when they are
+   * done with it.  In most cases, happens at the end of the callback
+   * function, or after returning from one of the wait_*() methods and
+   * getting the return value/error code.
+   */
   struct AioCompletion {
     AioCompletion(AioCompletionImpl *pc_) : pc(pc_) {}
     int set_complete_callback(void *cb_arg, callback_t cb);
