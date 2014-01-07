@@ -234,10 +234,13 @@ namespace librados
     OPERATION_IGNORE_OVERLAY = 32,
   };
 
-  /*
-   * ObjectOperation : compound object operation
-   * Batch multiple object operations into a single request, to be applied
-   * atomically.
+  /**
+   * @struct ObjectOperation : compound object operation
+   *
+   * Batch multiple object operations into a single request, to be
+   * applied atomically.  A batch operation is prepare in memory by
+   * calling the various methods, and is submitted to the cluster via
+   * the various IoCtx::operate() methods.
    */
   class ObjectOperation
   {
@@ -246,15 +249,49 @@ namespace librados
     virtual ~ObjectOperation();
 
     size_t size();
+
+    /**
+     * set per-op flags for the most recently added op
+     *
+     * see ObjectOperationFlags
+     */
     void set_op_flags(ObjectOperationFlags flags);
 
+    /**
+     * compare xattr with the given value
+     *
+     * This will return 0 (and proceed with the batch operation) if
+     * the comparison succeeds, or return an error (and abort the
+     * batch operation) if it does not.
+     *
+     * @param name xattr name
+     * @param op comparison operation; see LIBRADOS_CMPXATTR_OP_*
+     * @param val value to compare to
+     */
     void cmpxattr(const char *name, uint8_t op, const bufferlist& val);
     void cmpxattr(const char *name, uint8_t op, uint64_t v);
     void src_cmpxattr(const std::string& src_oid,
 		      const char *name, int op, const bufferlist& val);
     void src_cmpxattr(const std::string& src_oid,
 		      const char *name, int op, uint64_t v);
+
+    /**
+     * invoke a class method
+     *
+     * @param cls class name
+     * @param method method name
+     * @param inbl input data
+     */
     void exec(const char *cls, const char *method, bufferlist& inbl);
+    /**
+     * invoke a class method
+     *
+     * @param cls [in] class name
+     * @param method [in] method name
+     * @param inbl [in] input data
+     * @param obl [out] output buffer
+     * @param prval [out] return value
+     */
     void exec(const char *cls, const char *method, bufferlist& inbl, bufferlist *obl, int *prval);
     void exec(const char *cls, const char *method, bufferlist& inbl, ObjectOperationCompletion *completion);
     /**
@@ -300,9 +337,11 @@ namespace librados
   };
 
   /*
-   * ObjectWriteOperation : compound object write operation
+   * @struct ObjectWriteOperation : compound object write operation
+   *
    * Batch multiple object operations into a single request, to be applied
-   * atomically.
+   * atomically.  This is a child of ObjectOperation and defines various
+   * write methods.
    */
   class ObjectWriteOperation : public ObjectOperation
   {
@@ -321,6 +360,7 @@ namespace librados
     void write(uint64_t off, const bufferlist& bl);
     void write_full(const bufferlist& bl);
     void append(const bufferlist& bl);
+    /// delete the object
     void remove();
     void truncate(uint64_t off);
     void zero(uint64_t off, uint64_t len);
@@ -410,7 +450,8 @@ namespace librados
   };
 
   /*
-   * ObjectReadOperation : compound object operation that return value
+   * @struct ObjectReadOperation : compound object operation that return value
+   *
    * Batch multiple object operations into a single request, to be applied
    * atomically.
    */
@@ -553,24 +594,25 @@ namespace librados
 
     ~IoCtx();
 
-    // Close our pool handle
+    /// Close our pool handle
     void close();
 
-    // deep copy
+    /// deep copy
     void dup(const IoCtx& rhs);
 
-    // set pool auid
+    /// set pool auid
     int set_auid(uint64_t auid_);
 
-    // set pool auid
+    /// set pool auid
     int set_auid_async(uint64_t auid_, PoolAsyncCompletion *c);
 
-    // get pool auid
+    /// get pool auid
     int get_auid(uint64_t *auid_);
 
+    /// get name of the current pool
     std::string get_pool_name();
 
-    // create an object
+    /// create an object
     int create(const std::string& oid, bool exclusive);
     int create(const std::string& oid, bool exclusive, const std::string& category);
 
