@@ -205,7 +205,7 @@ run() {
 if [ "$debug" -eq 0 ]; then
     CMONDEBUG='
 	debug mon = 10
-        debug ms = 1'
+        debug ms = 20'
     COSDDEBUG='
         debug ms = 1'
     CMDSDEBUG='

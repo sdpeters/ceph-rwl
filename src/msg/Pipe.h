@@ -141,7 +141,9 @@ class DispatchQueue;
       return get_state_name(state);
     }
 
+  private:
     int sd;
+  public:
     int port;
     int peer_type;
     entity_addr_t peer_addr;
@@ -276,6 +278,7 @@ class DispatchQueue;
     void discard_out_queue();
 
     void shutdown_socket() {
+      recv_reset();
       if (sd >= 0)
         ::shutdown(sd, SHUT_RDWR);
     }

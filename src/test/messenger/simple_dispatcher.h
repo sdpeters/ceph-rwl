@@ -19,9 +19,12 @@ private:
 	Messenger *messenger;
         Mutex *lock;
         Cond *cond;
+        atomic_t count;
 public:
 	SimpleDispatcher(Messenger *msgr, Mutex *l, Cond *c);
 	virtual ~SimpleDispatcher();
+
+        int get_count() { return count.read(); }
 
 	void set_active() {
 		active = true;

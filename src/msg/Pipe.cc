@@ -109,7 +109,12 @@ Pipe::Pipe(SimpleMessenger *r, int st, Connection *con)
   if (msgr->timeout == 0)
     msgr->timeout = -1;
 
+#warning removeme
+#if 0
   recv_max_prefetch = MIN(MAX_RECV_LEN, msgr->cct->_conf->ms_tcp_prefetch_max_size);
+#else
+  recv_max_prefetch = 128 * 1024;
+#endif
   recv_buf = (char *)malloc(recv_max_prefetch);
 }
 
@@ -2249,6 +2254,7 @@ again:
 int Pipe::buffered_recv(char *buf, size_t len, int flags)
 {
   int left = len;
+  int total_recv = 0;
   if (recv_len > recv_ofs) {
     int to_read = MIN(recv_len - recv_ofs, left);
     memcpy(buf, &recv_buf[recv_ofs], to_read);
@@ -2258,6 +2264,7 @@ int Pipe::buffered_recv(char *buf, size_t len, int flags)
       return to_read;
     }
     buf += to_read;
+    total_recv += to_read;
   }
 
   /* nothing left in the prefetch buffer */
@@ -2267,8 +2274,12 @@ int Pipe::buffered_recv(char *buf, size_t len, int flags)
     return do_recv(buf, left, flags );
   }
 
+
   int got = do_recv(recv_buf, recv_max_prefetch, flags);
   if (got < 0) {
+    if (total_recv > 0)
+      return total_recv;
+
     return got;
   }
 
@@ -2276,7 +2287,8 @@ int Pipe::buffered_recv(char *buf, size_t len, int flags)
   got = MIN(left, got);
   memcpy(buf, recv_buf, got);
   recv_ofs = got;
-  return got;
+  total_recv += got;
+  return total_recv;
 }
 
 int Pipe::tcp_read_nonblocking(char *buf, int len)

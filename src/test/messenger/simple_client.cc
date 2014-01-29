@@ -74,12 +74,22 @@ int main(int argc, const char **argv)
 
         utime_t start = ceph_clock_now(NULL);
 	// do stuff
+        //
 
-	for (int i = 0; i < 10000; i++) {
-	  messenger->send_message(new MPing(), conn);
+        int total = 0;
+	for (int i = 0; i < 100; i++) {
+          for (int j = 0; j < 100; j++) {
+	    messenger->send_message(new MPing(), conn);
+            total++;
+          }
           Mutex::Locker l(lock);
-          cond.Wait(lock);
-	}
+          int count;
+          do {
+            cond.Wait(lock);
+            count = dispatcher->get_count();
+            cout << count << std::endl;
+          } while (count < total);
+        }
 
         utime_t end = ceph_clock_now(NULL);
 

@@ -27,6 +27,7 @@ bool SimpleDispatcher::ms_dispatch(Message *m)
 
 	switch (m->get_type()) {
 	case CEPH_MSG_PING:
+          count.inc();
           if (cond) {
             lock->Lock();
             cond->Signal();
