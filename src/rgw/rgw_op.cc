@@ -2606,11 +2606,14 @@ void RGWCompleteMultipart::execute()
       src_obj.init_ns(s->bucket, oid, mp_ns);
 
       if (obj_part.manifest.empty()) {
+#if 0
         RGWObjManifestPart& part = manifest.objs[ofs];
 
         part.loc = src_obj;
         part.loc_ofs = 0;
         part.size = part_size;
+#endif
+        manifest.append_obj(src_obj, part_size);
       } else {
         manifest.append(obj_part.manifest);
       }
@@ -2633,7 +2636,7 @@ void RGWCompleteMultipart::execute()
 
   target_obj.init(s->bucket, s->object_str);
 
-  manifest.obj_size = ofs;
+  manifest.set_size(ofs);
 
   store->set_atomic(s->obj_ctx, target_obj);
 
@@ -2713,10 +2716,10 @@ void RGWAbortMultipart::execute()
           return;
       } else {
         RGWObjManifest& manifest = obj_part.manifest;
-        map<uint64_t, RGWObjManifestPart>::iterator oiter;
-        for (oiter = manifest.objs.begin(); oiter != manifest.objs.end(); ++oiter) {
-          RGWObjManifestPart& part = oiter->second;
-          ret = store->delete_obj(s->obj_ctx, owner, part.loc);
+        RGWObjManifest::obj_iterator oiter;
+        for (oiter = manifest.obj_begin(); oiter != manifest.obj_end(); ++oiter) {
+          rgw_obj loc = oiter.get_location();
+          ret = store->delete_obj(s->obj_ctx, owner, loc);
           if (ret < 0 && ret != -ENOENT)
             return;
         }

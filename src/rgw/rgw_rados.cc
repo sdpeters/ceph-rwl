@@ -686,8 +686,12 @@ int RGWPutObjProcessor_Aio::throttle_data(void *handle)
 
 int RGWPutObjProcessor_Atomic::write_data(bufferlist& bl, off_t ofs, void **phandle)
 {
-  if (ofs >= next_part_ofs)
-    prepare_next_part(ofs);
+  if (ofs >= next_part_ofs) {
+    int r = prepare_next_part(ofs);
+    if (r < 0) {
+      return r;
+    }
+  }
 
   return RGWPutObjProcessor_Aio::handle_obj_data(cur_obj, bl, ofs - cur_part_ofs, ofs, phandle);
 }
@@ -719,7 +723,10 @@ int RGWPutObjProcessor_Atomic::handle_data(bufferlist& bl, off_t ofs, void **pha
   if (!data_ofs && !immutable_head()) {
     first_chunk.claim(bl);
     obj_len = (uint64_t)first_chunk.length();
-    prepare_next_part(first_chunk.length());
+    int r = prepare_next_part(first_chunk.length());
+    if (r < 0) {
+      return r;
+    }
     data_ofs = obj_len;
     return 0;
   }
@@ -743,7 +750,15 @@ int RGWPutObjProcessor_Atomic::prepare(RGWRados *store, void *obj_ctx)
   return 0;
 }
 
-void RGWPutObjProcessor_Atomic::prepare_next_part(off_t ofs) {
+int RGWPutObjProcessor_Atomic::prepare_next_part(off_t ofs) {
+
+  int ret = manifest_iter.create_next(ofs);
+  if (ret < 0) {
+    derr << "ERROR: manifest_iter.create_next() returned ret=" << ret << dendl;
+    return ret;
+  }
+#warning FIXME
+#if 0
   int num_parts = manifest.objs.size();
   RGWObjManifestPart *part;
 
@@ -771,15 +786,20 @@ void RGWPutObjProcessor_Atomic::prepare_next_part(off_t ofs) {
   snprintf(buf, sizeof(buf), "%d", cur_part_id);
   string cur_oid = oid_prefix;
   cur_oid.append(buf);
-  cur_obj.init_ns(bucket, cur_oid, shadow_ns);
+#endif
+  cur_obj.init_ns(bucket, manifest_iter.get_obj_name(), shadow_ns);
 
   add_obj(cur_obj);
+
+  return 0;
 };
 
-void RGWPutObjProcessor_Atomic::complete_parts()
+int RGWPutObjProcessor_Atomic::complete_parts()
 {
-  if (obj_len > (uint64_t)cur_part_ofs)
-    prepare_next_part(obj_len);
+  if (obj_len > (uint64_t)cur_part_ofs) {
+    return prepare_next_part(obj_len);
+  }
+  return 0;
 }
 
 int RGWPutObjProcessor_Atomic::complete_writing_data()
@@ -801,9 +821,12 @@ int RGWPutObjProcessor_Atomic::complete_writing_data()
       return r;
     }
   }
-  complete_parts();
+  int r = complete_parts();
+  if (r < 0) {
+    return r;
+  }
 
-  int r = drain_pending();
+  r = drain_pending();
   if (r < 0)
     return r;
 
@@ -2752,13 +2775,12 @@ set_err_state:
   bool copy_data = !astate->has_manifest;
   bool copy_first = false;
   if (astate->has_manifest) {
-    if (astate->manifest.objs.size() < 2) {
+    if (!astate->manifest.has_tail()) {
       copy_data = true;
     } else {
-      map<uint64_t, RGWObjManifestPart>::iterator iter = astate->manifest.objs.begin();
-      RGWObjManifestPart part = iter->second;
-      if (part.loc == src_obj) {
-	if (part.size > RGW_MAX_CHUNK_SIZE)  // should never happen
+      uint64_t head_size = astate->manifest.get_head_size();
+      if (head_size > 0) {
+	if (head_size > RGW_MAX_CHUNK_SIZE)  // should never happen
 	  copy_data = true;
 	else
           copy_first = true;
@@ -2791,15 +2813,14 @@ set_err_state:
     return copy_obj_data(ctx, dest_bucket_info.owner, &handle, end, dest_obj, src_obj, mtime, src_attrs, category, ptag, err);
   }
 
-  map<uint64_t, RGWObjManifestPart>::iterator miter = astate->manifest.objs.begin();
+  RGWObjManifest::obj_iterator miter = astate->manifest.obj_begin();
 
   if (copy_first) // we need to copy first chunk, not increase refcount
     ++miter;
 
-  RGWObjManifestPart *first_part = &miter->second;
   string oid, key;
   rgw_bucket bucket;
-  get_obj_bucket_and_oid_key(first_part->loc, bucket, oid, key);
+  get_obj_bucket_and_oid_key(miter.get_location(), bucket, oid, key);
   librados::IoCtx io_ctx;
   PutObjMetaExtraParams ep;
 
@@ -2824,20 +2845,19 @@ set_err_state:
   }
 
   if (!copy_itself) {
-    for (; miter != astate->manifest.objs.end(); ++miter) {
-      RGWObjManifestPart& part = miter->second;
+    manifest.clone_tail(astate->manifest);
+    for (; miter != astate->manifest.obj_end(); ++miter) {
       ObjectWriteOperation op;
-      manifest.objs[miter->first] = part;
       cls_refcount_get(op, tag, true);
-
-      get_obj_bucket_and_oid_key(part.loc, bucket, oid, key);
+      const rgw_obj& loc = miter.get_location();
+      get_obj_bucket_and_oid_key(loc, bucket, oid, key);
       io_ctx.locator_set_key(key);
 
       ret = io_ctx.operate(oid, &op);
       if (ret < 0)
         goto done_ret;
 
-      ref_objs.push_back(part.loc);
+      ref_objs.push_back(loc);
     }
     manifest.obj_size = total_len;
 
@@ -2853,10 +2873,8 @@ set_err_state:
     if (ret < 0)
       goto done_ret;
 
-    first_part = &pmanifest->objs[0];
-    first_part->loc = dest_obj;
-    first_part->loc_ofs = 0;
-    first_part->size = first_chunk.length();
+    pmanifest->set_head(dest_obj);
+    pmanifest->set_head_size(first_chunk.length());
   }
 
   ep.data = &first_chunk;
@@ -2906,6 +2924,7 @@ int RGWRados::copy_obj_data(void *ctx,
 {
   bufferlist first_chunk;
   RGWObjManifest manifest;
+  map<uint64_t, RGWObjManifestPart> objs;
   RGWObjManifestPart *first_part;
   map<string, bufferlist>::iterator iter;
 
@@ -2947,18 +2966,19 @@ int RGWRados::copy_obj_data(void *ctx,
     ofs += ret;
   } while (ofs <= end);
 
-  first_part = &manifest.objs[0];
+  first_part = &objs[0];
   first_part->loc = dest_obj;
   first_part->loc_ofs = 0;
   first_part->size = first_chunk.length();
 
   if (ofs > RGW_MAX_CHUNK_SIZE) {
-    RGWObjManifestPart& tail = manifest.objs[RGW_MAX_CHUNK_SIZE];
+    RGWObjManifestPart& tail = objs[RGW_MAX_CHUNK_SIZE];
     tail.loc = shadow_obj;
     tail.loc_ofs = RGW_MAX_CHUNK_SIZE;
     tail.size = ofs - RGW_MAX_CHUNK_SIZE;
   }
-  manifest.obj_size = ofs;
+
+  manifest.set_explicit(ofs, objs);
 
   ep.data = &first_chunk;
   ep.manifest = &manifest;
@@ -3095,9 +3115,9 @@ int RGWRados::complete_atomic_overwrite(RGWRadosCtx *rctx, RGWObjState *state, r
     return 0;
 
   cls_rgw_obj_chain chain;
-  map<uint64_t, RGWObjManifestPart>::iterator iter;
-  for (iter = state->manifest.objs.begin(); iter != state->manifest.objs.end(); ++iter) {
-    rgw_obj& mobj = iter->second.loc;
+  RGWObjManifest::obj_iterator iter;
+  for (iter = state->manifest.obj_begin(); iter != state->manifest.obj_end(); ++iter) {
+    const rgw_obj& mobj = iter.get_location();
     if (mobj == obj)
       continue;
     string oid, key;
@@ -3330,11 +3350,11 @@ static void generate_fake_tag(CephContext *cct, map<string, bufferlist>& attrset
 {
   string tag;
 
-  map<uint64_t, RGWObjManifestPart>::iterator mi = manifest.objs.begin();
-  if (mi != manifest.objs.end()) {
-    if (manifest.objs.size() > 1) // first object usually points at the head, let's skip to a more unique part
+  RGWObjManifest::obj_iterator mi = manifest.obj_begin();
+  if (mi != manifest.obj_end()) {
+    if (manifest.has_tail()) // first object usually points at the head, let's skip to a more unique part
       ++mi;
-    tag = mi->second.loc.object;
+    tag = mi.get_location().object;
     tag.append("_");
   }
 
@@ -3392,15 +3412,17 @@ int RGWRados::get_obj_state(RGWRadosCtx *rctx, rgw_obj& obj, RGWObjState **state
     try {
       ::decode(s->manifest, miter);
       s->has_manifest = true;
-      s->size = s->manifest.obj_size;
+      s->size = s->manifest.get_obj_size();
     } catch (buffer::error& err) {
       ldout(cct, 20) << "ERROR: couldn't decode manifest" << dendl;
       return -EIO;
     }
-    ldout(cct, 10) << "manifest: total_size = " << s->manifest.obj_size << dendl;
-    map<uint64_t, RGWObjManifestPart>::iterator mi;
-    for (mi = s->manifest.objs.begin(); mi != s->manifest.objs.end(); ++mi) {
-      ldout(cct, 10) << "manifest: ofs=" << mi->first << " loc=" << mi->second.loc << dendl;
+    ldout(cct, 10) << "manifest: total_size = " << s->manifest.get_obj_size() << dendl;
+    if (cct->_conf->subsys.should_gather(ceph_subsys_rgw, 20)) {
+      RGWObjManifest::obj_iterator mi;
+      for (mi = s->manifest.obj_begin(); mi != s->manifest.obj_end(); ++mi) {
+        ldout(cct, 20) << "manifest: ofs=" << mi.get_ofs() << " loc=" << mi.get_location() << dendl;
+      }
     }
 
     if (!s->obj_tag.length()) {
@@ -4072,20 +4094,14 @@ int RGWRados::get_obj(void *ctx, RGWObjVersionTracker *objv_tracker, void **hand
   else
     len = end - ofs + 1;
 
-  if (astate->has_manifest && !astate->manifest.objs.empty()) {
+  if (astate->has_manifest && astate->manifest.has_tail()) {
     /* now get the relevant object part */
-    map<uint64_t, RGWObjManifestPart>::iterator iter = astate->manifest.objs.upper_bound(ofs);
-    /* we're now pointing at the next part (unless the first part starts at a higher ofs),
-       so retract to previous part */
-    if (iter != astate->manifest.objs.begin()) {
-      --iter;
-    }
+    RGWObjManifest::obj_iterator iter = astate->manifest.obj_find(ofs);
 
-    RGWObjManifestPart& part = iter->second;
-    uint64_t part_ofs = iter->first;
-    read_obj = part.loc;
-    len = min(len, part.size - (ofs - part_ofs));
-    read_ofs = part.loc_ofs + (ofs - part_ofs);
+    uint64_t part_ofs = iter.get_start_ofs();
+    read_obj = iter.get_location();
+    len = min(len, iter.get_size() - (ofs - part_ofs));
+    read_ofs = iter.location_ofs() + (ofs - part_ofs);
     reading_from_head = (read_obj == obj);
 
     if (!reading_from_head) {
@@ -4575,22 +4591,16 @@ int RGWRados::iterate_obj(void *ctx, rgw_obj& obj,
 
   if (astate->has_manifest) {
     /* now get the relevant object part */
-    map<uint64_t, RGWObjManifestPart>::iterator iter = astate->manifest.objs.upper_bound(ofs);
-    /* we're now pointing at the next part (unless the first part starts at a higher ofs),
-       so retract to previous part */
-    if (iter != astate->manifest.objs.begin()) {
-      --iter;
-    }
+    RGWObjManifest::obj_iterator iter = astate->manifest.obj_find(ofs);
 
-    for (; iter != astate->manifest.objs.end() && ofs <= end; ++iter) {
-      RGWObjManifestPart& part = iter->second;
-      off_t part_ofs = iter->first;
-      off_t next_part_ofs = part_ofs + part.size;
+    for (; iter != astate->manifest.obj_end() && ofs <= end; ++iter) {
+      off_t part_ofs = iter.get_start_ofs();
+      off_t next_part_ofs = part_ofs + iter.get_size();
 
       while (ofs < next_part_ofs && ofs <= end) {
-        read_obj = part.loc;
-        uint64_t read_len = min(len, part.size - (ofs - part_ofs));
-        read_ofs = part.loc_ofs + (ofs - part_ofs);
+        read_obj = iter.get_location();
+        uint64_t read_len = min(len, iter.get_size() - (ofs - part_ofs));
+        read_ofs = iter.location_ofs() + (ofs - part_ofs);
 
         if (read_len > max_chunk_size) {
           read_len = max_chunk_size;
@@ -5673,12 +5683,10 @@ int RGWRados::check_disk_state(librados::IoCtx io_ctx,
   }
 
   if (astate->has_manifest) {
-    map<uint64_t, RGWObjManifestPart>::iterator miter;
+    RGWObjManifest::obj_iterator miter;
     RGWObjManifest& manifest = astate->manifest;
-    for (miter = manifest.objs.begin(); miter != manifest.objs.end(); ++miter) {
-      RGWObjManifestPart& part = miter->second;
-
-      rgw_obj& loc = part.loc;
+    for (miter = manifest.obj_begin(); miter != manifest.obj_end(); ++miter) {
+      rgw_obj loc = miter.get_location();
 
       if (loc.ns == RGW_OBJ_NS_MULTIPART) {
 	dout(10) << "check_disk_state(): removing manifest part from index: " << loc << dendl;

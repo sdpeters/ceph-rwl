@@ -28,7 +28,7 @@ class RGWGC;
 
 #define RGW_BUCKET_INSTANCE_MD_PREFIX ".bucket.meta."
 
-static inline void prepend_bucket_marker(rgw_bucket& bucket, string& orig_oid, string& oid)
+static inline void prepend_bucket_marker(rgw_bucket& bucket, const string& orig_oid, string& oid)
 {
   if (bucket.marker.empty() || orig_oid.empty()) {
     oid = orig_oid;
@@ -39,7 +39,7 @@ static inline void prepend_bucket_marker(rgw_bucket& bucket, string& orig_oid, s
   }
 }
 
-static inline void get_obj_bucket_and_oid_key(rgw_obj& obj, rgw_bucket& bucket, string& oid, string& key)
+static inline void get_obj_bucket_and_oid_key(const rgw_obj& obj, rgw_bucket& bucket, string& oid, string& key)
 {
   bucket = obj.bucket;
   prepend_bucket_marker(bucket, obj.object, oid);
@@ -118,23 +118,91 @@ struct RGWObjManifestPart {
 };
 WRITE_CLASS_ENCODER(RGWObjManifestPart);
 
-struct RGWObjManifest {
-  map<uint64_t, RGWObjManifestPart> objs;
-  uint64_t obj_size;
 
-  RGWObjManifest() : obj_size(0) {}
+struct RGWObjManifestPolicy {
+  uint32_t start_num;
+  uint64_t start_ofs;
+  uint64_t obj_size; /* each object size */
+  uint64_t shard_max_size; /* underlying obj max size */
+
+  RGWObjManifestPolicy() : start_num(0), start_ofs(0), obj_size(0), shard_max_size(0) {}
+  RGWObjManifestPolicy(uint32_t _start_num, uint64_t _start_ofs, uint64_t _obj_size, uint64_t _shard_size) :
+                       start_num(_start_num), start_ofs(_start_ofs), obj_size(_obj_size), shard_max_size(_shard_size) {}
+
+  void get_obj_name(const string& prefix, uint64_t ofs, string *name);
 
   void encode(bufferlist& bl) const {
-    ENCODE_START(2, 2, bl);
+    ENCODE_START(1, 1, bl);
+    ::encode(start_num, bl);
+    ::encode(start_ofs, bl);
     ::encode(obj_size, bl);
-    ::encode(objs, bl);
+    ::encode(shard_max_size, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::iterator& bl) {
-     DECODE_START_LEGACY_COMPAT_LEN_32(2, 2, 2, bl);
+    DECODE_START(1,  bl);
+    ::decode(start_num, bl);
+    ::decode(start_ofs, bl);
+    ::decode(obj_size, bl);
+    ::decode(shard_max_size, bl);
+    DECODE_FINISH(bl);
+  }
+};
+WRITE_CLASS_ENCODER(RGWObjManifestPolicy);
+
+class RGWObjManifest {
+protected:
+  bool explicit_objs; /* old manifest? */
+  map<uint64_t, RGWObjManifestPart> objs;
+
+  uint64_t obj_size;
+
+  rgw_obj head_obj;
+  uint64_t head_size;
+
+  string prefix;
+  map<uint64_t, RGWObjManifestPolicy> policies;
+
+public:
+
+  RGWObjManifest() : explicit_objs(false), obj_size(0), head_size(0) {}
+
+  void set_explicit(uint64_t _size, map<uint64_t, RGWObjManifestPart>& _objs) {
+    explicit_objs = true;
+    obj_size = _size;
+    objs.swap(_objs);
+  }
+
+  void set_trivial_policy(uint64_t _head_size, uint64_t shard_max_size) {
+    head_size = head_size;
+    RGWObjManifestPolicy policy(0, 0, shard_max_size, shard_max_size);
+    policies[0] = policy;
+  }
+
+  void encode(bufferlist& bl) const {
+    ENCODE_START(3, 3, bl);
+    ::encode(obj_size, bl);
+    ::encode(objs, bl);
+    ::encode(explicit_objs, bl);
+    ::encode(head_size, bl);
+    ::encode(prefix, bl);
+    ::encode(policies, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::iterator& bl) {
+     DECODE_START_LEGACY_COMPAT_LEN_32(3, 2, 2, bl);
      ::decode(obj_size, bl);
      ::decode(objs, bl);
+     if (struct_v >= 3) {
+       ::decode(explicit_objs, bl);
+       ::decode(head_size, bl);
+       ::decode(prefix, bl);
+       ::decode(policies, bl);
+     } else {
+       explicit_objs = true;
+     }
      DECODE_FINISH(bl);
   }
 
@@ -143,7 +211,106 @@ struct RGWObjManifest {
 
   void append(RGWObjManifest& m);
 
-  bool empty() { return objs.empty(); }
+  bool empty() {
+    if (explicit_objs)
+      return objs.empty();
+    return policies.empty();
+  }
+
+  bool has_tail() {
+    if (explicit_objs) {
+      return (objs.size() >= 2);
+    }
+    return (obj_size > head_size);
+  }
+
+  void set_head(const rgw_obj& _o) {
+    head_obj = _o;
+  }
+
+  void set_head_size(uint64_t _s) {
+    head_size = _s;
+  }
+
+  uint64_t get_obj_size() {
+    return obj_size;
+  }
+
+  uint64_t get_head_size() {
+    return head_size;
+  }
+
+  class obj_iterator {
+    RGWObjManifest *manifest;
+    uint64_t start_ofs; /* where current part starts in the object */
+    uint64_t ofs;       /* current position within the object */
+    uint64_t size;      /* current part size */
+
+    rgw_obj location;
+
+    map<uint64_t, RGWObjManifestPart>::iterator explicit_iter;
+
+  public:
+    obj_iterator() : manifest(NULL), start_ofs(0), ofs(0), size(0) {}
+    obj_iterator(RGWObjManifest *_m) : manifest(_m), start_ofs(0), ofs(0), size(0) {}
+    obj_iterator(const obj_iterator& rhs) {
+      manifest = rhs.manifest;
+      ofs = rhs.ofs;
+    }
+
+    string operator*();
+    void operator++();
+    bool operator==(const obj_iterator& rhs) {
+      return (ofs == rhs.ofs);
+    }
+    bool operator!=(const obj_iterator& rhs) {
+      return (ofs != rhs.ofs);
+    }
+    const rgw_obj& get_location() {
+      return location;
+    }
+    uint64_t get_start_ofs() {
+      return start_ofs;
+    }
+    uint64_t get_ofs() {
+      if (manifest->explicit_objs) {
+        return explicit_iter->first;
+      }
+      return ofs;
+    }
+    uint64_t get_size() {
+      if (manifest->explicit_objs) {
+        return explicit_iter->second.size;
+      }
+      return size;
+    }
+    uint64_t location_ofs() {
+      if (manifest->explicit_objs) {
+        return explicit_iter->second.loc_ofs;
+      }
+      return 0; /* all parts start at zero offset */
+    }
+  };
+
+  obj_iterator obj_begin();
+  obj_iterator obj_end();
+  obj_iterator obj_find(uint64_t ofs);
+
+  class create_iterator {
+    RGWObjManifest *manifest;
+    uint64_t ofs;
+
+    string obj_name;
+
+  public:
+    create_iterator() : manifest(NULL) {}
+
+    int create_next(uint64_t ofs);
+
+    const string& get_obj_name() { return obj_name; }
+  };
+
+  create_iterator create_begin();
 };
 WRITE_CLASS_ENCODER(RGWObjManifest);
 
@@ -278,14 +445,15 @@ protected:
   rgw_obj head_obj;
   rgw_obj cur_obj;
   RGWObjManifest manifest;
+  RGWObjManifest::create_iterator manifest_iter;
 
   virtual bool immutable_head() { return false; }
 
   int write_data(bufferlist& bl, off_t ofs, void **phandle);
   virtual int do_complete(string& etag, time_t *mtime, time_t set_mtime, map<string, bufferlist>& attrs);
 
-  void prepare_next_part(off_t ofs);
-  void complete_parts();
+  int prepare_next_part(off_t ofs);
+  int complete_parts();
   int complete_writing_data();
 
 public:
