@@ -527,6 +527,128 @@ void RGWObjVersionTracker::prepare_op_for_write(ObjectWriteOperation *op)
   }
 }
 
+void RGWObjManifest::obj_iterator::seek(uint64_t ofs)
+{
+  if (manifest->explicit_objs) {
+    explicit_iter = manifest->objs.upper_bound(ofs);
+    if (explicit_iter != manifest->objs.begin()) {
+      explicit_iter--;
+    }
+    return;
+  }
+  policy_iter = manifest->policies.upper_bound(ofs);
+  if (policy_iter != manifest->policies.begin()) {
+    policy_iter--;
+  }
+
+  RGWObjManifestPolicy& policy = policy_iter->second;
+
+  uint64_t num_parts = (ofs - policy.start_ofs) / policy.part_size;
+  cur_part_id = policy.start_part_num + num_parts;
+  start_ofs = policy.start_ofs + num_parts * policy.part_size;
+
+  cur_stripe = (ofs - start_ofs) / policy.stripe_max_size;
+  stripe_ofs = start_ofs + cur_stripe * policy.stripe_max_size;
+
+  if (!policy.part_size) {
+    size = policy.stripe_max_size;
+  } else {
+    size = policy.part_size - (ofs - start_ofs);
+    size = MIN(size, policy.stripe_max_size);
+  }
+
+  update_location();
+}
+
+void RGWObjManifest::obj_iterator::update_location()
+{
+  if (manifest->explicit_objs) {
+    location = explicit_iter->second.loc;
+    return;
+  }
+
+  string oid = manifest->prefix;
+
+  RGWObjManifestPolicy& policy = policy_iter->second;
+
+  const rgw_obj& head = manifest->get_head();
+
+  if (policy.start_ofs == 0 &&
+      ofs < manifest->get_head_size()) {
+    location = head;
+    return;
+  }
+
+  string ns;
+
+  if (!policy.part_size) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", cur_stripe);
+    oid += buf;
+    ns = shadow_ns;
+  } else {
+    char buf[32];
+    if (!cur_stripe) {
+      snprintf(buf, sizeof(buf), "%d", cur_part_id);
+      oid += buf;
+      ns= RGW_OBJ_NS_MULTIPART;
+    } else {
+      snprintf(buf, sizeof(buf), "%d_%d", cur_part_id, cur_stripe);
+      oid += buf;
+      ns = shadow_ns;
+    }
+  }
+
+  rgw_bucket bucket = head.bucket;
+
+  location = rgw_obj(bucket, oid, ns);
+}
+
+void RGWObjManifest::obj_iterator::operator++()
+{
+  if (manifest->explicit_objs) {
+    explicit_iter++;
+    update_location();
+    return;
+  }
+
+  RGWObjManifestPolicy *policy = &policy_iter->second;
+
+  if (!policy->part_size) {
+    /* single part, multiple stripes */
+    stripe_ofs += size;
+    ofs = stripe_ofs;
+    cur_stripe++;
+  } else {
+    /* multi part, multi stripes object */
+
+    stripe_ofs += size;
+    ofs = stripe_ofs;
+
+    if (stripe_ofs - start_ofs == policy->part_size) {
+      /* moved to the next part */
+      start_ofs = stripe_ofs;
+      cur_stripe = 0;
+
+      /* update iterators */
+      policy_iter = next_policy_iter;
+      next_policy_iter++;
+      last_policy = (next_policy_iter == manifest->policies.end());
+
+      policy = &policy_iter->second;
+
+      cur_part_id = policy->start_part_num;
+    } else {
+      cur_stripe++;
+    }
+
+    size = policy->part_size - (ofs - start_ofs);
+    size = MIN(size, policy->stripe_max_size);
+  }
+
+  update_location();
+}
+
 int RGWObjManifest::generator::create_begin(CephContext *cct, RGWObjManifest *_m, rgw_bucket& _b, rgw_obj& _h)
 {
   manifest = _m;
@@ -565,7 +687,7 @@ int RGWObjManifest::generator::create_next(uint64_t ofs)
     manifest->set_head_size(ofs);
   }
 
-  if (ofs - cur_part_ofs == policy.obj_size) { /* moved to the next obj */
+  if (ofs - cur_part_ofs == policy.part_size) { /* moved to the next obj */
     cur_part_id++;
     char buf[16];
     snprintf(buf, sizeof(buf), "%d", cur_part_id);
@@ -573,20 +695,44 @@ int RGWObjManifest::generator::create_next(uint64_t ofs)
     cur_obj = rgw_obj(bucket, cur_oid, shadow_ns);
     cur_stripe = 0;
     cur_part_ofs = ofs;
-  } else if (ofs - last_ofs == policy.shard_max_size) { /* same obj, next shard */
+  } else if (ofs - last_ofs == policy.stripe_max_size) { /* same obj, next shard */
     cur_stripe++;
     char buf[16];
     snprintf(buf, sizeof(buf), ".%d", cur_stripe);
     string oid = cur_oid + buf;
     cur_obj = rgw_obj(bucket, oid, shadow_ns);
-  } else if (ofs - last_ofs > policy.shard_max_size ||
-             ofs - cur_part_ofs > policy.obj_size) { /* doesn't really make sense */
+  } else if (ofs - last_ofs > policy.stripe_max_size ||
+             ofs - cur_part_ofs > policy.part_size) { /* doesn't really make sense */
     return -EINVAL;
   }
   last_ofs = ofs;
   manifest->set_obj_size(ofs);
 
   return 0;
+}
+
+RGWObjManifest::obj_iterator RGWObjManifest::obj_begin()
+{
+  RGWObjManifest::obj_iterator iter(this);
+  iter.seek(0);
+  return iter;
+}
+
+RGWObjManifest::obj_iterator RGWObjManifest::obj_end()
+{
+  RGWObjManifest::obj_iterator iter(this);
+  iter.seek(obj_size);
+  return iter;
+}
+
+RGWObjManifest::obj_iterator RGWObjManifest::obj_find(uint64_t ofs)
+{
+  if (ofs > obj_size) {
+    ofs = obj_size;
+  }
+  RGWObjManifest::obj_iterator iter(this);
+  iter.seek(ofs);
+  return iter;
 }
 
 void RGWObjManifest::append(RGWObjManifest& m)
@@ -598,6 +744,16 @@ void RGWObjManifest::append(RGWObjManifest& m)
     objs[base + iter->first] = part;
   }
   obj_size += m.obj_size;
+}
+
+void RGWObjManifest::append_obj(rgw_obj& obj, uint64_t size)
+{
+#warning FIXME
+}
+
+void RGWObjManifest::clone_tail(RGWObjManifest& src)
+{
+#warning FIXME
 }
 
 bool RGWObjManifest::get_policy(uint64_t ofs, RGWObjManifestPolicy *policy)

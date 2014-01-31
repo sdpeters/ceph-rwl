@@ -120,32 +120,32 @@ WRITE_CLASS_ENCODER(RGWObjManifestPart);
 
 
 struct RGWObjManifestPolicy {
-  uint32_t start_num;
+  uint32_t start_part_num;
   uint64_t start_ofs;
-  uint64_t obj_size; /* each object size */
-  uint64_t shard_max_size; /* underlying obj max size */
+  uint64_t part_size; /* each part size, 0 if there's no part size, meaning it's unlimited */
+  uint64_t stripe_max_size; /* underlying obj max size */
 
-  RGWObjManifestPolicy() : start_num(0), start_ofs(0), obj_size(0), shard_max_size(0) {}
-  RGWObjManifestPolicy(uint32_t _start_num, uint64_t _start_ofs, uint64_t _obj_size, uint64_t _shard_size) :
-                       start_num(_start_num), start_ofs(_start_ofs), obj_size(_obj_size), shard_max_size(_shard_size) {}
+  RGWObjManifestPolicy() : start_part_num(0), start_ofs(0), part_size(0), stripe_max_size(0) {}
+  RGWObjManifestPolicy(uint32_t _start_part_num, uint64_t _start_ofs, uint64_t _part_size, uint64_t _stripe_max_size) :
+                       start_part_num(_start_part_num), start_ofs(_start_ofs), part_size(_part_size), stripe_max_size(_stripe_max_size) {}
 
   void get_obj_name(const string& prefix, uint64_t ofs, string *name);
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(start_num, bl);
+    ::encode(start_part_num, bl);
     ::encode(start_ofs, bl);
-    ::encode(obj_size, bl);
-    ::encode(shard_max_size, bl);
+    ::encode(part_size, bl);
+    ::encode(stripe_max_size, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::iterator& bl) {
     DECODE_START(1,  bl);
-    ::decode(start_num, bl);
+    ::decode(start_part_num, bl);
     ::decode(start_ofs, bl);
-    ::decode(obj_size, bl);
-    ::decode(shard_max_size, bl);
+    ::decode(part_size, bl);
+    ::decode(stripe_max_size, bl);
     DECODE_FINISH(bl);
   }
 };
@@ -175,8 +175,8 @@ public:
     objs.swap(_objs);
   }
 
-  void set_trivial_policy(uint64_t shard_max_size) {
-    RGWObjManifestPolicy policy(0, 0, shard_max_size, shard_max_size);
+  void set_trivial_policy(uint64_t stripe_max_size) {
+    RGWObjManifestPolicy policy(0, 0, stripe_max_size, stripe_max_size);
     policies[0] = policy;
   }
 
@@ -232,6 +232,10 @@ public:
     head_obj = _o;
   }
 
+  const rgw_obj& get_head() {
+    return head_obj;
+  }
+
   void set_prefix(const string& _p) {
     prefix = _p;
   }
@@ -259,22 +263,44 @@ public:
   class obj_iterator {
     RGWObjManifest *manifest;
     uint64_t start_ofs; /* where current part starts in the object */
+    uint64_t stripe_ofs; /* where current stripe starts */
     uint64_t ofs;       /* current position within the object */
     uint64_t size;      /* current part size */
 
+    int cur_part_id;
+    int cur_stripe;
+
     rgw_obj location;
+
+    map<uint64_t, RGWObjManifestPolicy>::iterator policy_iter;
+    map<uint64_t, RGWObjManifestPolicy>::iterator next_policy_iter;
+
+    bool last_policy;
 
     map<uint64_t, RGWObjManifestPart>::iterator explicit_iter;
 
-  public:
-    obj_iterator() : manifest(NULL), start_ofs(0), ofs(0), size(0) {}
-    obj_iterator(RGWObjManifest *_m) : manifest(_m), start_ofs(0), ofs(0), size(0) {}
-    obj_iterator(const obj_iterator& rhs) {
-      manifest = rhs.manifest;
-      ofs = rhs.ofs;
+    void init() {
+      start_ofs = 0;
+      stripe_ofs = 0;
+      size = 0;
+      cur_part_id = 0;
+      cur_stripe = 0;
     }
 
-    string operator*();
+  public:
+    obj_iterator() : manifest(NULL) {
+      init();
+    }
+    obj_iterator(RGWObjManifest *_m) : manifest(_m) {
+      init();
+      seek(0);
+    }
+    obj_iterator(RGWObjManifest *_m, uint64_t _ofs) : manifest(_m) {
+      init();
+      seek(_ofs);
+    }
+    void seek(uint64_t ofs);
+
     void operator++();
     bool operator==(const obj_iterator& rhs) {
       return (ofs == rhs.ofs);
@@ -306,6 +332,8 @@ public:
       }
       return 0; /* all parts start at zero offset */
     }
+
+    void update_location();
   };
 
   obj_iterator obj_begin();
