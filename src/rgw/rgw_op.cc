@@ -1369,10 +1369,16 @@ int RGWPutObjProcessor_Multipart::prepare(RGWRados *store, void *obj_ctx)
   oid = mp.get_part(part_num);
 
   head_obj.init_ns(bucket, oid, mp_ns);
-  oid_prefix = oid;
+  string oid_prefix = oid;
   oid_prefix.append("_");
   cur_obj = head_obj;
   add_obj(head_obj);
+
+  int r = manifest_gen.create_begin(store->ctx(), &manifest, bucket, head_obj);
+  if (r < 0) {
+    return r;
+  }
+
   return 0;
 }
 
@@ -2636,7 +2642,10 @@ void RGWCompleteMultipart::execute()
 
   target_obj.init(s->bucket, s->object_str);
 
+#warning FIXME /* not sure if needed set_size here */
+#if 0
   manifest.set_size(ofs);
+#endif
 
   store->set_atomic(s->obj_ctx, target_obj);
 

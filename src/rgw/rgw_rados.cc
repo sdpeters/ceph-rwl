@@ -527,6 +527,68 @@ void RGWObjVersionTracker::prepare_op_for_write(ObjectWriteOperation *op)
   }
 }
 
+int RGWObjManifest::generator::create_begin(CephContext *cct, RGWObjManifest *_m, rgw_bucket& _b, rgw_obj& _h)
+{
+  manifest = _m;
+
+  bucket = _b;
+  manifest->set_head(_h);
+  last_ofs = 0;
+
+  char buf[33];
+  gen_rand_alphanumeric(cct, buf, sizeof(buf) - 1);
+  string oid_prefix = "_";
+  oid_prefix.append(buf);
+  oid_prefix.append("_");
+
+  manifest->set_prefix(oid_prefix);
+
+  bool found = manifest->get_policy(0, &policy);
+  if (!found) {
+    derr << "ERROR: manifest->get_policy() could not found policy" << dendl;
+    return -EIO;
+  }
+
+  cur_obj = _h;
+
+  return 0;
+}
+
+int RGWObjManifest::generator::create_next(uint64_t ofs)
+{
+  if (ofs < last_ofs)
+    return -EINVAL;
+
+  string obj_name = manifest->prefix;
+
+  if (last_ofs == 0 && manifest->get_max_head_size() > 0) {
+    manifest->set_head_size(ofs);
+  }
+
+  if (ofs - cur_part_ofs == policy.obj_size) { /* moved to the next obj */
+    cur_part_id++;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", cur_part_id);
+    cur_oid = manifest->prefix + buf;
+    cur_obj = rgw_obj(bucket, cur_oid, shadow_ns);
+    cur_stripe = 0;
+    cur_part_ofs = ofs;
+  } else if (ofs - last_ofs == policy.shard_max_size) { /* same obj, next shard */
+    cur_stripe++;
+    char buf[16];
+    snprintf(buf, sizeof(buf), ".%d", cur_stripe);
+    string oid = cur_oid + buf;
+    cur_obj = rgw_obj(bucket, oid, shadow_ns);
+  } else if (ofs - last_ofs > policy.shard_max_size ||
+             ofs - cur_part_ofs > policy.obj_size) { /* doesn't really make sense */
+    return -EINVAL;
+  }
+  last_ofs = ofs;
+  manifest->set_obj_size(ofs);
+
+  return 0;
+}
+
 void RGWObjManifest::append(RGWObjManifest& m)
 {
   map<uint64_t, RGWObjManifestPart>::iterator iter;
@@ -536,6 +598,22 @@ void RGWObjManifest::append(RGWObjManifest& m)
     objs[base + iter->first] = part;
   }
   obj_size += m.obj_size;
+}
+
+bool RGWObjManifest::get_policy(uint64_t ofs, RGWObjManifestPolicy *policy)
+{
+  if (policies.empty()) {
+    return false;
+  }
+
+  map<uint64_t, RGWObjManifestPolicy>::iterator iter = policies.upper_bound(ofs);
+  if (iter != policies.begin()) {
+    --iter;
+  }
+
+  *policy = iter->second;
+
+  return true;
 }
 
 void RGWObjVersionTracker::generate_new_write_ver(CephContext *cct)
@@ -741,20 +819,19 @@ int RGWPutObjProcessor_Atomic::prepare(RGWRados *store, void *obj_ctx)
 
   head_obj.init(bucket, obj_str);
 
-  char buf[33];
-  gen_rand_alphanumeric(store->ctx(), buf, sizeof(buf) - 1);
-  oid_prefix.append("_");
-  oid_prefix.append(buf);
-  oid_prefix.append("_");
+  int r = manifest_gen.create_begin(store->ctx(), &manifest, bucket, head_obj);
+  if (r < 0) {
+    return r;
+  }
 
   return 0;
 }
 
 int RGWPutObjProcessor_Atomic::prepare_next_part(off_t ofs) {
 
-  int ret = manifest_iter.create_next(ofs);
+  int ret = manifest_gen.create_next(ofs);
   if (ret < 0) {
-    derr << "ERROR: manifest_iter.create_next() returned ret=" << ret << dendl;
+    lderr(store->ctx()) << "ERROR: manifest_gen.create_next() returned ret=" << ret << dendl;
     return ret;
   }
 #warning FIXME
@@ -787,9 +864,7 @@ int RGWPutObjProcessor_Atomic::prepare_next_part(off_t ofs) {
   string cur_oid = oid_prefix;
   cur_oid.append(buf);
 #endif
-  cur_obj.init_ns(bucket, manifest_iter.get_obj_name(), shadow_ns);
-
-  add_obj(cur_obj);
+  add_obj(manifest_gen.get_cur_obj());
 
   return 0;
 };
@@ -2859,7 +2934,10 @@ set_err_state:
 
       ref_objs.push_back(loc);
     }
+#warning FIXME // is that needed?
+#if 0
     manifest.obj_size = total_len;
+#endif
 
     pmanifest = &manifest;
   } else {

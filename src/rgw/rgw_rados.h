@@ -161,12 +161,13 @@ protected:
   rgw_obj head_obj;
   uint64_t head_size;
 
+  uint64_t max_head_size;
   string prefix;
   map<uint64_t, RGWObjManifestPolicy> policies;
 
 public:
 
-  RGWObjManifest() : explicit_objs(false), obj_size(0), head_size(0) {}
+  RGWObjManifest() : explicit_objs(false), obj_size(0), head_size(0), max_head_size(0) {}
 
   void set_explicit(uint64_t _size, map<uint64_t, RGWObjManifestPart>& _objs) {
     explicit_objs = true;
@@ -174,8 +175,7 @@ public:
     objs.swap(_objs);
   }
 
-  void set_trivial_policy(uint64_t _head_size, uint64_t shard_max_size) {
-    head_size = head_size;
+  void set_trivial_policy(uint64_t shard_max_size) {
     RGWObjManifestPolicy policy(0, 0, shard_max_size, shard_max_size);
     policies[0] = policy;
   }
@@ -210,6 +210,10 @@ public:
   static void generate_test_instances(list<RGWObjManifest*>& o);
 
   void append(RGWObjManifest& m);
+  void append_obj(rgw_obj& obj, uint64_t size);
+  void clone_tail(RGWObjManifest& src);
+
+  bool get_policy(uint64_t ofs, RGWObjManifestPolicy *policy);
 
   bool empty() {
     if (explicit_objs)
@@ -228,8 +232,16 @@ public:
     head_obj = _o;
   }
 
+  void set_prefix(const string& _p) {
+    prefix = _p;
+  }
+
   void set_head_size(uint64_t _s) {
     head_size = _s;
+  }
+
+  void set_obj_size(uint64_t s) {
+    obj_size = s;
   }
 
   uint64_t get_obj_size() {
@@ -238,6 +250,10 @@ public:
 
   uint64_t get_head_size() {
     return head_size;
+  }
+
+  uint64_t get_max_head_size() {
+    return max_head_size;
   }
 
   class obj_iterator {
@@ -296,21 +312,30 @@ public:
   obj_iterator obj_end();
   obj_iterator obj_find(uint64_t ofs);
 
-  class create_iterator {
+  class generator {
     RGWObjManifest *manifest;
-    uint64_t ofs;
+    uint64_t last_ofs;
+    uint64_t cur_part_ofs;
+    int cur_part_id;
+    int cur_stripe;
+    string cur_oid;
+    
+    string oid_prefix;
 
-    string obj_name;
+    rgw_obj cur_obj;
+    rgw_bucket bucket;
+
+
+    RGWObjManifestPolicy policy;
 
   public:
-    create_iterator() : manifest(NULL) {}
+    generator() : last_ofs(0), cur_part_ofs(0), cur_part_id(0), cur_stripe(0) {}
+    int create_begin(CephContext *cct, RGWObjManifest *manifest, rgw_bucket& bucket, rgw_obj& head);
 
     int create_next(uint64_t ofs);
 
-    const string& get_obj_name() { return obj_name; }
+    const rgw_obj& get_cur_obj() { return cur_obj; }
   };
-
-  create_iterator create_begin();
 };
 WRITE_CLASS_ENCODER(RGWObjManifest);
 
@@ -359,7 +384,7 @@ protected:
 
   list<rgw_obj> objs;
 
-  void add_obj(rgw_obj& obj) {
+  void add_obj(const rgw_obj& obj) {
     objs.push_back(obj);
   }
 public:
@@ -441,11 +466,10 @@ protected:
 
   string unique_tag;
 
-  string oid_prefix;
   rgw_obj head_obj;
   rgw_obj cur_obj;
   RGWObjManifest manifest;
-  RGWObjManifest::create_iterator manifest_iter;
+  RGWObjManifest::generator manifest_gen;
 
   virtual bool immutable_head() { return false; }
 
