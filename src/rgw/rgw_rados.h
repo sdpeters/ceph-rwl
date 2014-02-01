@@ -119,14 +119,14 @@ struct RGWObjManifestPart {
 WRITE_CLASS_ENCODER(RGWObjManifestPart);
 
 
-struct RGWObjManifestPolicy {
+struct RGWObjManifestRule {
   uint32_t start_part_num;
   uint64_t start_ofs;
   uint64_t part_size; /* each part size, 0 if there's no part size, meaning it's unlimited */
   uint64_t stripe_max_size; /* underlying obj max size */
 
-  RGWObjManifestPolicy() : start_part_num(0), start_ofs(0), part_size(0), stripe_max_size(0) {}
-  RGWObjManifestPolicy(uint32_t _start_part_num, uint64_t _start_ofs, uint64_t _part_size, uint64_t _stripe_max_size) :
+  RGWObjManifestRule() : start_part_num(0), start_ofs(0), part_size(0), stripe_max_size(0) {}
+  RGWObjManifestRule(uint32_t _start_part_num, uint64_t _start_ofs, uint64_t _part_size, uint64_t _stripe_max_size) :
                        start_part_num(_start_part_num), start_ofs(_start_ofs), part_size(_part_size), stripe_max_size(_stripe_max_size) {}
 
   void get_obj_name(const string& prefix, uint64_t ofs, string *name);
@@ -148,8 +148,9 @@ struct RGWObjManifestPolicy {
     ::decode(stripe_max_size, bl);
     DECODE_FINISH(bl);
   }
+  void dump(Formatter *f) const;
 };
-WRITE_CLASS_ENCODER(RGWObjManifestPolicy);
+WRITE_CLASS_ENCODER(RGWObjManifestRule);
 
 class RGWObjManifest {
 protected:
@@ -163,7 +164,7 @@ protected:
 
   uint64_t max_head_size;
   string prefix;
-  map<uint64_t, RGWObjManifestPolicy> policies;
+  map<uint64_t, RGWObjManifestRule> rules;
 
 public:
 
@@ -175,9 +176,10 @@ public:
     objs.swap(_objs);
   }
 
-  void set_trivial_policy(uint64_t stripe_max_size) {
-    RGWObjManifestPolicy policy(0, 0, stripe_max_size, stripe_max_size);
-    policies[0] = policy;
+  void set_trivial_rule(uint64_t tail_ofs, uint64_t stripe_max_size) {
+    RGWObjManifestRule rule(0, tail_ofs, 0, stripe_max_size);
+    rules[0] = rule;
+    max_head_size = tail_ofs;
   }
 
   void encode(bufferlist& bl) const {
@@ -185,25 +187,29 @@ public:
     ::encode(obj_size, bl);
     ::encode(objs, bl);
     ::encode(explicit_objs, bl);
+    ::encode(head_obj, bl);
     ::encode(head_size, bl);
+    ::encode(max_head_size, bl);
     ::encode(prefix, bl);
-    ::encode(policies, bl);
+    ::encode(rules, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::iterator& bl) {
-     DECODE_START_LEGACY_COMPAT_LEN_32(3, 2, 2, bl);
-     ::decode(obj_size, bl);
-     ::decode(objs, bl);
-     if (struct_v >= 3) {
-       ::decode(explicit_objs, bl);
-       ::decode(head_size, bl);
-       ::decode(prefix, bl);
-       ::decode(policies, bl);
-     } else {
-       explicit_objs = true;
-     }
-     DECODE_FINISH(bl);
+    DECODE_START_LEGACY_COMPAT_LEN_32(3, 2, 2, bl);
+    ::decode(obj_size, bl);
+    ::decode(objs, bl);
+    if (struct_v >= 3) {
+      ::decode(explicit_objs, bl);
+      ::decode(head_obj, bl);
+      ::decode(head_size, bl);
+      ::decode(max_head_size, bl);
+      ::decode(prefix, bl);
+      ::decode(rules, bl);
+    } else {
+      explicit_objs = true;
+    }
+    DECODE_FINISH(bl);
   }
 
   void dump(Formatter *f) const;
@@ -213,12 +219,12 @@ public:
   void append_obj(rgw_obj& obj, uint64_t size);
   void clone_tail(RGWObjManifest& src);
 
-  bool get_policy(uint64_t ofs, RGWObjManifestPolicy *policy);
+  bool get_rule(uint64_t ofs, RGWObjManifestRule *rule);
 
   bool empty() {
     if (explicit_objs)
       return objs.empty();
-    return policies.empty();
+    return rules.empty();
   }
 
   bool has_tail() {
@@ -256,6 +262,10 @@ public:
     return head_size;
   }
 
+  void set_max_head_size(uint64_t s) {
+    max_head_size = s;
+  }
+
   uint64_t get_max_head_size() {
     return max_head_size;
   }
@@ -272,10 +282,10 @@ public:
 
     rgw_obj location;
 
-    map<uint64_t, RGWObjManifestPolicy>::iterator policy_iter;
-    map<uint64_t, RGWObjManifestPolicy>::iterator next_policy_iter;
+    map<uint64_t, RGWObjManifestRule>::iterator rule_iter;
+    map<uint64_t, RGWObjManifestRule>::iterator next_rule_iter;
 
-    bool last_policy;
+    bool last_rule;
 
     map<uint64_t, RGWObjManifestPart>::iterator explicit_iter;
 
@@ -354,7 +364,7 @@ public:
     rgw_bucket bucket;
 
 
-    RGWObjManifestPolicy policy;
+    RGWObjManifestRule rule;
 
   public:
     generator() : last_ofs(0), cur_part_ofs(0), cur_part_id(0), cur_stripe(0) {}
