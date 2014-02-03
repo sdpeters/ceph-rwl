@@ -246,6 +246,10 @@ public:
     prefix = _p;
   }
 
+  const string& get_prefix() {
+    return prefix;
+  }
+
   void set_head_size(uint64_t _s) {
     head_size = _s;
   }
@@ -321,26 +325,39 @@ public:
     const rgw_obj& get_location() {
       return location;
     }
+
+    /* start of current part */
     uint64_t get_start_ofs() {
       return start_ofs;
     }
-    uint64_t get_ofs() {
+
+    /* start of current stripe */
+    uint64_t get_stripe_ofs() {
       if (manifest->explicit_objs) {
         return explicit_iter->first;
       }
+      return stripe_ofs;
+    }
+
+    /* current ofs relative to start of rgw object */
+    uint64_t get_ofs() {
       return ofs;
     }
-    uint64_t get_size() {
+
+    /* current stripe size */
+    uint64_t get_stripe_size() {
       if (manifest->explicit_objs) {
         return explicit_iter->second.size;
       }
       return size;
     }
+
+    /* offset where data starts within current stripe */
     uint64_t location_ofs() {
       if (manifest->explicit_objs) {
         return explicit_iter->second.loc_ofs;
       }
-      return 0; /* all parts start at zero offset */
+      return 0; /* all stripes start at zero offset */
     }
 
     void update_location();
@@ -350,12 +367,16 @@ public:
   obj_iterator obj_end();
   obj_iterator obj_find(uint64_t ofs);
 
+  /*
+   * simple object generator. Using a simple single rule manifest.
+   */
   class generator {
     RGWObjManifest *manifest;
     uint64_t last_ofs;
     uint64_t cur_part_ofs;
     int cur_part_id;
     int cur_stripe;
+    uint64_t cur_stripe_size;
     string cur_oid;
     
     string oid_prefix;
@@ -367,12 +388,17 @@ public:
     RGWObjManifestRule rule;
 
   public:
-    generator() : last_ofs(0), cur_part_ofs(0), cur_part_id(0), cur_stripe(0) {}
+    generator() : last_ofs(0), cur_part_ofs(0), cur_part_id(0), cur_stripe(0), cur_stripe_size(0) {}
     int create_begin(CephContext *cct, RGWObjManifest *manifest, rgw_bucket& bucket, rgw_obj& head);
 
     int create_next(uint64_t ofs);
 
     const rgw_obj& get_cur_obj() { return cur_obj; }
+
+    /* total max size of current stripe (including head obj) */
+    uint64_t cur_stripe_max_size() {
+      return cur_stripe_size;
+    }
   };
 };
 WRITE_CLASS_ENCODER(RGWObjManifest);
