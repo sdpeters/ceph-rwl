@@ -170,6 +170,23 @@ public:
 
   RGWObjManifest() : explicit_objs(false), obj_size(0), head_size(0), max_head_size(0),
                      begin_iter(this), end_iter(this) {}
+  RGWObjManifest(const RGWObjManifest& rhs) {
+    explicit_objs = rhs.explicit_objs;
+    objs = rhs.objs;
+    obj_size = rhs.obj_size;
+    head_obj = rhs.head_obj;
+    head_size = rhs.head_size;
+    max_head_size = rhs.max_head_size;
+    prefix = rhs.prefix;
+    rules = rhs.rules;
+
+    begin_iter.set_manifest(this);
+    end_iter.set_manifest(this);
+
+    begin_iter.seek(rhs.begin_iter.get_ofs());
+    end_iter.seek(rhs.end_iter.get_ofs());
+  }
+
 
   void set_explicit(uint64_t _size, map<uint64_t, RGWObjManifestPart>& _objs) {
     explicit_objs = true;
@@ -303,6 +320,15 @@ public:
       cur_stripe = 0;
     }
 
+    void update_explicit_pos();
+
+
+  protected:
+
+    void set_manifest(RGWObjManifest *m) {
+      manifest = m;
+    }
+
   public:
     obj_iterator() : manifest(NULL) {
       init();
@@ -337,7 +363,7 @@ public:
     }
 
     /* current ofs relative to start of rgw object */
-    uint64_t get_ofs() {
+    uint64_t get_ofs() const {
       return ofs;
     }
 
@@ -358,6 +384,8 @@ public:
     }
 
     void update_location();
+
+    friend class RGWObjManifest;
   };
 
   const obj_iterator& obj_begin();

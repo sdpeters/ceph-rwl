@@ -527,6 +527,20 @@ void RGWObjVersionTracker::prepare_op_for_write(ObjectWriteOperation *op)
   }
 }
 
+void RGWObjManifest::obj_iterator::update_explicit_pos()
+{
+  ofs = explicit_iter->first;
+  stripe_ofs = ofs;
+
+  map<uint64_t, RGWObjManifestPart>::iterator next_iter = explicit_iter;
+  next_iter++;
+  if (next_iter != manifest->objs.end()) {
+    stripe_size = next_iter->first - ofs;
+  } else {
+    stripe_size = manifest->obj_size - ofs;
+  }
+}
+
 void RGWObjManifest::obj_iterator::seek(uint64_t o)
 {
   ofs = o;
@@ -535,6 +549,11 @@ void RGWObjManifest::obj_iterator::seek(uint64_t o)
     if (explicit_iter != manifest->objs.begin()) {
       explicit_iter--;
     }
+    if (ofs >= manifest->obj_size) {
+      ofs = manifest->obj_size;
+      return;
+    }
+    update_explicit_pos();
     update_location();
     return;
   }
@@ -625,6 +644,14 @@ void RGWObjManifest::obj_iterator::operator++()
 {
   if (manifest->explicit_objs) {
     explicit_iter++;
+
+    if (explicit_iter == manifest->objs.end()) {
+      ofs = manifest->obj_size;
+      return;
+    }
+
+    update_explicit_pos();
+
     update_location();
     return;
   }
@@ -692,6 +719,11 @@ void RGWObjManifest::obj_iterator::operator++()
   }
 
   ofs = stripe_ofs;
+  if (ofs > obj_size) {
+    ofs = obj_size;
+    stripe_ofs = ofs;
+    stripe_size = 0;
+  }
 
   update_location();
 }
@@ -3701,7 +3733,7 @@ int RGWRados::get_obj_state(RGWRadosCtx *rctx, rgw_obj& obj, RGWObjState **state
       return -EIO;
     }
     ldout(cct, 10) << "manifest: total_size = " << s->manifest.get_obj_size() << dendl;
-    if (cct->_conf->subsys.should_gather(ceph_subsys_rgw, 20)) {
+    if (cct->_conf->subsys.should_gather(ceph_subsys_rgw, 20) && manifest->explicit_objs) {
       RGWObjManifest::obj_iterator mi;
       for (mi = s->manifest.obj_begin(); mi != s->manifest.obj_end(); ++mi) {
         ldout(cct, 20) << "manifest: ofs=" << mi.get_ofs() << " loc=" << mi.get_location() << dendl;
