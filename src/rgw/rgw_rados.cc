@@ -535,12 +535,13 @@ void RGWObjManifest::obj_iterator::seek(uint64_t o)
     if (explicit_iter != manifest->objs.begin()) {
       explicit_iter--;
     }
+    update_location();
     return;
   }
   if (o < manifest->get_head_size()) {
-    start_ofs = 0;
+    part_ofs = 0;
     stripe_ofs = 0;
-    size = manifest->get_head_size();
+    stripe_size = manifest->get_head_size();
     update_location();
     return;
   }
@@ -558,21 +559,21 @@ void RGWObjManifest::obj_iterator::seek(uint64_t o)
   } else {
     cur_part_id = 1;
   }
-  start_ofs = rule.start_ofs;
+  part_ofs = rule.start_ofs;
 
   if (rule.stripe_max_size > 0) {
-    cur_stripe = (ofs - start_ofs) / rule.stripe_max_size + 1;
+    cur_stripe = (ofs - part_ofs) / rule.stripe_max_size + 1;
   } else {
     cur_stripe = 1;
   }
-  stripe_ofs = start_ofs + (cur_stripe - 1)* rule.stripe_max_size;
+  stripe_ofs = part_ofs + (cur_stripe - 1)* rule.stripe_max_size;
 
   if (!rule.part_size) {
-    size = rule.stripe_max_size;
-    size = MIN(manifest->get_obj_size() - stripe_ofs, size);
+    stripe_size = rule.stripe_max_size;
+    stripe_size = MIN(manifest->get_obj_size() - stripe_ofs, stripe_size);
   } else {
-    size = rule.part_size - (ofs - stripe_ofs);
-    size = MIN(size, rule.stripe_max_size);
+    stripe_size = rule.part_size - (ofs - stripe_ofs);
+    stripe_size = MIN(stripe_size, rule.stripe_max_size);
   }
 
   update_location();
@@ -629,6 +630,7 @@ void RGWObjManifest::obj_iterator::operator++()
   }
 
   uint64_t obj_size = manifest->get_obj_size();
+  uint64_t head_size = manifest->get_head_size();
 
   if (ofs == obj_size) {
     return;
@@ -638,13 +640,17 @@ void RGWObjManifest::obj_iterator::operator++()
     return;
   }
 
-  if (ofs < manifest->get_head_size()) {
+  /* are we still ponting at the head? */
+  if (ofs < head_size) {
     rule_iter = manifest->rules.begin();
     RGWObjManifestRule *rule = &rule_iter->second;
-    ofs = MIN(manifest->get_head_size(), manifest->get_obj_size());
+    ofs = MIN(head_size, obj_size);
     stripe_ofs = ofs;
     cur_stripe = 1;
-    size = MIN(obj_size - ofs, rule->stripe_max_size);
+    stripe_size = MIN(obj_size - ofs, rule->stripe_max_size);
+    if (rule->part_size > 0) {
+      stripe_size = MIN(stripe_size, rule->part_size);
+    }
     update_location();
     return;
   }
@@ -654,17 +660,16 @@ void RGWObjManifest::obj_iterator::operator++()
   if (!rule->part_size) {
     /* single part, multiple stripes */
     stripe_ofs += rule->stripe_max_size;
-    ofs = stripe_ofs;
     cur_stripe++;
   } else {
     /* multi part, multi stripes object */
 
     stripe_ofs += rule->stripe_max_size;
-    ofs = stripe_ofs;
 
-    if (stripe_ofs - start_ofs == rule->part_size) {
+    if (stripe_ofs - part_ofs >= rule->part_size) {
       /* moved to the next part */
-      start_ofs = stripe_ofs;
+      part_ofs += rule->part_size;
+      stripe_ofs = part_ofs;
       cur_stripe = 0;
 
       /* update iterators */
@@ -681,13 +686,10 @@ void RGWObjManifest::obj_iterator::operator++()
       cur_stripe++;
     }
 
-    size = rule->part_size - (ofs - start_ofs);
-    size = MIN(size, rule->stripe_max_size);
+    stripe_size = MIN(rule->part_size - (stripe_ofs - part_ofs), rule->stripe_max_size);
   }
 
-  if (ofs > obj_size) {
-    ofs = obj_size;
-  }
+  ofs = stripe_ofs;
 
   update_location();
 }

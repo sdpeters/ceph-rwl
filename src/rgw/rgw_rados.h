@@ -276,10 +276,10 @@ public:
 
   class obj_iterator {
     RGWObjManifest *manifest;
-    uint64_t start_ofs; /* where current part starts in the object */
+    uint64_t part_ofs; /* where current part starts in the object */
     uint64_t stripe_ofs; /* where current stripe starts */
     uint64_t ofs;       /* current position within the object */
-    uint64_t size;      /* current part size */
+    uint64_t stripe_size;      /* current part size */
 
     int cur_part_id;
     int cur_stripe;
@@ -294,9 +294,9 @@ public:
     map<uint64_t, RGWObjManifestPart>::iterator explicit_iter;
 
     void init() {
-      start_ofs = 0;
+      part_ofs = 0;
       stripe_ofs = 0;
-      size = 0;
+      stripe_size = 0;
       cur_part_id = 0;
       cur_stripe = 0;
     }
@@ -327,8 +327,8 @@ public:
     }
 
     /* start of current part */
-    uint64_t get_start_ofs() {
-      return start_ofs;
+    uint64_t get_part_start_ofs() {
+      return part_ofs;
     }
 
     /* start of current stripe */
@@ -349,7 +349,7 @@ public:
       if (manifest->explicit_objs) {
         return explicit_iter->second.size;
       }
-      return size;
+      return stripe_size;
     }
 
     /* offset where data starts within current stripe */

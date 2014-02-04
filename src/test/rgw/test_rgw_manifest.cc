@@ -129,7 +129,7 @@ TEST(TestRGWManifest, head_only_obj) {
 
   iter = manifest.obj_find(100 * 1024);
   ASSERT_TRUE(iter.get_location() == head);
-  ASSERT_EQ((int)iter.get_start_ofs(), 0);
+  ASSERT_EQ((int)iter.get_part_start_ofs(), 0);
   ASSERT_EQ((int)iter.get_stripe_size(), obj_size);
 }
 
@@ -165,7 +165,7 @@ TEST(TestRGWManifest, obj_with_head_and_tail) {
 
   iter = manifest.obj_find(100 * 1024);
   ASSERT_TRUE(iter.get_location() == head);
-  ASSERT_EQ((int)iter.get_start_ofs(), 0);
+  ASSERT_EQ((int)iter.get_part_start_ofs(), 0);
   ASSERT_EQ((int)iter.get_stripe_size(), head_size);
 
   uint64_t ofs = 20 * 1024 * 1024 + head_size;
