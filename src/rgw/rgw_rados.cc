@@ -539,7 +539,7 @@ void RGWObjManifest::obj_iterator::seek(uint64_t o)
     return;
   }
   if (o < manifest->get_head_size()) {
-    part_ofs = 0;
+    rule_iter = manifest->rules.begin();
     stripe_ofs = 0;
     stripe_size = manifest->get_head_size();
     update_location();
@@ -559,7 +559,7 @@ void RGWObjManifest::obj_iterator::seek(uint64_t o)
   } else {
     cur_part_id = 1;
   }
-  part_ofs = rule.start_ofs;
+  uint64_t part_ofs = rule.start_ofs;
 
   if (rule.stripe_max_size > 0) {
     cur_stripe = (ofs - part_ofs) / rule.stripe_max_size + 1;
@@ -664,6 +664,8 @@ void RGWObjManifest::obj_iterator::operator++()
   } else {
     /* multi part, multi stripes object */
 
+    uint64_t part_ofs = rule->start_ofs;
+
     stripe_ofs += rule->stripe_max_size;
 
     if (stripe_ofs - part_ofs >= rule->part_size) {
@@ -674,7 +676,7 @@ void RGWObjManifest::obj_iterator::operator++()
 
       /* update iterators */
       rule_iter = next_rule_iter;
-      last_rule = (next_rule_iter == manifest->rules.end());
+      bool last_rule = (next_rule_iter == manifest->rules.end());
       if (!last_rule) {
         next_rule_iter++;
       }
@@ -757,18 +759,14 @@ int RGWObjManifest::generator::create_next(uint64_t ofs)
   return 0;
 }
 
-RGWObjManifest::obj_iterator RGWObjManifest::obj_begin()
+const RGWObjManifest::obj_iterator& RGWObjManifest::obj_begin()
 {
-  RGWObjManifest::obj_iterator iter(this);
-  iter.seek(0);
-  return iter;
+  return begin_iter;
 }
 
-RGWObjManifest::obj_iterator RGWObjManifest::obj_end()
+const RGWObjManifest::obj_iterator& RGWObjManifest::obj_end()
 {
-  RGWObjManifest::obj_iterator iter(this);
-  iter.seek(obj_size);
-  return iter;
+  return end_iter;
 }
 
 RGWObjManifest::obj_iterator RGWObjManifest::obj_find(uint64_t ofs)

@@ -168,7 +168,8 @@ protected:
 
 public:
 
-  RGWObjManifest() : explicit_objs(false), obj_size(0), head_size(0), max_head_size(0) {}
+  RGWObjManifest() : explicit_objs(false), obj_size(0), head_size(0), max_head_size(0),
+                     begin_iter(this), end_iter(this) {}
 
   void set_explicit(uint64_t _size, map<uint64_t, RGWObjManifestPart>& _objs) {
     explicit_objs = true;
@@ -209,6 +210,9 @@ public:
     } else {
       explicit_objs = true;
     }
+
+    begin_iter.seek(0);
+    end_iter.seek(obj_size);
     DECODE_FINISH(bl);
   }
 
@@ -256,6 +260,8 @@ public:
 
   void set_obj_size(uint64_t s) {
     obj_size = s;
+
+    end_iter.seek(obj_size);
   }
 
   uint64_t get_obj_size() {
@@ -276,7 +282,6 @@ public:
 
   class obj_iterator {
     RGWObjManifest *manifest;
-    uint64_t part_ofs; /* where current part starts in the object */
     uint64_t stripe_ofs; /* where current stripe starts */
     uint64_t ofs;       /* current position within the object */
     uint64_t stripe_size;      /* current part size */
@@ -289,12 +294,9 @@ public:
     map<uint64_t, RGWObjManifestRule>::iterator rule_iter;
     map<uint64_t, RGWObjManifestRule>::iterator next_rule_iter;
 
-    bool last_rule;
-
     map<uint64_t, RGWObjManifestPart>::iterator explicit_iter;
 
     void init() {
-      part_ofs = 0;
       stripe_ofs = 0;
       stripe_size = 0;
       cur_part_id = 0;
@@ -324,11 +326,6 @@ public:
     }
     const rgw_obj& get_location() {
       return location;
-    }
-
-    /* start of current part */
-    uint64_t get_part_start_ofs() {
-      return part_ofs;
     }
 
     /* start of current stripe */
@@ -363,9 +360,12 @@ public:
     void update_location();
   };
 
-  obj_iterator obj_begin();
-  obj_iterator obj_end();
+  const obj_iterator& obj_begin();
+  const obj_iterator& obj_end();
   obj_iterator obj_find(uint64_t ofs);
+
+  obj_iterator begin_iter;
+  obj_iterator end_iter;
 
   /*
    * simple object generator. Using a simple single rule manifest.
