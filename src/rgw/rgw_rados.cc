@@ -617,7 +617,7 @@ void RGWObjManifest::obj_iterator::update_location()
 
   rgw_bucket bucket = head.bucket;
 
-  location = rgw_obj(bucket, oid, ns);
+  location.init_ns(bucket, oid, ns);
 }
 
 void RGWObjManifest::obj_iterator::operator++()
@@ -628,11 +628,23 @@ void RGWObjManifest::obj_iterator::operator++()
     return;
   }
 
+  uint64_t obj_size = manifest->get_obj_size();
+
+  if (ofs == obj_size) {
+    return;
+  }
+
+  if (manifest->rules.empty()) {
+    return;
+  }
+
   if (ofs < manifest->get_head_size()) {
     rule_iter = manifest->rules.begin();
+    RGWObjManifestRule *rule = &rule_iter->second;
     ofs = MIN(manifest->get_head_size(), manifest->get_obj_size());
     stripe_ofs = ofs;
     cur_stripe = 1;
+    size = MIN(obj_size - ofs, rule->stripe_max_size);
     update_location();
     return;
   }
@@ -673,8 +685,8 @@ void RGWObjManifest::obj_iterator::operator++()
     size = MIN(size, rule->stripe_max_size);
   }
 
-  if (ofs > manifest->get_obj_size()) {
-    ofs = manifest->get_obj_size();
+  if (ofs > obj_size) {
+    ofs = obj_size;
   }
 
   update_location();
@@ -724,7 +736,9 @@ int RGWObjManifest::generator::create_next(uint64_t ofs)
 
   if (ofs <= manifest->get_max_head_size()) {
     manifest->set_head_size(ofs);
-  } else {
+  }
+
+  if (ofs >= manifest->get_max_head_size()) {
     manifest->set_head_size(manifest->get_max_head_size());
     cur_stripe = (ofs - manifest->get_max_head_size()) / rule.stripe_max_size + 1;
     cur_stripe_size =  rule.stripe_max_size;
@@ -736,7 +750,7 @@ int RGWObjManifest::generator::create_next(uint64_t ofs)
   char buf[16];
   snprintf(buf, sizeof(buf), "%d", cur_stripe);
   string oid = manifest->prefix + buf;
-  cur_obj = rgw_obj(bucket, oid, shadow_ns);
+  cur_obj.init_ns(bucket, oid, shadow_ns);
 
   return 0;
 }
@@ -1022,6 +1036,9 @@ int RGWPutObjProcessor_Atomic::prepare_next_part(off_t ofs) {
     lderr(store->ctx()) << "ERROR: manifest_gen.create_next() returned ret=" << ret << dendl;
     return ret;
   }
+  cur_part_ofs = ofs;
+  next_part_ofs = ofs + manifest_gen.cur_stripe_max_size();
+  cur_obj = manifest_gen.get_cur_obj();
 #warning FIXME
 #if 0
   int num_parts = manifest.objs.size();
@@ -1052,7 +1069,7 @@ int RGWPutObjProcessor_Atomic::prepare_next_part(off_t ofs) {
   string cur_oid = oid_prefix;
   cur_oid.append(buf);
 #endif
-  add_obj(manifest_gen.get_cur_obj());
+  add_obj(cur_obj);
 
   return 0;
 };
@@ -4859,7 +4876,9 @@ int RGWRados::iterate_obj(void *ctx, rgw_obj& obj,
     /* now get the relevant object stripe */
     RGWObjManifest::obj_iterator iter = astate->manifest.obj_find(ofs);
 
-    for (; iter != astate->manifest.obj_end() && ofs <= end; ++iter) {
+    RGWObjManifest::obj_iterator obj_end = astate->manifest.obj_end();
+
+    for (; iter != obj_end && ofs <= end; ++iter) {
       off_t stripe_ofs = iter.get_stripe_ofs();
       off_t next_stripe_ofs = stripe_ofs + iter.get_stripe_size();
 
