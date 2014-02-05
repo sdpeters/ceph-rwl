@@ -50,7 +50,8 @@ void append_stripes(list<rgw_obj> *objs, RGWObjManifest& manifest, uint64_t obj_
     snprintf(buf, sizeof(buf), "%d", ++i);
     string oid = prefix + buf;
   cout << "oid=" << oid << std::endl;
-    rgw_obj obj(bucket, oid);
+    rgw_obj obj;
+    obj.init_ns(bucket, oid, "shadow");
     objs->push_back(obj);
   }
 }
@@ -67,10 +68,10 @@ static void gen_obj(uint64_t obj_size, uint64_t head_max_size, uint64_t stripe_s
   gen->create_begin(g_ceph_context, manifest, *bucket, *head);
 
   append_head(test_objs, *head);
-cout << "test_objs.size()=" << test_objs->size() << std::endl;
+  cout << "test_objs.size()=" << test_objs->size() << std::endl;
   append_stripes(test_objs, *manifest, obj_size, stripe_size);
 
-cout << "test_objs.size()=" << test_objs->size() << std::endl;
+  cout << "test_objs.size()=" << test_objs->size() << std::endl;
 
   ASSERT_EQ((int)manifest->get_obj_size(), 0);
   ASSERT_EQ((int)manifest->get_head_size(), 0);
@@ -86,8 +87,8 @@ cout << "test_objs.size()=" << test_objs->size() << std::endl;
     ofs = MIN(ofs + gen->cur_stripe_max_size(), obj_size);
     gen->create_next(ofs);
 
-cout << "obj=" << obj << " *iter=" << *iter << std::endl;
-cout << "test_objs.size()=" << test_objs->size() << std::endl;
+  cout << "obj=" << obj << " *iter=" << *iter << std::endl;
+  cout << "test_objs.size()=" << test_objs->size() << std::endl;
     ++iter;
 
   }
@@ -115,6 +116,8 @@ TEST(TestRGWManifest, head_only_obj) {
 
   gen_obj(obj_size, 512 * 1024, 4 * 1024 * 1024, &manifest, &bucket, &head, &gen, &objs);
 
+  cout <<  " manifest.get_obj_size()=" << manifest.get_obj_size() << std::endl;
+  cout <<  " manifest.get_head_size()=" << manifest.get_head_size() << std::endl;
   list<rgw_obj>::iterator liter;
 
   RGWObjManifest::obj_iterator iter;
@@ -129,7 +132,6 @@ TEST(TestRGWManifest, head_only_obj) {
 
   iter = manifest.obj_find(100 * 1024);
   ASSERT_TRUE(iter.get_location() == head);
-  ASSERT_EQ((int)iter.get_part_start_ofs(), 0);
   ASSERT_EQ((int)iter.get_stripe_size(), obj_size);
 }
 
@@ -165,7 +167,6 @@ TEST(TestRGWManifest, obj_with_head_and_tail) {
 
   iter = manifest.obj_find(100 * 1024);
   ASSERT_TRUE(iter.get_location() == head);
-  ASSERT_EQ((int)iter.get_part_start_ofs(), 0);
   ASSERT_EQ((int)iter.get_stripe_size(), head_size);
 
   uint64_t ofs = 20 * 1024 * 1024 + head_size;
