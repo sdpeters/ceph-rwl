@@ -1363,6 +1363,15 @@ int RGWPutObjProcessor_Multipart::prepare(RGWRados *store, void *obj_ctx)
 
   part_num = s->info.args.get("partNumber");
   if (part_num.empty()) {
+    ldout(s->cct, 10) << "part number is empty" << dendl;
+    return -EINVAL;
+  }
+
+  string err;
+  uint64_t num = (uint64_t)strict_strtol(part_num.c_str(), 10, &err);
+
+  if (!err.empty()) {
+    ldout(s->cct, 10) << "bad part number: " << part_num << ": " << err << dendl;
     return -EINVAL;
   }
 
@@ -1373,6 +1382,10 @@ int RGWPutObjProcessor_Multipart::prepare(RGWRados *store, void *obj_ctx)
   oid_prefix.append("_");
   cur_obj = head_obj;
   add_obj(head_obj);
+
+  manifest.set_prefix(upload_id);
+
+  manifest.set_multipart_part_rule(store->ctx()->_conf->rgw_obj_stripe_size, num);
 
   int r = manifest_gen.create_begin(store->ctx(), &manifest, bucket, head_obj);
   if (r < 0) {

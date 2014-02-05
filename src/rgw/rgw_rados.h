@@ -166,6 +166,14 @@ protected:
   string prefix;
   map<uint64_t, RGWObjManifestRule> rules;
 
+  void convert_to_explicit();
+  int append_explicit(RGWObjManifest& m);
+  void append_rules(RGWObjManifest& m, map<uint64_t, RGWObjManifestRule>::iterator& iter);
+
+  void update_iterators() {
+    begin_iter.seek(0);
+    end_iter.seek(obj_size);
+  }
 public:
 
   RGWObjManifest() : explicit_objs(false), obj_size(0), head_size(0), max_head_size(0),
@@ -200,6 +208,13 @@ public:
     max_head_size = tail_ofs;
   }
 
+  void set_multipart_part_rule(uint64_t stripe_max_size, uint64_t part_num) {
+    RGWObjManifestRule rule(0, 0, 0, stripe_max_size);
+    rule.start_part_num = part_num;
+    rules[0] = rule;
+    max_head_size = 0;
+  }
+
   void encode(bufferlist& bl) const {
     ENCODE_START(3, 3, bl);
     ::encode(obj_size, bl);
@@ -228,17 +243,15 @@ public:
       explicit_objs = true;
     }
 
-    begin_iter.seek(0);
-    end_iter.seek(obj_size);
+    update_iterators();
     DECODE_FINISH(bl);
   }
 
   void dump(Formatter *f) const;
   static void generate_test_instances(list<RGWObjManifest*>& o);
 
-  void append(RGWObjManifest& m);
-  void append_obj(rgw_obj& obj, uint64_t size);
-  void clone_tail(RGWObjManifest& src);
+  int append(RGWObjManifest& m);
+  int append_obj(rgw_obj& obj, uint64_t size);
 
   bool get_rule(uint64_t ofs, RGWObjManifestRule *rule);
 
@@ -246,6 +259,10 @@ public:
     if (explicit_objs)
       return objs.empty();
     return rules.empty();
+  }
+
+  bool has_explicit_objs() {
+    return explicit_objs;
   }
 
   bool has_tail() {

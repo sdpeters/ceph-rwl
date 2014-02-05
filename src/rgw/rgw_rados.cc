@@ -788,6 +788,8 @@ int RGWObjManifest::generator::create_next(uint64_t ofs)
   string oid = manifest->prefix + buf;
   cur_obj.init_ns(bucket, oid, shadow_ns);
 
+  manifest->update_iterators();
+
   return 0;
 }
 
@@ -811,8 +813,98 @@ RGWObjManifest::obj_iterator RGWObjManifest::obj_find(uint64_t ofs)
   return iter;
 }
 
-void RGWObjManifest::append(RGWObjManifest& m)
+int RGWObjManifest::append(RGWObjManifest& m)
 {
+  if (explicit_objs || m.explicit_objs) {
+    return append_explicit(m);
+  }
+
+  if (rules.empty()) {
+    *this = m;
+    return 0;
+  }
+
+  if (prefix.empty()) {
+    prefix = m.prefix;
+  } else if (prefix != m.prefix) {
+    return append_explicit(m);
+  }
+
+  map<uint64_t, RGWObjManifestRule>::iterator miter = m.rules.begin();
+  if (miter == m.rules. end()) {
+    return append_explicit(m);
+  }
+
+  for (; miter != m.rules.end(); ++miter) {
+    map<uint64_t, RGWObjManifestRule>::reverse_iterator last_rule = rules.rbegin();
+
+    RGWObjManifestRule& rule = last_rule->second;
+
+    if (rule.part_size == 0) {
+      rule.part_size = obj_size - rule.start_ofs;
+    }
+
+    RGWObjManifestRule& next_rule = miter->second;
+    if (!next_rule.part_size) {
+      next_rule.part_size = m.obj_size - next_rule.start_ofs;
+    }
+
+    if (rule.part_size != next_rule.part_size ||
+        rule.stripe_max_size != next_rule.stripe_max_size) {
+      append_rules(m, miter);
+      break;
+    }
+
+    uint64_t expected_part_num = rule.start_part_num + 1;
+    if (rule.part_size > 0) {
+      expected_part_num = rule.start_part_num + (obj_size + next_rule.start_ofs - rule.start_ofs) / rule.part_size;
+    }
+
+    if (expected_part_num != next_rule.start_part_num) {
+      append_rules(m, miter);
+      break;
+    }
+  }
+
+  obj_size += m.obj_size;
+
+  return 0;
+}
+
+void RGWObjManifest::append_rules(RGWObjManifest& m, map<uint64_t, RGWObjManifestRule>::iterator& miter)
+{
+  for (; miter != m.rules.end(); ++miter) {
+    rules[obj_size + miter->second.start_ofs] = miter->second;
+  }
+}
+
+void RGWObjManifest::convert_to_explicit()
+{
+  if (explicit_objs) {
+    return;
+  }
+  obj_iterator iter;
+
+  for (iter = obj_begin(); iter != obj_end(); ++iter) {
+    RGWObjManifestPart& part = objs[iter.get_stripe_ofs()];
+    part.loc = iter.get_location();
+    part.loc_ofs = 0;
+    part.size = iter.get_stripe_size();
+  }
+
+  explicit_objs = true;
+  rules.clear();
+  prefix.clear();
+}
+
+int RGWObjManifest::append_explicit(RGWObjManifest& m)
+{
+  if (!explicit_objs) {
+    convert_to_explicit();
+  }
+  if (!m.explicit_objs) {
+    m.convert_to_explicit();
+  }
   map<uint64_t, RGWObjManifestPart>::iterator iter;
   uint64_t base = obj_size;
   for (iter = m.objs.begin(); iter != m.objs.end(); ++iter) {
@@ -820,16 +912,14 @@ void RGWObjManifest::append(RGWObjManifest& m)
     objs[base + iter->first] = part;
   }
   obj_size += m.obj_size;
+
+  return 0;
 }
 
-void RGWObjManifest::append_obj(rgw_obj& obj, uint64_t size)
+int RGWObjManifest::append_obj(rgw_obj& obj, uint64_t size)
 {
 #warning FIXME
-}
-
-void RGWObjManifest::clone_tail(RGWObjManifest& src)
-{
-#warning FIXME
+  return -EIO;
 }
 
 bool RGWObjManifest::get_rule(uint64_t ofs, RGWObjManifestRule *rule)
@@ -1071,36 +1161,6 @@ int RGWPutObjProcessor_Atomic::prepare_next_part(off_t ofs) {
   cur_part_ofs = ofs;
   next_part_ofs = ofs + manifest_gen.cur_stripe_max_size();
   cur_obj = manifest_gen.get_cur_obj();
-#warning FIXME
-#if 0
-  int num_parts = manifest.objs.size();
-  RGWObjManifestPart *part;
-
-  /* first update manifest for written data */
-  if (!num_parts) {
-    part = &manifest.objs[cur_part_ofs];
-    part->loc = head_obj;
-  } else {
-    part = &manifest.objs[cur_part_ofs];
-    part->loc = cur_obj;
-  }
-  part->loc_ofs = 0;
-  part->size = ofs - cur_part_ofs;
-
-  if ((uint64_t)ofs > manifest.obj_size)
-    manifest.obj_size = ofs;
-
-  /* now update params for next part */
-
-  cur_part_ofs = ofs;
-  next_part_ofs = cur_part_ofs + part_size;
-  char buf[16];
-
-  cur_part_id++;
-  snprintf(buf, sizeof(buf), "%d", cur_part_id);
-  string cur_oid = oid_prefix;
-  cur_oid.append(buf);
-#endif
   add_obj(cur_obj);
 
   return 0;
@@ -3157,7 +3217,7 @@ set_err_state:
   }
 
   if (!copy_itself) {
-    manifest.clone_tail(astate->manifest);
+    manifest = astate->manifest;
     for (; miter != astate->manifest.obj_end(); ++miter) {
       ObjectWriteOperation op;
       cls_refcount_get(op, tag, true);
@@ -3171,10 +3231,6 @@ set_err_state:
 
       ref_objs.push_back(loc);
     }
-#warning FIXME // is that needed?
-#if 0
-    manifest.obj_size = total_len;
-#endif
 
     pmanifest = &manifest;
   } else {
@@ -3733,7 +3789,7 @@ int RGWRados::get_obj_state(RGWRadosCtx *rctx, rgw_obj& obj, RGWObjState **state
       return -EIO;
     }
     ldout(cct, 10) << "manifest: total_size = " << s->manifest.get_obj_size() << dendl;
-    if (cct->_conf->subsys.should_gather(ceph_subsys_rgw, 20) && manifest->explicit_objs) {
+    if (cct->_conf->subsys.should_gather(ceph_subsys_rgw, 20) && s->manifest.has_explicit_objs()) {
       RGWObjManifest::obj_iterator mi;
       for (mi = s->manifest.obj_begin(); mi != s->manifest.obj_end(); ++mi) {
         ldout(cct, 20) << "manifest: ofs=" << mi.get_ofs() << " loc=" << mi.get_location() << dendl;
