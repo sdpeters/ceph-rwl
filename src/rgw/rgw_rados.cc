@@ -561,6 +561,7 @@ void RGWObjManifest::obj_iterator::seek(uint64_t o)
     rule_iter = manifest->rules.begin();
     stripe_ofs = 0;
     stripe_size = manifest->get_head_size();
+    cur_part_id = rule_iter->second.start_part_num;
     update_location();
     return;
   }
@@ -573,19 +574,24 @@ void RGWObjManifest::obj_iterator::seek(uint64_t o)
 
   RGWObjManifestRule& rule = rule_iter->second;
 
-  if (rule.part_size > 0) {
+  if (rule.start_part_num > 0) {
     cur_part_id = rule.start_part_num;
   } else {
-    cur_part_id = 1;
+    cur_part_id = 0;
   }
   uint64_t part_ofs = rule.start_ofs;
 
   if (rule.stripe_max_size > 0) {
-    cur_stripe = (ofs - part_ofs) / rule.stripe_max_size + 1;
+    cur_stripe = (ofs - part_ofs) / rule.stripe_max_size;
+
+    stripe_ofs = part_ofs + cur_stripe * rule.stripe_max_size;
+    if (!cur_part_id && manifest->get_head_size() > 0) {
+      cur_stripe++;
+    }
   } else {
-    cur_stripe = 1;
+    cur_stripe = 0;
+    stripe_ofs = part_ofs;
   }
-  stripe_ofs = part_ofs + (cur_stripe - 1)* rule.stripe_max_size;
 
   if (!rule.part_size) {
     stripe_size = rule.stripe_max_size;
@@ -605,7 +611,6 @@ void RGWObjManifest::obj_iterator::update_location()
     return;
   }
 
-  string oid = manifest->prefix;
   const rgw_obj& head = manifest->get_head();
 
   if (ofs < manifest->get_head_size()) {
@@ -613,31 +618,7 @@ void RGWObjManifest::obj_iterator::update_location()
     return;
   }
 
-  RGWObjManifestRule& rule = rule_iter->second;
-
-  string ns;
-
-  if (!rule.part_size) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", cur_stripe);
-    oid += buf;
-    ns = shadow_ns;
-  } else {
-    char buf[32];
-    if (!cur_stripe) {
-      snprintf(buf, sizeof(buf), "%d", cur_part_id);
-      oid += buf;
-      ns= RGW_OBJ_NS_MULTIPART;
-    } else {
-      snprintf(buf, sizeof(buf), "%d_%d", cur_part_id, cur_stripe);
-      oid += buf;
-      ns = shadow_ns;
-    }
-  }
-
-  rgw_bucket bucket = head.bucket;
-
-  location.init_ns(bucket, oid, ns);
+  manifest->get_implicit_location(cur_part_id, cur_stripe, &location);
 }
 
 void RGWObjManifest::obj_iterator::operator++()
@@ -738,11 +719,14 @@ int RGWObjManifest::generator::create_begin(CephContext *cct, RGWObjManifest *_m
 
   char buf[33];
   gen_rand_alphanumeric(cct, buf, sizeof(buf) - 1);
-  string oid_prefix = "_";
-  oid_prefix.append(buf);
-  oid_prefix.append("_");
 
-  manifest->set_prefix(oid_prefix);
+  if (manifest->get_prefix().empty()) {
+    string oid_prefix = "_";
+    oid_prefix.append(buf);
+    oid_prefix.append("_");
+
+    manifest->set_prefix(oid_prefix);
+  }
 
   bool found = manifest->get_rule(0, &rule);
   if (!found) {
@@ -759,6 +743,8 @@ int RGWObjManifest::generator::create_begin(CephContext *cct, RGWObjManifest *_m
   } else {
     cur_stripe_size = rule.stripe_max_size;
   }
+  
+  cur_part_id = rule.start_part_num;
 
   return 0;
 }
@@ -770,23 +756,27 @@ int RGWObjManifest::generator::create_next(uint64_t ofs)
 
   string obj_name = manifest->prefix;
 
-  if (ofs <= manifest->get_max_head_size()) {
+  uint64_t max_head_size = manifest->get_max_head_size();
+
+  if (ofs <= max_head_size) {
     manifest->set_head_size(ofs);
   }
 
-  if (ofs >= manifest->get_max_head_size()) {
-    manifest->set_head_size(manifest->get_max_head_size());
-    cur_stripe = (ofs - manifest->get_max_head_size()) / rule.stripe_max_size + 1;
+  if (ofs >= max_head_size) {
+    manifest->set_head_size(max_head_size);
+    cur_stripe = (ofs - max_head_size) / rule.stripe_max_size;
     cur_stripe_size =  rule.stripe_max_size;
+
+    if (cur_part_id == 0 && max_head_size > 0) {
+      cur_stripe++;
+    }
   }
 
   last_ofs = ofs;
   manifest->set_obj_size(ofs);
 
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%d", cur_stripe);
-  string oid = manifest->prefix + buf;
-  cur_obj.init_ns(bucket, oid, shadow_ns);
+
+  manifest->get_implicit_location(cur_part_id, cur_stripe, &cur_obj);
 
   manifest->update_iterators();
 
@@ -801,6 +791,34 @@ const RGWObjManifest::obj_iterator& RGWObjManifest::obj_begin()
 const RGWObjManifest::obj_iterator& RGWObjManifest::obj_end()
 {
   return end_iter;
+}
+
+void RGWObjManifest::get_implicit_location(uint64_t cur_part_id, uint64_t cur_stripe, rgw_obj *location)
+{
+  string oid = prefix;
+  string ns;
+
+  if (!cur_part_id) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", (int)cur_stripe);
+    oid += buf;
+    ns = shadow_ns;
+  } else {
+    char buf[32];
+    if (cur_stripe == 0) {
+      snprintf(buf, sizeof(buf), ".%d", (int)cur_part_id);
+      oid += buf;
+      ns= RGW_OBJ_NS_MULTIPART;
+    } else {
+      snprintf(buf, sizeof(buf), ".%d_%d", (int)cur_part_id, (int)cur_stripe);
+      oid += buf;
+      ns = shadow_ns;
+    }
+  }
+
+  rgw_bucket bucket = head_obj.bucket;
+
+  location->init_ns(bucket, oid, ns);
 }
 
 RGWObjManifest::obj_iterator RGWObjManifest::obj_find(uint64_t ofs)

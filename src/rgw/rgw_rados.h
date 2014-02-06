@@ -202,6 +202,8 @@ public:
     objs.swap(_objs);
   }
 
+  void get_implicit_location(uint64_t cur_part_id, uint64_t cur_stripe, rgw_obj *location);
+
   void set_trivial_rule(uint64_t tail_ofs, uint64_t stripe_max_size) {
     RGWObjManifestRule rule(0, tail_ofs, 0, stripe_max_size);
     rules[0] = rule;
