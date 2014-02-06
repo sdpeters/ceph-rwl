@@ -157,6 +157,7 @@ TEST(TestRGWManifest, obj_with_head_and_tail) {
   for (iter = manifest.obj_begin(), liter = objs.begin();
        iter != manifest.obj_end() && liter != objs.end();
        ++iter, ++liter) {
+    cout << "*liter=" << *liter << " iter.get_location()=" << iter.get_location() << std::endl;
     ASSERT_TRUE(*liter == iter.get_location());
 
     last_obj = iter.get_location();
@@ -175,5 +176,56 @@ TEST(TestRGWManifest, obj_with_head_and_tail) {
   ASSERT_TRUE(iter.get_location() == last_obj);
   ASSERT_EQ(iter.get_stripe_ofs(), ofs);
   ASSERT_EQ(iter.get_stripe_size(), obj_size - ofs);
+}
+
+TEST(TestRGWManifest, multipart) {
+  int num_parts = 16;
+  RGWObjManifest pm[num_parts];
+  rgw_bucket bucket;
+  uint64_t part_size = 10 * 1024 * 1024;
+  uint64_t stripe_size = 4 * 1024 * 1024;
+
+  string upload_id = "abc123";
+
+  for (int i = 0; i < num_parts; ++i) {
+    RGWObjManifest& manifest = pm[i];
+    RGWObjManifest::generator gen;
+    manifest.set_prefix(upload_id);
+
+    manifest.set_multipart_part_rule(stripe_size, i + 1);
+
+    rgw_obj head;
+    int r = gen.create_begin(g_ceph_context, &manifest, bucket, head);
+    ASSERT_EQ(r, 0);
+
+    uint64_t ofs;
+
+    for (ofs = 0; ofs < part_size; ofs += stripe_size) {
+      cout << "gen> " << gen.get_cur_obj() << std::endl;
+      gen.create_next(ofs);
+    }
+
+    if (ofs > part_size) {
+      cout << "gen> " << gen.get_cur_obj() << std::endl;
+      gen.create_next(part_size);
+    }
+
+    RGWObjManifest::obj_iterator iter;
+    for (iter = manifest.obj_begin(); iter != manifest.obj_end(); ++iter) {
+      cout << "obj=" << iter.get_location() << " ofs=" << iter.get_stripe_ofs() << std::endl;
+    }
+  }
+
+  RGWObjManifest m;
+
+  for (int i = 0; i < num_parts; i++) {
+    m.append(pm[i]);
+  }
+  RGWObjManifest::obj_iterator iter;
+  for (iter = m.obj_begin(); iter != m.obj_end(); ++iter) {
+    cout << "x obj=" << iter.get_location() << " ofs=" << iter.get_stripe_ofs() << std::endl;
+  }
+
+  ASSERT_EQ(m.get_obj_size(), num_parts * part_size);
 }
 
