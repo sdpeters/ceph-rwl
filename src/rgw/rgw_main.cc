@@ -145,10 +145,6 @@ public:
 };
 
 
-struct RGWFCGXRequest : public RGWRequest {
-  FCGX_Request fcgx;
-};
-
 struct RGWProcessEnv {
   RGWRados *store;
   RGWREST *rest;
@@ -156,53 +152,75 @@ struct RGWProcessEnv {
   int port;
 };
 
+class RGWRequestsServer {
+protected:
+  atomic_t max_req_id;
+  int sock_fd;
+public:
+  RGWRequestsServer() : sock_fd(-1) {}
+  virtual ~RGWRequestsServer() {}
+  virtual void run() = 0;
+  virtual void serve_requests() = 0;
+  int next_req_id() {
+    return max_req_id.inc();
+  }
+
+  void close_fd() {
+    if (sock_fd >= 0) {
+      ::close(sock_fd);
+      sock_fd = -1;
+    }
+  }
+};
+
 class RGWProcess {
-  deque<RGWRequest *> m_req_queue;
+  deque<RGWRequestsServer *> m_req_queue;
 protected:
   RGWRados *store;
-  OpsLogSocket *olog;
   ThreadPool m_tp;
-  Throttle req_throttle;
-  RGWREST *rest;
-  RGWFrontendConfig *conf;
-  int sock_fd;
+  int num_threads;
 
-  struct RGWWQ : public ThreadPool::WorkQueue<RGWRequest> {
+  struct RGWWQ : public ThreadPool::WorkQueue<RGWRequestsServer> {
     RGWProcess *process;
     RGWWQ(RGWProcess *p, time_t timeout, time_t suicide_timeout, ThreadPool *tp)
-      : ThreadPool::WorkQueue<RGWRequest>("RGWWQ", timeout, suicide_timeout, tp), process(p) {}
+      : ThreadPool::WorkQueue<RGWRequestsServer>("RGWWQ", timeout, suicide_timeout, tp), process(p) {}
 
-    bool _enqueue(RGWRequest *req) {
-      process->m_req_queue.push_back(req);
+    bool _enqueue(RGWRequestsServer *server) {
+      process->m_req_queue.push_back(server);
       perfcounter->inc(l_rgw_qlen);
-      dout(20) << "enqueued request req=" << hex << req << dec << dendl;
+      dout(20) << "enqueued server=" << hex << server << dec << dendl;
       _dump_queue();
       return true;
     }
-    void _dequeue(RGWRequest *req) {
+    void _dequeue(RGWRequestsServer *server) {
       assert(0);
     }
     bool _empty() {
       return process->m_req_queue.empty();
     }
-    RGWRequest *_dequeue() {
+    RGWRequestsServer *_dequeue() {
       if (process->m_req_queue.empty())
 	return NULL;
-      RGWRequest *req = process->m_req_queue.front();
+      RGWRequestsServer *server = process->m_req_queue.front();
       process->m_req_queue.pop_front();
-      dout(20) << "dequeued request req=" << hex << req << dec << dendl;
+      dout(20) << "dequeued server=" << hex << server << dec << dendl;
       _dump_queue();
       perfcounter->inc(l_rgw_qlen, -1);
-      return req;
+      return server;
     }
-    void _process(RGWRequest *req) {
+    void _process(RGWRequestsServer *server) {
+#warning fix perfcounter
+#if 0
       perfcounter->inc(l_rgw_qactive);
-      process->handle_request(req);
-      process->req_throttle.put(1);
+#endif
+      server->serve_requests();
+
+#if 0
       perfcounter->inc(l_rgw_qactive, -1);
+#endif
     }
     void _dump_queue() {
-      deque<RGWRequest *>::iterator iter;
+      deque<RGWRequestsServer *>::iterator iter;
       if (process->m_req_queue.empty()) {
         dout(20) << "RGWWQ: empty" << dendl;
         return;
@@ -217,40 +235,42 @@ protected:
     }
   } req_wq;
 
-  uint64_t max_req_id;
-
 public:
-  RGWProcess(CephContext *cct, RGWProcessEnv *pe, int num_threads, RGWFrontendConfig *_conf)
-    : store(pe->store), olog(pe->olog), m_tp(cct, "RGWProcess::m_tp", num_threads),
-      req_throttle(cct, "rgw_ops", num_threads * 2),
-      rest(pe->rest),
-      conf(_conf),
-      sock_fd(-1),
+  RGWProcess(CephContext *cct, int _num_threads)
+    : m_tp(cct, "RGWProcess::m_tp", _num_threads), num_threads(_num_threads),
       req_wq(this, g_conf->rgw_op_thread_timeout,
-	     g_conf->rgw_op_thread_suicide_timeout, &m_tp),
-      max_req_id(0) {}
+	     g_conf->rgw_op_thread_suicide_timeout, &m_tp) {}
   virtual ~RGWProcess() {}
-  virtual void run() = 0;
-  virtual void handle_request(RGWRequest *req) = 0;
 
-  void close_fd() {
-    if (sock_fd >= 0) {
-      ::close(sock_fd);
-      sock_fd = -1;
+  void start(RGWRequestsServer *server) {
+    m_tp.start();
+    for (int i = 0; i < num_threads; i++) {
+      req_wq.queue(server);
     }
   }
 };
 
 
-class RGWFCGXProcess : public RGWProcess {
+class RGWFCGXRequestsServer : public RGWRequestsServer {
+  RGWProcess process;
+
+  RGWRados *store;
+  OpsLogSocket *olog;
+  RGWREST *rest;
+  RGWFrontendConfig *conf;
+  int sock_fd;
+
+
 public:
-  RGWFCGXProcess(CephContext *cct, RGWProcessEnv *pe, int num_threads, RGWFrontendConfig *_conf) :
-    RGWProcess(cct, pe, num_threads, _conf) {}
+  RGWFCGXRequestsServer(CephContext *cct, RGWProcessEnv *pe, int num_threads, RGWFrontendConfig *_conf) :
+    process(cct, num_threads), store(pe->store), olog(pe->olog),
+    rest(pe->rest), conf(_conf), sock_fd(-1) {}
   void run();
-  void handle_request(RGWRequest *req);
+  void serve_requests();
+  void handle_request(FCGX_Request *fcgx, RGWRequest *req);
 };
 
-void RGWFCGXProcess::run()
+void RGWFCGXRequestsServer::run()
 {
   string socket_path;
   string socket_port;
@@ -295,29 +315,36 @@ void RGWFCGXProcess::run()
     }
   }
 
-  m_tp.start();
+  process.start(this);
+}
 
+void RGWFCGXRequestsServer::serve_requests()
+{
   for (;;) {
-    RGWFCGXRequest *req = new RGWFCGXRequest;
-    req->id = ++max_req_id;
-    dout(10) << "allocated request req=" << hex << req << dec << dendl;
-    FCGX_InitRequest(&req->fcgx, sock_fd, 0);
-    req_throttle.get(1);
-    int ret = FCGX_Accept_r(&req->fcgx);
+    RGWRequest req;
+    FCGX_Request fcgx;
+
+    req.id = next_req_id();
+    dout(10) << "request req=" << hex << &req << dec << dendl;
+    FCGX_InitRequest(&fcgx, sock_fd, 0);
+    int ret = FCGX_Accept_r(&fcgx);
     if (ret < 0) {
-      delete req;
       dout(0) << "ERROR: FCGX_Accept_r returned " << ret << dendl;
-      req_throttle.put(1);
       break;
     }
 
-    req_wq.queue(req);
+    handle_request(&fcgx, &req);
   }
 
+#warning drain
+#if 0
   m_tp.drain(&req_wq);
   m_tp.stop();
+#endif
 }
 
+#warning FIXME
+#if 0
 struct RGWLoadGenRequest : public RGWRequest {
   string method;
   string resource;
@@ -331,6 +358,7 @@ struct RGWLoadGenRequest : public RGWRequest {
 
 class RGWLoadGenProcess : public RGWProcess {
   RGWAccessKey access_key;
+  list<RGWLoadGenRequest *> reqs;
 public:
   RGWLoadGenProcess(CephContext *cct, RGWProcessEnv *pe, int num_threads, RGWFrontendConfig *_conf) :
     RGWProcess(cct, pe, num_threads, _conf) {}
@@ -430,9 +458,10 @@ void RGWLoadGenProcess::gen_request(const string& method, const string& resource
   RGWLoadGenRequest *req = new RGWLoadGenRequest(method, resource, content_length, fail_flag);
   req->id = ++max_req_id;
   dout(10) << "allocated request req=" << hex << req << dec << dendl;
-  req_throttle.get(1);
-  req_wq.queue(req);
+  reqs.push_back(req);
 }
+
+#endif
 
 static void signal_shutdown()
 {
@@ -621,12 +650,9 @@ done:
   return (ret < 0 ? ret : s->err.ret);
 }
 
-void RGWFCGXProcess::handle_request(RGWRequest *r)
+void RGWFCGXRequestsServer::handle_request(FCGX_Request *fcgx, RGWRequest *req)
 {
-  RGWFCGXRequest *req = static_cast<RGWFCGXRequest *>(r);
-  FCGX_Request *fcgx = &req->fcgx;
   RGWFCGX client_io(fcgx);
-
  
   int ret = process_request(store, rest, req, &client_io, olog);
   if (ret < 0) {
@@ -635,10 +661,11 @@ void RGWFCGXProcess::handle_request(RGWRequest *r)
   }
 
   FCGX_Finish_r(fcgx);
-
-  delete req;
 }
 
+
+#warning FIXME
+#if 0
 void RGWLoadGenProcess::handle_request(RGWRequest *r)
 {
   RGWLoadGenRequest *req = static_cast<RGWLoadGenRequest *>(r);
@@ -669,6 +696,7 @@ void RGWLoadGenProcess::handle_request(RGWRequest *r)
 
   delete req;
 }
+#endif
 
 
 static int civetweb_callback(struct mg_connection *conn) {
@@ -814,12 +842,12 @@ public:
 };
 
 class RGWProcessControlThread : public Thread {
-  RGWProcess *pprocess;
+  RGWRequestsServer *server;
 public:
-  RGWProcessControlThread(RGWProcess *_pprocess) : pprocess(_pprocess) {}
+  RGWProcessControlThread(RGWRequestsServer *_server) : server(_server) {}
 
   void *entry() {
-    pprocess->run();
+    server->run();
     return NULL;
   };
 };
@@ -827,28 +855,28 @@ public:
 class RGWProcessFrontend : public RGWFrontend {
 protected:
   RGWFrontendConfig *conf;
-  RGWProcess *pprocess;
+  RGWRequestsServer *server;
   RGWProcessEnv env;
   RGWProcessControlThread *thread;
 
 public:
-  RGWProcessFrontend(RGWProcessEnv& pe, RGWFrontendConfig *_conf) : conf(_conf), pprocess(NULL), env(pe), thread(NULL) {
+  RGWProcessFrontend(RGWProcessEnv& pe, RGWFrontendConfig *_conf) : conf(_conf), server(NULL), env(pe), thread(NULL) {
   }
 
   ~RGWProcessFrontend() {
     delete thread;
-    delete pprocess;
+    delete server;
   }
 
   int run() {
-    assert(pprocess); /* should have initialized by init() */
-    thread = new RGWProcessControlThread(pprocess);
+    assert(server); /* should have initialized by init() */
+    thread = new RGWProcessControlThread(server);
     thread->create();
     return 0;
   }
 
   void stop() {
-    pprocess->close_fd();
+    server->close_fd();
     thread->kill(SIGUSR1);
   }
 
@@ -862,11 +890,13 @@ public:
   RGWFCGXFrontend(RGWProcessEnv& pe, RGWFrontendConfig *_conf) : RGWProcessFrontend(pe, _conf) {}
 
   int init() {
-    pprocess = new RGWFCGXProcess(g_ceph_context, &env, g_conf->rgw_thread_pool_size, conf);
+    server = new RGWFCGXRequestsServer(g_ceph_context, &env, g_conf->rgw_thread_pool_size, conf);
     return 0;
   }
 };
 
+#warning FIXME
+#if 0
 class RGWLoadGenFrontend : public RGWProcessFrontend {
 public:
   RGWLoadGenFrontend(RGWProcessEnv& pe, RGWFrontendConfig *_conf) : RGWProcessFrontend(pe, _conf) {}
@@ -945,6 +975,7 @@ public:
   void join() {
   }
 };
+#endif
 
 /*
  * start up the RADOS connection and then handle HTTP messages as they come in
@@ -1128,14 +1159,20 @@ int main(int argc, const char **argv)
 
       RGWProcessEnv env = { store, &rest, olog, port };
 
+#warning FIXME
+#if 0
       fe = new RGWMongooseFrontend(env, config);
+#endif
     } else if (framework == "loadgen") {
       int port;
       config->get_val("port", 80, &port);
 
       RGWProcessEnv env = { store, &rest, olog, port };
 
+#warning FIXME
+#if 0
       fe = new RGWLoadGenFrontend(env, config);
+#endif
     } else {
       dout(0) << "WARNING: skipping unknown framework: " << framework << dendl;
       continue;
