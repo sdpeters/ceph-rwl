@@ -363,11 +363,14 @@ class ObjectCacher {
   Finisher finisher;
 
   // objects
-  Object *get_object_maybe(sobject_t oid, object_locator_t &l) {
+  Object *get_object_maybe(sobject_t oid, uint64_t poolid) {
     // have it?
-    if (((uint32_t)l.pool < objects.size()) &&
-        (objects[l.pool].count(oid)))
-      return objects[l.pool][oid];
+    if (poolid < objects.size()) {
+      ceph::unordered_map<sobject_t, Object*>::iterator it;
+      it = objects[poolid].find(oid);
+      if (it != objects[poolid].end())
+	return it->second;
+    }
     return NULL;
   }
 

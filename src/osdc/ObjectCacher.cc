@@ -651,11 +651,11 @@ void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid, tid_t tid,
   list<Context*> ls;
   int err = 0;
 
-  if (objects[poolid].count(oid) == 0) {
+  Object *ob = get_object_maybe(oid, poolid);
+
+  if (!ob) {
     ldout(cct, 7) << "bh_read_finish no object cache" << dendl;
   } else {
-    Object *ob = objects[poolid][oid];
-    
     if (r == -ENOENT && !ob->complete) {
       // wake up *all* rx waiters, or else we risk reordering identical reads. e.g.
       //   read 1~1
@@ -840,10 +840,10 @@ void ObjectCacher::bh_write_commit(int64_t poolid, sobject_t oid, loff_t start,
 		<< " returned " << r
 		<< dendl;
 
-  if (objects[poolid].count(oid) == 0) {
+  Object *ob = get_object_maybe(oid, poolid);
+  if (!ob) {
     ldout(cct, 7) << "bh_write_commit no object cache" << dendl;
   } else {
-    Object *ob = objects[poolid][oid];
     int was_dirty_or_tx = ob->oset->dirty_or_tx;
     
     if (!ob->exists) {
@@ -999,7 +999,7 @@ bool ObjectCacher::is_cached(ObjectSet *oset, vector<ObjectExtent>& extents, sna
 
     // get Object cache
     sobject_t soid(ex_it->oid, snapid);
-    Object *o = get_object_maybe(soid, ex_it->oloc);
+    Object *o = get_object_maybe(soid, (uint64_t)ex_it->oloc.pool);
     if (!o)
       return false;
     if (!o->is_cached(ex_it->offset, ex_it->length))
@@ -1639,9 +1639,9 @@ bool ObjectCacher::flush_set(ObjectSet *oset, vector<ObjectExtent>& exv, Context
        ++p) {
     ObjectExtent &ex = *p;
     sobject_t soid(ex.oid, CEPH_NOSNAP);
-    if (objects[oset->poolid].count(soid) == 0)
+    Object *ob = get_object_maybe(soid, oset->poolid);
+    if (!ob)
       continue;
-    Object *ob = objects[oset->poolid][soid];
 
     ldout(cct, 20) << "flush_set " << oset << " ex " << ex << " ob " << soid << " " << ob << dendl;
 
@@ -1831,9 +1831,10 @@ void ObjectCacher::discard_set(ObjectSet *oset, vector<ObjectExtent>& exls)
     ldout(cct, 10) << "discard_set " << oset << " ex " << *p << dendl;
     ObjectExtent &ex = *p;
     sobject_t soid(ex.oid, CEPH_NOSNAP);
-    if (objects[oset->poolid].count(soid) == 0)
+    Object *ob = get_object_maybe(soid, oset->poolid);
+    if (!ob) {
       continue;
-    Object *ob = objects[oset->poolid][soid];
+    }
     
     ob->discard(ex.offset, ex.length);
   }
