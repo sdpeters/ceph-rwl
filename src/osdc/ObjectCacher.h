@@ -6,6 +6,7 @@
 #include "include/types.h"
 #include "include/lru.h"
 #include "include/Context.h"
+#include "include/unordered_set.h"
 #include "include/xlist.h"
 
 #include "common/Cond.h"
@@ -315,6 +316,19 @@ class ObjectCacher {
 
     int dirty_or_tx;
     bool return_enoent;
+    ceph::unordered_set<sobject_t> nonexistent_objects;
+
+    bool is_object_nonexistent(sobject_t soid) {
+      return nonexistent_objects.find(soid) != nonexistent_objects.end();
+    }
+
+    void set_object_nonexistent(sobject_t soid) {
+      nonexistent_objects.insert(soid);
+    }
+
+    void clear_object_nonexistence(sobject_t soid) {
+      nonexistent_objects.erase(soid);
+    }
 
     ObjectSet(void *p, int64_t _poolid, inodeno_t i)
       : parent(p), ino(i), truncate_seq(0),

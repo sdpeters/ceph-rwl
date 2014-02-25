@@ -582,6 +582,7 @@ ObjectCacher::Object *ObjectCacher::get_object(sobject_t oid, ObjectSet *oset,
   }
 
   // create it.
+  oset->clear_object_nonexistence(oid);
   Object *o = new Object(this, oid, oset, l, truncate_size, truncate_seq);
   objects[l.pool][oid] = o;
   ob_lru.lru_insert_top(o);
@@ -794,6 +795,11 @@ void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid, tid_t tid,
   ldout(cct, 20) << "finishing waiters " << ls << dendl;
 
   finish_contexts(cct, ls, err);
+
+  if (ob && r == -ENOENT && trust_enoent && ob->can_close()) {
+    ob->oset->set_object_nonexistent(oid);
+    close_object(ob);
+  }
   --reads_outstanding;
   read_cond.Signal();
 }
@@ -999,6 +1005,8 @@ bool ObjectCacher::is_cached(ObjectSet *oset, vector<ObjectExtent>& extents, sna
 
     // get Object cache
     sobject_t soid(ex_it->oid, snapid);
+    if (oset->is_object_nonexistent(soid))
+      continue;
     Object *o = get_object_maybe(soid, (uint64_t)ex_it->oloc.pool);
     if (!o)
       return false;
@@ -1039,7 +1047,17 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 
     // get Object cache
     sobject_t soid(ex_it->oid, rd->snap);
-    Object *o = get_object(soid, oset, ex_it->oloc, ex_it->truncate_size, oset->truncate_seq);
+    bool nonexistent = oset->is_object_nonexistent(soid);
+    Object *o = get_object_maybe(soid, (uint64_t)ex_it->oloc.pool);
+    if (nonexistent && !o && oset->return_enoent) {
+      assert(rd->extents.size() == 1);
+      ldout(cct, 10) << "readx ob is marked nonexistent, returning -ENOENT" << dendl;
+      delete rd;
+      return -ENOENT;
+    }
+
+    // update trunc settings
+    o = get_object(soid, oset, ex_it->oloc, ex_it->truncate_size, oset->truncate_seq);
     touch_ob(o);
 
     // does not exist and no hits?
@@ -1659,6 +1677,9 @@ bool ObjectCacher::flush_set(ObjectSet *oset, vector<ObjectExtent>& exv, Context
 void ObjectCacher::purge_set(ObjectSet *oset)
 {
   assert(lock.is_locked());
+
+  oset->nonexistent_objects.clear();
+
   if (oset->objects.empty()) {
     ldout(cct, 10) << "purge_set on " << oset << " dne" << dendl;
     return;
@@ -1722,6 +1743,8 @@ loff_t ObjectCacher::release_set(ObjectSet *oset)
   // return # bytes not clean (and thus not released).
   loff_t unclean = 0;
 
+  oset->nonexistent_objects.clear();
+
   if (oset->objects.empty()) {
     ldout(cct, 10) << "release_set on " << oset << " dne" << dendl;
     return 0;
@@ -1769,6 +1792,7 @@ uint64_t ObjectCacher::release_all()
       ++n;
 
       Object *ob = p->second;
+      ob->oset->nonexistent_objects.clear();
 
       loff_t o_unclean = release(ob);
       unclean += o_unclean;
@@ -1794,6 +1818,8 @@ void ObjectCacher::clear_nonexistence(ObjectSet *oset)
   assert(lock.is_locked());
   ldout(cct, 10) << "clear_nonexistence() " << oset << dendl;
 
+  oset->nonexistent_objects.clear();
+
   for (xlist<Object*>::iterator p = oset->objects.begin();
        !p.end(); ++p) {
     Object *ob = *p;
@@ -1816,11 +1842,7 @@ void ObjectCacher::clear_nonexistence(ObjectSet *oset)
 void ObjectCacher::discard_set(ObjectSet *oset, vector<ObjectExtent>& exls)
 {
   assert(lock.is_locked());
-  if (oset->objects.empty()) {
-    ldout(cct, 10) << "discard_set on " << oset << " dne" << dendl;
-    return;
-  }
-  
+
   ldout(cct, 10) << "discard_set " << oset << dendl;
 
   bool were_dirty = oset->dirty_or_tx > 0;
@@ -1833,10 +1855,16 @@ void ObjectCacher::discard_set(ObjectSet *oset, vector<ObjectExtent>& exls)
     sobject_t soid(ex.oid, CEPH_NOSNAP);
     Object *ob = get_object_maybe(soid, oset->poolid);
     if (!ob) {
+      oset->clear_object_nonexistence(soid);
       continue;
     }
     
     ob->discard(ex.offset, ex.length);
+  }
+
+  if (oset->objects.empty()) {
+    ldout(cct, 10) << "discard_set on " << oset << " dne" << dendl;
+    return;
   }
 
   // did we truncate off dirty data?
