@@ -24,6 +24,7 @@
 
 #include "common/admin_socket.h"
 #include "common/Timer.h"
+#include "common/RWLock.h"
 #include "include/rados/rados_types.h"
 #include "include/rados/rados_types.hpp"
 
@@ -992,9 +993,16 @@ public:
   CephContext *cct;
   std::multimap<string,string> crush_location;
 
-  bool initialized;
+  struct Op;
+  struct LingerOp;
+  struct PoolOp;
+  struct PoolStatOp;
+  struct StatfsOp;
+  struct CommandOp;
 
 private:
+  bool initialized;
+
   tid_t last_tid;
   int client_inc;
   uint64_t max_linger_id;
@@ -1004,18 +1012,51 @@ private:
   bool keep_balanced_budget;
   bool honor_osdmap_full;
 
-public:
-  void maybe_request_map();
-private:
-
   version_t last_seen_osdmap_version;
   version_t last_seen_pgmap_version;
 
-  Mutex &client_lock;
+  RWLock rwlock;
   SafeTimer &timer;
 
   PerfCounters *logger;
-  
+
+   // pending ops
+  map<tid_t,Op*>            ops;
+  int                       num_homeless_ops;
+  map<uint64_t, LingerOp*>  linger_ops;
+  map<tid_t,PoolStatOp*>    poolstat_ops;
+  map<tid_t,StatfsOp*>      statfs_ops;
+  map<tid_t,PoolOp*>        pool_ops;
+  map<tid_t,CommandOp*>     command_ops;
+
+  // ops waiting for an osdmap with a new pool or confirmation that
+  // the pool does not exist (may be expanded to other uses later)
+  map<uint64_t, LingerOp*>  check_latest_map_lingers;
+  map<tid_t, Op*>           check_latest_map_ops;
+  map<tid_t, CommandOp*>    check_latest_map_commands;
+
+  map<epoch_t,list< pair<Context*, int> > > waiting_for_map;
+
+  double mon_timeout, osd_timeout;
+
+  Throttle op_throttle_bytes, op_throttle_ops;
+
+  void send_op(Op *op);
+  void cancel_linger_op(Op *op);
+  void finish_op(Op *op);
+  static bool is_pg_changed(
+    int oldprimary,
+    const vector<int>& oldacting,
+    int newprimary,
+    const vector<int>& newacting,
+    bool any_change=false);
+  enum recalc_op_target_result {
+    RECALC_OP_TARGET_NO_ACTION = 0,
+    RECALC_OP_TARGET_NEED_RESEND,
+    RECALC_OP_TARGET_POOL_DNE,
+    RECALC_OP_TARGET_OSD_DNE,
+    RECALC_OP_TARGET_OSD_DOWN,
+  }; 
   class C_Tick : public Context {
     Objecter *ob;
   public:
@@ -1037,9 +1078,10 @@ private:
   RequestStateHook *m_request_state_hook;
 
 public:
+  void maybe_request_map();
+
   /*** track pending operations ***/
   // read
- public:
 
   struct OSDSession;
 
@@ -1307,7 +1349,7 @@ public:
   int _submit_command(CommandOp *c, tid_t *ptid);
   int recalc_command_target(CommandOp *c);
   void _send_command(CommandOp *c);
-  int command_op_cancel(tid_t tid, int r);
+  int _command_op_cancel(tid_t tid, int r);
   void _finish_command(CommandOp *c, int r, string rs);
   void handle_command_reply(MCommandReply *m);
 
@@ -1410,41 +1452,7 @@ public:
 
 
  private:
-  // pending ops
-  map<tid_t,Op*>            ops;
-  int                       num_homeless_ops;
-  map<uint64_t, LingerOp*>  linger_ops;
-  map<tid_t,PoolStatOp*>    poolstat_ops;
-  map<tid_t,StatfsOp*>      statfs_ops;
-  map<tid_t,PoolOp*>        pool_ops;
-  map<tid_t,CommandOp*>     command_ops;
 
-  // ops waiting for an osdmap with a new pool or confirmation that
-  // the pool does not exist (may be expanded to other uses later)
-  map<uint64_t, LingerOp*>  check_latest_map_lingers;
-  map<tid_t, Op*>           check_latest_map_ops;
-  map<tid_t, CommandOp*>    check_latest_map_commands;
-
-  map<epoch_t,list< pair<Context*, int> > > waiting_for_map;
-
-  double mon_timeout, osd_timeout;
-
-  void send_op(Op *op);
-  void cancel_linger_op(Op *op);
-  void finish_op(Op *op);
-  static bool is_pg_changed(
-    int oldprimary,
-    const vector<int>& oldacting,
-    int newprimary,
-    const vector<int>& newacting,
-    bool any_change=false);
-  enum recalc_op_target_result {
-    RECALC_OP_TARGET_NO_ACTION = 0,
-    RECALC_OP_TARGET_NEED_RESEND,
-    RECALC_OP_TARGET_POOL_DNE,
-    RECALC_OP_TARGET_OSD_DNE,
-    RECALC_OP_TARGET_OSD_DOWN,
-  };
   bool op_should_be_paused(Op *op);
   int recalc_op_target(Op *op);
   bool recalc_linger_op_target(LingerOp *op);
@@ -1455,11 +1463,11 @@ public:
 
   void check_op_pool_dne(Op *op);
   void _send_op_map_check(Op *op);
-  void op_cancel_map_check(Op *op);
+  void _op_cancel_map_check(Op *op);
   void check_linger_pool_dne(LingerOp *op);
   void _send_linger_map_check(LingerOp *op);
   void linger_cancel_map_check(LingerOp *op);
-  void check_command_map_dne(CommandOp *op);
+  void _check_command_map_dne(CommandOp *op);
   void _send_command_map_check(CommandOp *op);
   void command_cancel_map_check(CommandOp *op);
 
@@ -1472,7 +1480,7 @@ public:
   void _list_reply(ListContext *list_context, int r, Context *final_finish,
 		   epoch_t reply_epoch);
 
-  void resend_mon_ops();
+  void _resend_mon_ops();
 
   /**
    * handle a budget for in-flight ops
@@ -1481,11 +1489,11 @@ public:
    * If throttle_op needs to throttle it will unlock client_lock.
    */
   int calc_op_budget(Op *op);
-  void throttle_op(Op *op, int op_size=0);
-  void take_op_budget(Op *op) {
+  void _throttle_op(Op *op, int op_size=0);
+  void _take_op_budget(Op *op) {
     int op_budget = calc_op_budget(op);
     if (keep_balanced_budget) {
-      throttle_op(op, op_budget);
+      _throttle_op(op, op_budget);
     } else {
       op_throttle_bytes.take(op_budget);
       op_throttle_ops.take(1);
@@ -1498,11 +1506,12 @@ public:
     op_throttle_bytes.put(op_budget);
     op_throttle_ops.put(1);
   }
-  Throttle op_throttle_bytes, op_throttle_ops;
 
+  void _init_locked();
+  void _shutdown_locked();
  public:
   Objecter(CephContext *cct_, Messenger *m, MonClient *mc,
-	   OSDMap *om, Mutex& l, SafeTimer& t, double mon_timeout,
+	   OSDMap *om, SafeTimer& t, double mon_timeout,
 	   double osd_timeout) :
     messenger(m), monc(mc), osdmap(om), cct(cct_),
     initialized(false),
@@ -1512,14 +1521,16 @@ public:
     keep_balanced_budget(false), honor_osdmap_full(true),
     last_seen_osdmap_version(0),
     last_seen_pgmap_version(0),
-    client_lock(l), timer(t),
-    logger(NULL), tick_event(NULL),
-    m_request_state_hook(NULL),
+    rwlock("Objecter::rwlock"),
+    timer(t),
+    logger(NULL),
     num_homeless_ops(0),
     mon_timeout(mon_timeout),
     osd_timeout(osd_timeout),
     op_throttle_bytes(cct, "objecter_bytes", cct->_conf->objecter_inflight_op_bytes),
-    op_throttle_ops(cct, "objecter_ops", cct->_conf->objecter_inflight_ops)
+    op_throttle_ops(cct, "objecter_ops", cct->_conf->objecter_inflight_ops),
+    tick_event(NULL),
+    m_request_state_hook(NULL)
   { }
   ~Objecter() {
     assert(!tick_event);
@@ -1527,10 +1538,8 @@ public:
     assert(!logger);
   }
 
-  void init_unlocked();
-  void init_locked();
-  void shutdown_locked();
-  void shutdown_unlocked();
+  void init();
+  void shutdown();
 
   /**
    * Tell the objecter to throttle outgoing ops according to its
@@ -1564,7 +1573,7 @@ public:
 private:
   // low-level
   tid_t _op_submit(Op *op);
-  inline void unregister_op(Op *op);
+  inline void _unregister_op(Op *op);
 
   // public interface
 public:
@@ -1577,13 +1586,13 @@ public:
    * Output in-flight requests
    */
   void dump_active();
-  void dump_requests(Formatter *fmt) const;
-  void dump_ops(Formatter *fmt) const;
-  void dump_linger_ops(Formatter *fmt) const;
-  void dump_command_ops(Formatter *fmt) const;
-  void dump_pool_ops(Formatter *fmt) const;
-  void dump_pool_stat_ops(Formatter *fmt) const;
-  void dump_statfs_ops(Formatter *fmt) const;
+  void dump_requests(Formatter *fmt);
+  void dump_ops(Formatter *fmt);
+  void dump_linger_ops(Formatter *fmt);
+  void dump_command_ops(Formatter *fmt);
+  void dump_pool_ops(Formatter *fmt);
+  void dump_pool_stat_ops(Formatter *fmt);
+  void dump_statfs_ops(Formatter *fmt);
 
   int get_client_incarnation() const { return client_inc; }
   void set_client_incarnation(int inc) { client_inc = inc; }
@@ -2035,8 +2044,8 @@ public:
   // -------------------------
   // pool ops
 private:
-  void pool_op_submit(PoolOp *op);
   void _pool_op_submit(PoolOp *op);
+  void _pool_op_submit_notimeout(PoolOp *op);
 public:
   int create_pool_snap(int64_t pool, string& snapName, Context *onfinish);
   int allocate_selfmanaged_snap(int64_t pool, snapid_t *psnapid, Context *onfinish);
@@ -2050,7 +2059,7 @@ public:
 
   void handle_pool_op_reply(MPoolOpReply *m);
   int pool_op_cancel(tid_t tid, int r);
-  void finish_pool_op(PoolOp *op);
+  void _finish_pool_op(PoolOp *op);
 
   // --------------------------
   // pool stats
@@ -2061,7 +2070,7 @@ public:
   void get_pool_stats(list<string>& pools, map<string,pool_stat_t> *result,
 		      Context *onfinish);
   int pool_stat_op_cancel(tid_t tid, int r);
-  void finish_pool_stat_op(PoolStatOp *op);
+  void _finish_pool_stat_op(PoolStatOp *op);
 
   // ---------------------------
   // df stats
@@ -2071,7 +2080,7 @@ public:
   void handle_fs_stats_reply(MStatfsReply *m);
   void get_fs_stats(struct ceph_statfs& result, Context *onfinish);
   int statfs_op_cancel(tid_t tid, int r);
-  void finish_statfs_op(StatfsOp *op);
+  void _finish_statfs_op(StatfsOp *op);
 
   // ---------------------------
   // some scatter/gather hackery

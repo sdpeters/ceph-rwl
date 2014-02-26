@@ -25,14 +25,23 @@ class RWLock
   mutable pthread_rwlock_t L;
   const char *name;
   int id;
+  int nrlock, nwlock;
 
 public:
   RWLock(const RWLock& other);
   const RWLock& operator=(const RWLock& other);
 
-  RWLock(const char *n) : name(n), id(-1) {
+  RWLock(const char *n) : name(n), id(-1), nrlock(0), nwlock(0) {
     pthread_rwlock_init(&L, NULL);
     if (g_lockdep) id = lockdep_register(name);
+  }
+
+  bool is_locked() const {
+    return (nrlock > 0) || (nwlock > 0);
+  }
+
+  bool is_wlocked() const {
+    return (nwlock > 0);
   }
 
   virtual ~RWLock() {
@@ -50,15 +59,18 @@ public:
     if (g_lockdep) id = lockdep_will_lock(name, id);
     pthread_rwlock_rdlock(&L);
     if (g_lockdep) id = lockdep_locked(name, id);
+    nrlock++;
   }
   bool try_get_read() {
     if (pthread_rwlock_tryrdlock(&L) == 0) {
+      nrlock++;
       if (g_lockdep) id = lockdep_locked(name, id);
       return true;
     }
     return false;
   }
   void put_read() {
+    nrlock--;
     unlock();
   }
 
@@ -67,15 +79,18 @@ public:
     if (g_lockdep) id = lockdep_will_lock(name, id);
     pthread_rwlock_wrlock(&L);
     if (g_lockdep) id = lockdep_locked(name, id);
+    nwlock++;
   }
   bool try_get_write() {
     if (pthread_rwlock_trywrlock(&L) == 0) {
       if (g_lockdep) id = lockdep_locked(name, id);
+      nwlock++;
       return true;
     }
     return false;
   }
   void put_write() {
+    nwlock--;
     unlock();
   }
 

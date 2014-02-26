@@ -159,7 +159,7 @@ void Objecter::handle_conf_change(const struct md_config_t *conf,
 
 // messages ------------------------------
 
-void Objecter::init_unlocked()
+void Objecter::init()
 {
   assert(!initialized);
 
@@ -251,11 +251,14 @@ void Objecter::init_unlocked()
     lderr(cct) << "error registering admin socket command: "
 	       << cpp_strerror(-ret) << dendl;
   }
+
+  RWLock::WLocker l(rwlock);
+  _init_locked();
 }
 
-void Objecter::init_locked()
+void Objecter::_init_locked()
 {
-  assert(client_lock.is_locked());
+  assert(rwlock.is_wlocked());
   assert(!initialized);
 
   schedule_tick();
@@ -265,9 +268,9 @@ void Objecter::init_locked()
   initialized = true;
 }
 
-void Objecter::shutdown_locked() 
+void Objecter::_shutdown_locked() 
 {
-  assert(client_lock.is_locked());
+  assert(rwlock.is_wlocked());
   assert(initialized);
   initialized = false;
 
@@ -283,7 +286,7 @@ void Objecter::shutdown_locked()
   }
 }
 
-void Objecter::shutdown_unlocked()
+void Objecter::shutdown()
 {
   if (m_request_state_hook) {
     AdminSocket* admin_socket = cct->get_admin_socket();
@@ -297,6 +300,9 @@ void Objecter::shutdown_unlocked()
     delete logger;
     logger = NULL;
   }
+
+  RWLock::WLocker l(rwlock);
+  _shutdown_locked();
 }
 
 void Objecter::send_linger(LingerOp *info)
@@ -326,7 +332,7 @@ void Objecter::send_linger(LingerOp *info)
     // repeat send.  cancel old registeration op, if any.
     if (ops.count(info->register_tid)) {
       Op *o = ops[info->register_tid];
-      op_cancel_map_check(o);
+      _op_cancel_map_check(o);
       cancel_linger_op(o);
     }
     info->register_tid = _op_submit(o);
@@ -520,7 +526,7 @@ void Objecter::scan_requests(bool force_resend,
       // -- fall-thru --
     case RECALC_OP_TARGET_NEED_RESEND:
       need_resend[op->tid] = op;
-      op_cancel_map_check(op);
+      _op_cancel_map_check(op);
       break;
     case RECALC_OP_TARGET_POOL_DNE:
       check_op_pool_dne(op);
@@ -548,7 +554,7 @@ void Objecter::scan_requests(bool force_resend,
     case RECALC_OP_TARGET_POOL_DNE:
     case RECALC_OP_TARGET_OSD_DNE:
     case RECALC_OP_TARGET_OSD_DOWN:
-      check_command_map_dne(c);
+      _check_command_map_dne(c);
       break;
     }     
   }
@@ -556,7 +562,7 @@ void Objecter::scan_requests(bool force_resend,
 
 void Objecter::handle_osd_map(MOSDMap *m)
 {
-  assert(client_lock.is_locked());
+  RWLock::WLocker l(rwlock);
   assert(initialized);
   assert(osdmap); 
 
@@ -720,7 +726,7 @@ void Objecter::C_Op_Map_Latest::finish(int r)
   lgeneric_subdout(objecter->cct, objecter, 10) << "op_map_latest r=" << r << " tid=" << tid
 						<< " latest " << latest << dendl;
 
-  Mutex::Locker l(objecter->client_lock);
+  RWLock::WLocker l(objecter->rwlock);
 
   map<tid_t, Op*>::iterator iter =
     objecter->check_latest_map_ops.find(tid);
@@ -769,7 +775,7 @@ void Objecter::check_op_pool_dne(Op *op)
 
 void Objecter::_send_op_map_check(Op *op)
 {
-  assert(client_lock.is_locked());
+  assert(rwlock.is_wlocked());
   // ask the monitor
   if (check_latest_map_ops.count(op->tid) == 0) {
     check_latest_map_ops[op->tid] = op;
@@ -778,9 +784,9 @@ void Objecter::_send_op_map_check(Op *op)
   }
 }
 
-void Objecter::op_cancel_map_check(Op *op)
+void Objecter::_op_cancel_map_check(Op *op)
 {
-  assert(client_lock.is_locked());
+  assert(rwlock.is_wlocked());
   map<tid_t, Op*>::iterator iter =
     check_latest_map_ops.find(op->tid);
   if (iter != check_latest_map_ops.end()) {
@@ -797,7 +803,7 @@ void Objecter::C_Linger_Map_Latest::finish(int r)
     return;
   }
 
-  Mutex::Locker l(objecter->client_lock);
+  RWLock::WLocker l(objecter->rwlock);
 
   map<uint64_t, LingerOp*>::iterator iter =
     objecter->check_latest_map_lingers.find(linger_id);
@@ -867,7 +873,7 @@ void Objecter::C_Command_Map_Latest::finish(int r)
     return;
   }
 
-  Mutex::Locker l(objecter->client_lock);
+  RWLock::WLocker l(objecter->rwlock);
 
   map<uint64_t, CommandOp*>::iterator iter =
     objecter->check_latest_map_commands.find(tid);
@@ -882,11 +888,12 @@ void Objecter::C_Command_Map_Latest::finish(int r)
   if (c->map_dne_bound == 0)
     c->map_dne_bound = latest;
 
-  objecter->check_command_map_dne(c);
+  objecter->_check_command_map_dne(c);
 }
 
-void Objecter::check_command_map_dne(CommandOp *c)
+void Objecter::_check_command_map_dne(CommandOp *c)
 {
+  assert(rwlock.is_locked());
   ldout(cct, 10) << "check_command_map_dne tid " << c->tid
 		 << " current " << osdmap->get_epoch()
 		 << " map_dne_bound " << c->map_dne_bound
@@ -1093,7 +1100,7 @@ void Objecter::schedule_tick()
 void Objecter::tick()
 {
   ldout(cct, 10) << "tick" << dendl;
-  assert(client_lock.is_locked());
+  assert(rwlock.is_wlocked());
   assert(initialized);
 
   // we are only called by C_Tick
@@ -1159,9 +1166,9 @@ void Objecter::tick()
   schedule_tick();
 }
 
-void Objecter::resend_mon_ops()
+void Objecter::_resend_mon_ops()
 {
-  assert(client_lock.is_locked());
+  assert(rwlock.is_wlocked());
   ldout(cct, 10) << "resend_mon_ops" << dendl;
 
   for (map<tid_t,PoolStatOp*>::iterator p = poolstat_ops.begin(); p!=poolstat_ops.end(); ++p) {
@@ -1175,7 +1182,7 @@ void Objecter::resend_mon_ops()
   }
 
   for (map<tid_t,PoolOp*>::iterator p = pool_ops.begin(); p!=pool_ops.end(); ++p) {
-    _pool_op_submit(p->second);
+    _pool_op_submit_notimeout(p->second);
     logger->inc(l_osdc_poolop_resend);
   }
 
@@ -1220,8 +1227,9 @@ public:
 
 tid_t Objecter::op_submit(Op *op)
 {
-  assert(client_lock.is_locked());
   assert(initialized);
+
+  RWLock::WLocker l(rwlock);
 
   assert(op->ops.size() == op->out_bl.size());
   assert(op->ops.size() == op->out_rval.size());
@@ -1234,7 +1242,7 @@ tid_t Objecter::op_submit(Op *op)
 
   // throttle.  before we look at any state, because
   // take_op_budget() may drop our lock while it blocks.
-  take_op_budget(op);
+  _take_op_budget(op);
 
   return _op_submit(op);
 }
@@ -1350,7 +1358,7 @@ tid_t Objecter::_op_submit(Op *op)
 
 int Objecter::op_cancel(tid_t tid, int r)
 {
-  assert(client_lock.is_locked());
+  RWLock::WLocker l(rwlock);
   assert(initialized);
 
   map<tid_t, Op*>::iterator p = ops.find(tid);
@@ -1369,7 +1377,7 @@ int Objecter::op_cancel(tid_t tid, int r)
     op->oncommit->complete(r);
     op->oncommit = NULL;
   }
-  op_cancel_map_check(op);
+  _op_cancel_map_check(op);
   finish_op(op);
   return 0;
 }
@@ -1677,24 +1685,26 @@ int Objecter::calc_op_budget(Op *op)
   return op_budget;
 }
 
-void Objecter::throttle_op(Op *op, int op_budget)
+void Objecter::_throttle_op(Op *op, int op_budget)
 {
+  assert(rwlock.is_wlocked());
   if (!op_budget)
     op_budget = calc_op_budget(op);
   if (!op_throttle_bytes.get_or_fail(op_budget)) { //couldn't take right now
-    client_lock.Unlock();
+    rwlock.unlock();
     op_throttle_bytes.get(op_budget);
-    client_lock.Lock();
+    rwlock.get_write();
   }
   if (!op_throttle_ops.get_or_fail(1)) { //couldn't take right now
-    client_lock.Unlock();
+    rwlock.unlock();
     op_throttle_ops.get(1);
-    client_lock.Lock();
+    rwlock.get_write();
   }
 }
 
-void Objecter::unregister_op(Op *op)
+void Objecter::_unregister_op(Op *op)
 {
+  assert(rwlock.is_wlocked());
   if (op->onack)
     num_unacked--;
   if (op->oncommit)
@@ -1705,14 +1715,18 @@ void Objecter::unregister_op(Op *op)
 /* This function DOES put the passed message before returning */
 void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 {
-  assert(client_lock.is_locked());
   assert(initialized);
   ldout(cct, 10) << "in handle_osd_op_reply" << dendl;
+
+  rwlock.get_read();
 
   // get pio
   tid_t tid = m->get_tid();
 
-  if (ops.count(tid) == 0) {
+  map<tid_t, Op *>::iterator iter = ops.find(tid);
+
+  if (iter == ops.end()) {
+    rwlock.unlock();
     ldout(cct, 7) << "handle_osd_op_reply " << tid
 	    << (m->is_ondisk() ? " ondisk":(m->is_onnvram() ? " onnvram":" ack"))
 	    << " ... stray" << dendl;
@@ -1726,10 +1740,11 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 		<< " in " << m->get_pg()
 		<< " attempt " << m->get_retry_attempt()
 		<< dendl;
-  Op *op = ops[tid];
+  Op *op = iter->second;
 
   if (m->get_retry_attempt() >= 0) {
     if (m->get_retry_attempt() != (op->attempts - 1)) {
+      rwlock.unlock();
       ldout(cct, 7) << " ignoring reply from attempt " << m->get_retry_attempt()
 		    << " from " << m->get_source_inst()
 		    << "; last attempt " << (op->attempts - 1) << " sent to "
@@ -1749,17 +1764,22 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   int rc = m->get_result();
 
   if (m->is_redirect_reply()) {
-    ldout(cct, 5) << " got redirect reply; redirecting" << dendl;
-    unregister_op(op);
-    m->get_redirect().combine_with_locator(op->target_oloc, op->target_oid.name);
-    _op_submit(op);
+    rwlock.unlock();
+    rwlock.get_write();
+    iter = ops.find(tid); /* we dropped the lock, might have raced with others */
+    if (iter != ops.end()) {
+      ldout(cct, 5) << " got redirect reply; redirecting" << dendl;
+      _unregister_op(op);
+      m->get_redirect().combine_with_locator(op->target_oloc, op->target_oid.name);
+      _op_submit(op);
+    }
     m->put();
     return;
   }
 
   if (rc == -EAGAIN) {
     ldout(cct, 7) << " got -EAGAIN, resubmitting" << dendl;
-    unregister_op(op);
+    _unregister_op(op);
     _op_submit(op);
     m->put();
     return;
@@ -1851,7 +1871,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 uint32_t Objecter::list_objects_seek(ListContext *list_context,
 				     uint32_t pos)
 {
-  assert(client_lock.is_locked());
+  RWLock::RLocker l(rwlock);
   pg_t actual = osdmap->raw_pg_to_pg(pg_t(pos, list_context->pool_id));
   ldout(cct, 10) << "list_objects_seek " << list_context
 		 << " pos " << pos << " -> " << actual << dendl;
@@ -1865,7 +1885,6 @@ uint32_t Objecter::list_objects_seek(ListContext *list_context,
 
 void Objecter::list_objects(ListContext *list_context, Context *onfinish)
 {
-  assert(client_lock.is_locked());
   ldout(cct, 10) << "list_objects" << dendl;
   ldout(cct, 20) << " pool_id " << list_context->pool_id
 	   << " pool_snap_seq " << list_context->pool_snap_seq
@@ -1888,12 +1907,18 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
     }
   }
   if (list_context->at_end_of_pool) {
+#warning locking?
     onfinish->complete(0);
     return;
   }
 
+  rwlock.get_read();
+
   const pg_pool_t *pool = osdmap->get_pg_pool(list_context->pool_id);
   int pg_num = pool->get_pg_num();
+
+#warning does this even work race-wise?
+  rwlock.unlock();
 
   if (list_context->starting_pg_num == 0) {     // there can't be zero pgs!
     list_context->starting_pg_num = pg_num;
@@ -1962,6 +1987,7 @@ void Objecter::_list_reply(ListContext *list_context, int r,
   }
   if (!list_context->list.empty()) {
     ldout(cct, 20) << " returning results so far" << dendl;
+#warning locking here?
     final_finish->complete(0);
     return;
   }
@@ -1977,6 +2003,8 @@ void Objecter::_list_reply(ListContext *list_context, int r,
 int Objecter::create_pool_snap(int64_t pool, string& snap_name, Context *onfinish)
 {
   ldout(cct, 10) << "create_pool_snap; pool: " << pool << "; snap: " << snap_name << dendl;
+
+  RWLock::WLocker l(rwlock);
 
   const pg_pool_t *p = osdmap->get_pg_pool(pool);
   if (!p)
@@ -1994,7 +2022,7 @@ int Objecter::create_pool_snap(int64_t pool, string& snap_name, Context *onfinis
   op->pool_op = POOL_OP_CREATE_SNAP;
   pool_ops[op->tid] = op;
 
-  pool_op_submit(op);
+  _pool_op_submit(op);
 
   return 0;
 }
@@ -2017,6 +2045,9 @@ int Objecter::allocate_selfmanaged_snap(int64_t pool, snapid_t *psnapid,
 					Context *onfinish)
 {
   ldout(cct, 10) << "allocate_selfmanaged_snap; pool: " << pool << dendl;
+
+  RWLock::WLocker l(rwlock);
+
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
   op->tid = ++last_tid;
@@ -2027,13 +2058,15 @@ int Objecter::allocate_selfmanaged_snap(int64_t pool, snapid_t *psnapid,
   op->pool_op = POOL_OP_CREATE_UNMANAGED_SNAP;
   pool_ops[op->tid] = op;
 
-  pool_op_submit(op);
+  _pool_op_submit(op);
   return 0;
 }
 
 int Objecter::delete_pool_snap(int64_t pool, string& snap_name, Context *onfinish)
 {
   ldout(cct, 10) << "delete_pool_snap; pool: " << pool << "; snap: " << snap_name << dendl;
+
+  RWLock::WLocker l(rwlock);
 
   const pg_pool_t *p = osdmap->get_pg_pool(pool);
   if (!p)
@@ -2051,7 +2084,7 @@ int Objecter::delete_pool_snap(int64_t pool, string& snap_name, Context *onfinis
   op->pool_op = POOL_OP_DELETE_SNAP;
   pool_ops[op->tid] = op;
   
-  pool_op_submit(op);
+  _pool_op_submit(op);
   
   return 0;
 }
@@ -2060,6 +2093,8 @@ int Objecter::delete_selfmanaged_snap(int64_t pool, snapid_t snap,
 				      Context *onfinish) {
   ldout(cct, 10) << "delete_selfmanaged_snap; pool: " << pool << "; snap: " 
 	   << snap << dendl;
+  RWLock::WLocker l(rwlock);
+
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
   op->tid = ++last_tid;
@@ -2069,7 +2104,7 @@ int Objecter::delete_selfmanaged_snap(int64_t pool, snapid_t snap,
   op->snapid = snap;
   pool_ops[op->tid] = op;
 
-  pool_op_submit(op);
+  _pool_op_submit(op);
 
   return 0;
 }
@@ -2078,6 +2113,8 @@ int Objecter::create_pool(string& name, Context *onfinish, uint64_t auid,
 			  int crush_rule)
 {
   ldout(cct, 10) << "create_pool name=" << name << dendl;
+
+  RWLock::WLocker l(rwlock);
 
   if (osdmap->lookup_pg_pool_name(name.c_str()) >= 0)
     return -EEXIST;
@@ -2094,7 +2131,7 @@ int Objecter::create_pool(string& name, Context *onfinish, uint64_t auid,
   op->auid = auid;
   op->crush_rule = crush_rule;
 
-  pool_op_submit(op);
+  _pool_op_submit(op);
 
   return 0;
 }
@@ -2102,6 +2139,8 @@ int Objecter::create_pool(string& name, Context *onfinish, uint64_t auid,
 int Objecter::delete_pool(int64_t pool, Context *onfinish)
 {
   ldout(cct, 10) << "delete_pool " << pool << dendl;
+
+  RWLock::WLocker l(rwlock);
 
   if (!osdmap->have_pg_pool(pool))
     return -ENOENT;
@@ -2115,7 +2154,7 @@ int Objecter::delete_pool(int64_t pool, Context *onfinish)
   op->pool_op = POOL_OP_DELETE;
   pool_ops[op->tid] = op;
 
-  pool_op_submit(op);
+  _pool_op_submit(op);
 
   return 0;
 }
@@ -2129,6 +2168,9 @@ int Objecter::delete_pool(int64_t pool, Context *onfinish)
 int Objecter::change_pool_auid(int64_t pool, Context *onfinish, uint64_t auid)
 {
   ldout(cct, 10) << "change_pool_auid " << pool << " to " << auid << dendl;
+
+  RWLock::WLocker l(rwlock);
+
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
   op->tid = ++last_tid;
@@ -2141,7 +2183,7 @@ int Objecter::change_pool_auid(int64_t pool, Context *onfinish, uint64_t auid)
 
   logger->set(l_osdc_poolop_active, pool_ops.size());
 
-  pool_op_submit(op);
+  _pool_op_submit(op);
   return 0;
 }
 
@@ -2158,18 +2200,19 @@ public:
   }
 };
 
-void Objecter::pool_op_submit(PoolOp *op)
+void Objecter::_pool_op_submit(PoolOp *op)
 {
   if (mon_timeout > 0) {
     op->ontimeout = new C_CancelPoolOp(op->tid, this);
     timer.add_event_after(mon_timeout, op->ontimeout);
   }
-  _pool_op_submit(op);
+  _pool_op_submit_notimeout(op);
 }
 
-void Objecter::_pool_op_submit(PoolOp *op)
+void Objecter::_pool_op_submit_notimeout(PoolOp *op)
 {
-  ldout(cct, 10) << "pool_op_submit " << op->tid << dendl;
+  assert(rwlock.is_wlocked());
+  ldout(cct, 10) << "_pool_op_submit " << op->tid << dendl;
   MPoolOp *m = new MPoolOp(monc->get_fsid(), op->tid, op->pool,
 			   op->name, op->pool_op,
 			   op->auid, last_seen_osdmap_version);
@@ -2190,12 +2233,16 @@ void Objecter::_pool_op_submit(PoolOp *op)
  */
 void Objecter::handle_pool_op_reply(MPoolOpReply *m)
 {
-  assert(client_lock.is_locked());
   assert(initialized);
   ldout(cct, 10) << "handle_pool_op_reply " << *m << dendl;
   tid_t tid = m->get_tid();
-  if (pool_ops.count(tid)) {
-    PoolOp *op = pool_ops[tid];
+#warning rethink pool_ops locking again
+  /* we should really have a per op lock */
+
+  rwlock.get_write();
+  map<tid_t, PoolOp *>::iterator iter = pool_ops.find(tid);
+  if (iter != pool_ops.end()) {
+    PoolOp *op = iter->second;
     ldout(cct, 10) << "have request " << tid << " at " << op << " Op: " << ceph_pool_op_name(op->pool_op) << dendl;
     if (op->blp)
       op->blp->claim(m->response_data);
@@ -2203,27 +2250,42 @@ void Objecter::handle_pool_op_reply(MPoolOpReply *m)
       last_seen_osdmap_version = m->version;
     if (osdmap->get_epoch() < m->epoch) {
       ldout(cct, 20) << "waiting for client to reach epoch " << m->epoch << " before calling back" << dendl;
-      wait_for_new_map(op->onfinish, m->epoch, m->replyCode);
+      Context *onfinish = op->onfinish;
+      op->onfinish = NULL;
+      rwlock.unlock();
+      wait_for_new_map(onfinish, m->epoch, m->replyCode);
+    } else {
+      Context *onfinish = op->onfinish;
+      op->onfinish = NULL;
+      rwlock.unlock();
+
+      onfinish->complete(m->replyCode);
     }
-    else {
-      op->onfinish->complete(m->replyCode);
+    rwlock.get_write();
+    iter = pool_ops.find(tid);
+    if (iter == pool_ops.end()) { /* raced with another operation */
+      goto done;
     }
-    op->onfinish = NULL;
-    finish_pool_op(op);
+    op = iter->second;
+    _finish_pool_op(op);
   } else {
     ldout(cct, 10) << "unknown request " << tid << dendl;
   }
+done:
+  rwlock.unlock();
   ldout(cct, 10) << "done" << dendl;
   m->put();
 }
 
 int Objecter::pool_op_cancel(tid_t tid, int r)
 {
-  assert(client_lock.is_locked());
   assert(initialized);
+
+  rwlock.get_write();
 
   map<tid_t, PoolOp*>::iterator it = pool_ops.find(tid);
   if (it == pool_ops.end()) {
+    rwlock.unlock();
     ldout(cct, 10) << __func__ << " tid " << tid << " dne" << dendl;
     return -ENOENT;
   }
@@ -2231,13 +2293,16 @@ int Objecter::pool_op_cancel(tid_t tid, int r)
   ldout(cct, 10) << __func__ << " tid " << tid << dendl;
 
   PoolOp *op = it->second;
-  if (op->onfinish)
-    op->onfinish->complete(r);
-  finish_pool_op(op);
+  Context *onfinish = op->onfinish;
+  _finish_pool_op(op);
+  rwlock.unlock();
+
+  if (onfinish)
+    onfinish->complete(r);
   return 0;
 }
 
-void Objecter::finish_pool_op(PoolOp *op)
+void Objecter::_finish_pool_op(PoolOp *op)
 {
   pool_ops.erase(op->tid);
   logger->set(l_osdc_poolop_active, pool_ops.size());
@@ -2296,20 +2361,26 @@ void Objecter::poolstat_submit(PoolStatOp *op)
 
 void Objecter::handle_get_pool_stats_reply(MGetPoolStatsReply *m)
 {
-  assert(client_lock.is_locked());
   assert(initialized);
   ldout(cct, 10) << "handle_get_pool_stats_reply " << *m << dendl;
   tid_t tid = m->get_tid();
 
-  if (poolstat_ops.count(tid)) {
-    PoolStatOp *op = poolstat_ops[tid];
+  rwlock.get_write();
+
+  map<tid_t, PoolStatOp *>::iterator iter = poolstat_ops.find(tid);
+
+  if (iter != poolstat_ops.end()) {
+    PoolStatOp *op = iter->second;
     ldout(cct, 10) << "have request " << tid << " at " << op << dendl;
     *op->pool_stats = m->pool_stats;
     if (m->version > last_seen_pgmap_version)
       last_seen_pgmap_version = m->version;
-    op->onfinish->complete(0);
-    finish_pool_stat_op(op);
+    Context *onfinish = op->onfinish;
+    _finish_pool_stat_op(op);
+    rwlock.unlock();
+    onfinish->complete(0);
   } else {
+    rwlock.unlock();
     ldout(cct, 10) << "unknown request " << tid << dendl;
   } 
   ldout(cct, 10) << "done" << dendl;
@@ -2318,11 +2389,12 @@ void Objecter::handle_get_pool_stats_reply(MGetPoolStatsReply *m)
 
 int Objecter::pool_stat_op_cancel(tid_t tid, int r)
 {
-  assert(client_lock.is_locked());
   assert(initialized);
 
+  rwlock.get_write();
   map<tid_t, PoolStatOp*>::iterator it = poolstat_ops.find(tid);
   if (it == poolstat_ops.end()) {
+    rwlock.unlock();
     ldout(cct, 10) << __func__ << " tid " << tid << " dne" << dendl;
     return -ENOENT;
   }
@@ -2330,13 +2402,15 @@ int Objecter::pool_stat_op_cancel(tid_t tid, int r)
   ldout(cct, 10) << __func__ << " tid " << tid << dendl;
 
   PoolStatOp *op = it->second;
-  if (op->onfinish)
-    op->onfinish->complete(r);
-  finish_pool_stat_op(op);
+  Context *onfinish = op->onfinish;
+  _finish_pool_stat_op(op);
+  rwlock.unlock();
+  if (onfinish)
+    onfinish->complete(r);
   return 0;
 }
 
-void Objecter::finish_pool_stat_op(PoolStatOp *op)
+void Objecter::_finish_pool_stat_op(PoolStatOp *op)
 {
   poolstat_ops.erase(op->tid);
   logger->set(l_osdc_poolstat_active, poolstat_ops.size());
@@ -2391,20 +2465,28 @@ void Objecter::fs_stats_submit(StatfsOp *op)
 
 void Objecter::handle_fs_stats_reply(MStatfsReply *m)
 {
-  assert(client_lock.is_locked());
   assert(initialized);
   ldout(cct, 10) << "handle_fs_stats_reply " << *m << dendl;
+
+  rwlock.get_write();
+
   tid_t tid = m->get_tid();
 
-  if (statfs_ops.count(tid)) {
+  map<tid_t, StatfsOp *>::iterator iter = statfs_ops.find(tid);
+
+  if (iter != statfs_ops.end()) {
     StatfsOp *op = statfs_ops[tid];
     ldout(cct, 10) << "have request " << tid << " at " << op << dendl;
     *(op->stats) = m->h.st;
     if (m->h.version > last_seen_pgmap_version)
       last_seen_pgmap_version = m->h.version;
-    op->onfinish->complete(0);
-    finish_statfs_op(op);
+    Context *onfinish = op->onfinish;
+    _finish_statfs_op(op);
+    rwlock.unlock();
+    if (onfinish)
+      onfinish->complete(0);
   } else {
+    rwlock.unlock();
     ldout(cct, 10) << "unknown request " << tid << dendl;
   }
   ldout(cct, 10) << "done" << dendl;
@@ -2413,11 +2495,13 @@ void Objecter::handle_fs_stats_reply(MStatfsReply *m)
 
 int Objecter::statfs_op_cancel(tid_t tid, int r)
 {
-  assert(client_lock.is_locked());
   assert(initialized);
+
+  rwlock.get_write();
 
   map<tid_t, StatfsOp*>::iterator it = statfs_ops.find(tid);
   if (it == statfs_ops.end()) {
+    rwlock.unlock();
     ldout(cct, 10) << __func__ << " tid " << tid << " dne" << dendl;
     return -ENOENT;
   }
@@ -2425,13 +2509,15 @@ int Objecter::statfs_op_cancel(tid_t tid, int r)
   ldout(cct, 10) << __func__ << " tid " << tid << dendl;
 
   StatfsOp *op = it->second;
-  if (op->onfinish)
-    op->onfinish->complete(r);
-  finish_statfs_op(op);
+  _finish_statfs_op(op);
+  rwlock.unlock();
+  Context *onfinish = op->onfinish;
+  if (onfinish)
+    onfinish->complete(r);
   return 0;
 }
 
-void Objecter::finish_statfs_op(StatfsOp *op)
+void Objecter::_finish_statfs_op(StatfsOp *op)
 {
   statfs_ops.erase(op->tid);
   logger->set(l_osdc_statfs_active, statfs_ops.size());
@@ -2479,7 +2565,7 @@ void Objecter::ms_handle_connect(Connection *con)
 {
   ldout(cct, 10) << "ms_handle_connect " << con << dendl;
   if (con->get_peer_type() == CEPH_ENTITY_TYPE_MON)
-    resend_mon_ops();
+    _resend_mon_ops();
 }
 
 void Objecter::ms_handle_reset(Connection *con)
@@ -2521,9 +2607,9 @@ void Objecter::dump_active()
   }
 }
 
-void Objecter::dump_requests(Formatter *fmt) const
+void Objecter::dump_requests(Formatter *fmt)
 {
-  assert(client_lock.is_locked());
+  RWLock::RLocker l(rwlock);
 
   fmt->open_object_section("requests");
   dump_ops(fmt);
@@ -2535,8 +2621,10 @@ void Objecter::dump_requests(Formatter *fmt) const
   fmt->close_section(); // requests object
 }
 
-void Objecter::dump_ops(Formatter *fmt) const
+void Objecter::dump_ops(Formatter *fmt)
 {
+  RWLock::RLocker l(rwlock);
+
   fmt->open_array_section("ops");
   for (map<tid_t,Op*>::const_iterator p = ops.begin();
        p != ops.end();
@@ -2568,8 +2656,10 @@ void Objecter::dump_ops(Formatter *fmt) const
   fmt->close_section(); // ops array
 }
 
-void Objecter::dump_linger_ops(Formatter *fmt) const
+void Objecter::dump_linger_ops(Formatter *fmt)
 {
+  RWLock::RLocker l(rwlock);
+
   fmt->open_array_section("linger_ops");
   for (map<uint64_t, LingerOp*>::const_iterator p = linger_ops.begin();
        p != linger_ops.end();
@@ -2588,8 +2678,10 @@ void Objecter::dump_linger_ops(Formatter *fmt) const
   fmt->close_section(); // linger_ops array
 }
 
-void Objecter::dump_command_ops(Formatter *fmt) const
+void Objecter::dump_command_ops(Formatter *fmt)
 {
+  RWLock::RLocker l(rwlock);
+
   fmt->open_array_section("command_ops");
   for (map<uint64_t, CommandOp*>::const_iterator p = command_ops.begin();
        p != command_ops.end();
@@ -2611,8 +2703,10 @@ void Objecter::dump_command_ops(Formatter *fmt) const
   fmt->close_section(); // command_ops array
 }
 
-void Objecter::dump_pool_ops(Formatter *fmt) const
+void Objecter::dump_pool_ops(Formatter *fmt)
 {
+  RWLock::RLocker l(rwlock);
+
   fmt->open_array_section("pool_ops");
   for (map<tid_t, PoolOp*>::const_iterator p = pool_ops.begin();
        p != pool_ops.end();
@@ -2632,8 +2726,10 @@ void Objecter::dump_pool_ops(Formatter *fmt) const
   fmt->close_section(); // pool_ops array
 }
 
-void Objecter::dump_pool_stat_ops(Formatter *fmt) const
+void Objecter::dump_pool_stat_ops(Formatter *fmt)
 {
+  RWLock::RLocker l(rwlock);
+
   fmt->open_array_section("pool_stat_ops");
   for (map<tid_t, PoolStatOp*>::const_iterator p = poolstat_ops.begin();
        p != poolstat_ops.end();
@@ -2656,8 +2752,10 @@ void Objecter::dump_pool_stat_ops(Formatter *fmt) const
   fmt->close_section(); // pool_stat_ops array
 }
 
-void Objecter::dump_statfs_ops(Formatter *fmt) const
+void Objecter::dump_statfs_ops(Formatter *fmt)
 {
+  RWLock::RLocker l(rwlock);
+
   fmt->open_array_section("statfs_ops");
   for (map<tid_t, StatfsOp*>::const_iterator p = statfs_ops.begin();
        p != statfs_ops.end();
@@ -2682,9 +2780,7 @@ bool Objecter::RequestStateHook::call(std::string command, cmdmap_t& cmdmap,
   Formatter *f = new_formatter(format);
   if (!f)
     f = new_formatter("json-pretty");
-  m_objecter->client_lock.Lock();
   m_objecter->dump_requests(f);
-  m_objecter->client_lock.Unlock();
   f->flush(out);
   delete f;
   return true;
@@ -2744,7 +2840,7 @@ public:
 						     objecter(objecter) {}
   void finish(int r) {
     // note that objecter lock == timer lock, and is already held
-    objecter->command_op_cancel(tid, -ETIMEDOUT);
+    objecter->_command_op_cancel(tid, -ETIMEDOUT);
   }
 };
 
@@ -2831,9 +2927,9 @@ void Objecter::_send_command(CommandOp *c)
   logger->inc(l_osdc_command_send);
 }
 
-int Objecter::command_op_cancel(tid_t tid, int r)
+int Objecter::_command_op_cancel(tid_t tid, int r)
 {
-  assert(client_lock.is_locked());
+  assert(rwlock.is_wlocked());
   assert(initialized);
 
   map<tid_t, CommandOp*>::iterator it = command_ops.find(tid);
