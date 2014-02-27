@@ -8,6 +8,7 @@ libcommon_la_SOURCES = \
 	common/BackTrace.cc \
 	common/perf_counters.cc \
 	common/Mutex.cc \
+	common/RWMap.cc \
 	common/OutputDataSocket.cc \
 	common/admin_socket.cc \
 	common/admin_socket_client.cc \
