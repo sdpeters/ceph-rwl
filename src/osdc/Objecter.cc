@@ -313,7 +313,7 @@ void Objecter::send_linger(LingerOp *info)
   Context *oncommit = new C_Linger_Commit(this, info);
   Op *o = new Op(info->oid, info->oloc, opv, info->flags | CEPH_OSD_FLAG_READ,
 		 onack, oncommit,
-		 info->pobjver);
+		 info->pobjver, this);
   o->snapid = info->snap;
   o->snapc = info->snapc;
   o->mtime = info->mtime;
@@ -333,7 +333,7 @@ void Objecter::send_linger(LingerOp *info)
     if (ops.count(info->register_tid)) {
       Op *o = ops[info->register_tid];
       _op_cancel_map_check(o);
-      cancel_linger_op(o);
+      _cancel_linger_op(o);
     }
     info->register_tid = _op_submit(o);
   } else {
@@ -483,12 +483,14 @@ void Objecter::dispatch(Message *m)
   }
 }
 
-void Objecter::scan_requests(bool force_resend,
+void Objecter::_scan_requests(bool force_resend,
 			     bool force_resend_writes,
 			     map<tid_t, Op*>& need_resend,
 			     list<LingerOp*>& need_resend_linger,
 			     map<tid_t, CommandOp*>& need_resend_command)
 {
+  assert(rwlock.is_wlocked());
+
   // check for changed linger mappings (_before_ regular ops)
   map<tid_t,LingerOp*>::iterator lp = linger_ops.begin();
   while (lp != linger_ops.end()) {
@@ -625,7 +627,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	logger->set(l_osdc_map_epoch, osdmap->get_epoch());
 
 	was_full = was_full || osdmap->test_flag(CEPH_OSDMAP_FULL);
-	scan_requests(skipped_map, was_full, need_resend, need_resend_linger,
+	_scan_requests(skipped_map, was_full, need_resend, need_resend_linger,
 		      need_resend_command);
 
 	// osd addr changes?
@@ -650,7 +652,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	ldout(cct, 3) << "handle_osd_map decoding full epoch " << m->get_last() << dendl;
 	osdmap->decode(m->maps[m->get_last()]);
 
-	scan_requests(false, false, need_resend, need_resend_linger,
+	_scan_requests(false, false, need_resend, need_resend_linger,
 		      need_resend_command);
       } else {
 	ldout(cct, 3) << "handle_osd_map hmm, i want a full map, requesting" << dendl;
@@ -676,7 +678,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	send_op(op);
       }
     } else {
-      cancel_linger_op(op);
+      _cancel_linger_op(op);
     }
   }
   for (list<LingerOp*>::iterator p = need_resend_linger.begin(); p != need_resend_linger.end(); ++p) {
@@ -693,7 +695,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
     }
   }
 
-  dump_active();
+  _dump_active();
   
   // finish any Contexts that were waiting on a map update
   map<epoch_t,list< pair< Context*, int > > >::iterator p =
@@ -1059,7 +1061,7 @@ void Objecter::kick_requests(OSDSession *session)
       if (!op->paused)
 	resend[op->tid] = op;
     } else {
-      cancel_linger_op(op);
+      _cancel_linger_op(op);
     }
   }
   while (!resend.empty()) {
@@ -1378,7 +1380,7 @@ int Objecter::op_cancel(tid_t tid, int r)
     op->oncommit = NULL;
   }
   _op_cancel_map_check(op);
-  finish_op(op);
+  _finish_op(op);
   return 0;
 }
 
@@ -1582,7 +1584,7 @@ bool Objecter::recalc_linger_op_target(LingerOp *linger_op)
   return RECALC_OP_TARGET_NO_ACTION;
 }
 
-void Objecter::cancel_linger_op(Op *op)
+void Objecter::_cancel_linger_op(Op *op)
 {
   ldout(cct, 15) << "cancel_op " << op->tid << dendl;
 
@@ -1590,10 +1592,18 @@ void Objecter::cancel_linger_op(Op *op)
   delete op->onack;
   delete op->oncommit;
 
-  finish_op(op);
+  _finish_op(op);
+
+  delete op;
 }
 
 void Objecter::finish_op(Op *op)
+{
+  RWLock::WLocker l(rwlock);
+  _finish_op(op);
+}
+
+void Objecter::_finish_op(Op *op)
 {
   ldout(cct, 15) << "finish_op " << op->tid << dendl;
 
@@ -1607,8 +1617,6 @@ void Objecter::finish_op(Op *op)
 
   if (op->ontimeout)
     timer.cancel_event(op->ontimeout);
-
-  delete op;
 }
 
 void Objecter::send_op(Op *op)
@@ -1715,7 +1723,12 @@ void Objecter::_unregister_op(Op *op)
 /* This function DOES put the passed message before returning */
 void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 {
-  assert(initialized);
+  vector<bufferlist*>::iterator pb;
+  vector<int*>::iterator pr;
+  vector<Context*>::iterator ph;
+  vector<OSDOp>::iterator p;
+  vector<OSDOp> out_ops;
+
   ldout(cct, 10) << "in handle_osd_op_reply" << dendl;
 
   rwlock.get_read();
@@ -1742,15 +1755,22 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 		<< dendl;
   Op *op = iter->second;
 
+  op->get();
+
+  rwlock.unlock();
+
+  op->lock.Lock();
+
+  if (op->need_finish)
+    goto done;
+
   if (m->get_retry_attempt() >= 0) {
     if (m->get_retry_attempt() != (op->attempts - 1)) {
-      rwlock.unlock();
       ldout(cct, 7) << " ignoring reply from attempt " << m->get_retry_attempt()
 		    << " from " << m->get_source_inst()
 		    << "; last attempt " << (op->attempts - 1) << " sent to "
 		    << op->session->con->get_peer_addr() << dendl;
-      m->put();
-      return;
+      goto done;
     }
   } else {
     // we don't know the request attempt because the server is old, so
@@ -1764,25 +1784,29 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   int rc = m->get_result();
 
   if (m->is_redirect_reply()) {
-    rwlock.unlock();
     rwlock.get_write();
     iter = ops.find(tid); /* we dropped the lock, might have raced with others */
     if (iter != ops.end()) {
+      op = iter->second;
       ldout(cct, 5) << " got redirect reply; redirecting" << dendl;
       _unregister_op(op);
       m->get_redirect().combine_with_locator(op->target_oloc, op->target_oid.name);
       _op_submit(op);
     }
-    m->put();
-    return;
+    rwlock.unlock();
+    goto done;
   }
 
   if (rc == -EAGAIN) {
     ldout(cct, 7) << " got -EAGAIN, resubmitting" << dendl;
-    _unregister_op(op);
-    _op_submit(op);
-    m->put();
-    return;
+    rwlock.get_write();
+    iter = ops.find(tid); /* we dropped the lock, might have raced with others */
+    if (iter != ops.end()) {
+      _unregister_op(op);
+      _op_submit(op);
+    }
+    rwlock.unlock();
+    goto done;
   }
 
   if (op->objver)
@@ -1791,7 +1815,6 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     *op->reply_epoch = m->get_map_epoch();
 
   // per-op result demuxing
-  vector<OSDOp> out_ops;
   m->claim_ops(out_ops);
   
   if (out_ops.size() != op->ops.size())
@@ -1799,12 +1822,12 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 		  << " != request ops " << op->ops
 		  << " from " << m->get_source_inst() << dendl;
 
-  vector<bufferlist*>::iterator pb = op->out_bl.begin();
-  vector<int*>::iterator pr = op->out_rval.begin();
-  vector<Context*>::iterator ph = op->out_handler.begin();
+  pb = op->out_bl.begin();
+  pr = op->out_rval.begin();
+  ph = op->out_handler.begin();
   assert(op->out_bl.size() == op->out_rval.size());
   assert(op->out_bl.size() == op->out_handler.size());
-  vector<OSDOp>::iterator p = out_ops.begin();
+  p = out_ops.begin();
   for (unsigned i = 0;
        p != out_ops.end() && pb != op->out_bl.end();
        ++i, ++p, ++pb, ++pr, ++ph) {
@@ -1851,9 +1874,10 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   // done with this tid?
   if (!op->onack && !op->oncommit) {
     ldout(cct, 15) << "handle_osd_op_reply completed tid " << tid << dendl;
-    finish_op(op);
+
+    op->need_finish = true;
+    op->put(); // drop the extra reference
   }
-  
   ldout(cct, 5) << num_unacked << " unacked, " << num_uncommitted << " uncommitted" << dendl;
 
   // do callbacks
@@ -1864,6 +1888,9 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     oncommit->complete(rc);
   }
 
+done:
+  op->lock.Unlock();
+  op->put();
   m->put();
 }
 
@@ -2564,8 +2591,10 @@ void Objecter::_sg_read_finish(vector<ObjectExtent>& extents, vector<bufferlist>
 void Objecter::ms_handle_connect(Connection *con)
 {
   ldout(cct, 10) << "ms_handle_connect " << con << dendl;
-  if (con->get_peer_type() == CEPH_ENTITY_TYPE_MON)
+  if (con->get_peer_type() == CEPH_ENTITY_TYPE_MON) {
+    rwlock.get_write();
     _resend_mon_ops();
+  }
 }
 
 void Objecter::ms_handle_reset(Connection *con)
@@ -2597,8 +2626,9 @@ void Objecter::ms_handle_remote_reset(Connection *con)
 }
 
 
-void Objecter::dump_active()
+void Objecter::_dump_active()
 {
+  assert(rwlock.is_locked());
   ldout(cct, 20) << "dump_active .. " << num_homeless_ops << " homeless" << dendl;
   for (map<tid_t,Op*>::iterator p = ops.begin(); p != ops.end(); ++p) {
     Op *op = p->second;
