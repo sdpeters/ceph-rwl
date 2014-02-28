@@ -345,7 +345,7 @@ void Objecter::send_linger(LingerOp *info)
   if (info->session != s) {
     info->session = s;
     assert(info->session);
-    s->linger_ops[info->register_tid] = info;
+    s->linger_ops[info->linger_id] = info;
   }
 
   logger->inc(l_osdc_linger_send);
@@ -373,11 +373,12 @@ void Objecter::_linger_commit(LingerOp *info, int r)
   info->pobjver = NULL;
 }
 
-void Objecter::OSDSession::unregister_linger(uint64_t linger_id)
+void Objecter::unregister_linger(uint64_t linger_id)
 {
   map<uint64_t, LingerOp*>::iterator iter = linger_ops.find(linger_id);
   if (iter != linger_ops.end()) {
     LingerOp *info = iter->second;
+    info->session->linger_ops.erase(linger_id);
     linger_ops.erase(iter);
     info->put();
 #warning need per-session logger
@@ -411,6 +412,7 @@ tid_t Objecter::linger_mutate(const object_t& oid, const object_locator_t& oloc,
 
   info->linger_id = ++max_linger_id;
 
+  linger_ops[info->linger_id] = info;
   homeless_session.linger_ops[info->linger_id] = info;
 
 #warning per-session logger
@@ -848,7 +850,7 @@ void Objecter::check_linger_pool_dne(LingerOp *op)
       if (op->on_reg_commit) {
 	op->on_reg_commit->complete(-ENOENT);
       }
-      op->session->unregister_linger(op->linger_id);
+      unregister_linger(op->linger_id);
     }
   } else {
     _send_linger_map_check(op);
@@ -1546,7 +1548,7 @@ int Objecter::recalc_op_target(Op *op)
     }
 
     if (op->session != s) {
-      if (op->session->is_homeless())
+      if (!op->session || op->session->is_homeless())
 	num_homeless_ops--;
       op->session = s;
       s->ops[op->tid] = op;

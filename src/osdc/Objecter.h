@@ -1405,13 +1405,13 @@ public:
     OSDSession(int o) : osd(o), incarnation(0), con(NULL) {}
 
     bool is_homeless() { return (osd == -1); }
-
-    void unregister_linger(uint64_t linger_id);
   };
   map<int,OSDSession*> osd_sessions;
 
 
  private:
+  map<uint64_t, LingerOp*>  linger_ops;
+
   map<tid_t,PoolStatOp*>    poolstat_ops;
   map<tid_t,StatfsOp*>      statfs_ops;
   map<tid_t,PoolOp*>        pool_ops;
@@ -1708,6 +1708,7 @@ public:
 		    snapid_t snap, bufferlist& inbl, bufferlist *poutbl, int flags,
 		    Context *onack,
 		    version_t *objver);
+  void unregister_linger(uint64_t linger_id);
 
   /**
    * set up initial ops in the op vector, and allocate a final op slot.
