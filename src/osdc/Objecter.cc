@@ -323,9 +323,12 @@ void Objecter::send_linger(LingerOp *info)
   }
 
   if (info->register_tid) {
+    OSDSession *session = info->session;
+    assert(session);
+
     // repeat send.  cancel old registeration op, if any.
-    if (ops.count(info->register_tid)) {
-      Op *o = ops[info->register_tid];
+    if (session->ops.count(info->register_tid)) {
+      Op *o = session->ops[info->register_tid];
       op_cancel_map_check(o);
       cancel_linger_op(o);
     }
@@ -340,10 +343,9 @@ void Objecter::send_linger(LingerOp *info)
 
   OSDSession *s = o->session;
   if (info->session != s) {
-    info->session_item.remove_myself();
     info->session = s;
-    if (info->session)
-      s->linger_ops.push_back(&info->session_item);
+    assert(info->session);
+    s->linger_ops[info->register_tid] = info;
   }
 
   logger->inc(l_osdc_linger_send);
@@ -371,15 +373,17 @@ void Objecter::_linger_commit(LingerOp *info, int r)
   info->pobjver = NULL;
 }
 
-void Objecter::unregister_linger(uint64_t linger_id)
+void Objecter::OSDSession::unregister_linger(uint64_t linger_id)
 {
   map<uint64_t, LingerOp*>::iterator iter = linger_ops.find(linger_id);
   if (iter != linger_ops.end()) {
     LingerOp *info = iter->second;
-    info->session_item.remove_myself();
     linger_ops.erase(iter);
     info->put();
+#warning need per-session logger
+#if 0
     logger->set(l_osdc_linger_active, linger_ops.size());
+#endif
   }
 }
 
@@ -406,9 +410,13 @@ tid_t Objecter::linger_mutate(const object_t& oid, const object_locator_t& oloc,
   info->on_reg_commit = oncommit;
 
   info->linger_id = ++max_linger_id;
-  linger_ops[info->linger_id] = info;
 
+  homeless_session.linger_ops[info->linger_id] = info;
+
+#warning per-session logger
+#if 0
   logger->set(l_osdc_linger_active, linger_ops.size());
+#endif
 
   send_linger(info);
 
@@ -435,9 +443,11 @@ tid_t Objecter::linger_read(const object_t& oid, const object_locator_t& oloc,
   info->on_reg_commit = onfinish;
 
   info->linger_id = ++max_linger_id;
-  linger_ops[info->linger_id] = info;
 
+#warning send_linger should update the per-session logger
+#if 0
   logger->set(l_osdc_linger_active, linger_ops.size());
+#endif
 
   send_linger(info);
 
@@ -477,15 +487,16 @@ void Objecter::dispatch(Message *m)
   }
 }
 
-void Objecter::scan_requests(bool force_resend,
+void Objecter::scan_requests(OSDSession *s,
+                             bool force_resend,
 			     bool force_resend_writes,
 			     map<tid_t, Op*>& need_resend,
 			     list<LingerOp*>& need_resend_linger,
 			     map<tid_t, CommandOp*>& need_resend_command)
 {
   // check for changed linger mappings (_before_ regular ops)
-  map<tid_t,LingerOp*>::iterator lp = linger_ops.begin();
-  while (lp != linger_ops.end()) {
+  map<tid_t,LingerOp*>::iterator lp = s->linger_ops.begin();
+  while (lp != s->linger_ops.end()) {
     LingerOp *op = lp->second;
     ++lp;   // check_linger_pool_dne() may touch linger_ops; prevent iterator invalidation
     ldout(cct, 10) << " checking linger op " << op->linger_id << dendl;
@@ -506,8 +517,8 @@ void Objecter::scan_requests(bool force_resend,
   }
 
   // check for changed request mappings
-  map<tid_t,Op*>::iterator p = ops.begin();
-  while (p != ops.end()) {
+  map<tid_t,Op*>::iterator p = s->ops.begin();
+  while (p != s->ops.end()) {
     Op *op = p->second;
     ++p;   // check_op_pool_dne() may touch ops; prevent iterator invalidation
     ldout(cct, 10) << " checking op " << op->tid << dendl;
@@ -529,8 +540,8 @@ void Objecter::scan_requests(bool force_resend,
   }
 
   // commands
-  map<tid_t,CommandOp*>::iterator cp = command_ops.begin();
-  while (cp != command_ops.end()) {
+  map<tid_t,CommandOp*>::iterator cp = s->command_ops.begin();
+  while (cp != s->command_ops.end()) {
     CommandOp *c = cp->second;
     ++cp;
     ldout(cct, 10) << " checking command " << c->tid << dendl;
@@ -619,13 +630,16 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	logger->set(l_osdc_map_epoch, osdmap->get_epoch());
 
 	was_full = was_full || osdmap->test_flag(CEPH_OSDMAP_FULL);
-	scan_requests(skipped_map, was_full, need_resend, need_resend_linger,
+	scan_requests(&homeless_session, skipped_map, was_full, need_resend, need_resend_linger,
 		      need_resend_command);
 
 	// osd addr changes?
 	for (map<int,OSDSession*>::iterator p = osd_sessions.begin();
 	     p != osd_sessions.end(); ) {
 	  OSDSession *s = p->second;
+	  scan_requests(s, skipped_map, was_full, need_resend, need_resend_linger,
+		        need_resend_command);
+
 	  ++p;
 	  if (osdmap->is_up(s->osd)) {
 	    if (s->con && s->con->get_peer_addr() != osdmap->get_inst(s->osd).addr)
@@ -641,10 +655,16 @@ void Objecter::handle_osd_map(MOSDMap *m)
     } else {
       // first map.  we want the full thing.
       if (m->maps.count(m->get_last())) {
+        for (map<int,OSDSession*>::iterator p = osd_sessions.begin();
+          p != osd_sessions.end(); ++p) {
+	  OSDSession *s = p->second;
+	  scan_requests(s, false, false, need_resend, need_resend_linger,
+		        need_resend_command);
+        }
 	ldout(cct, 3) << "handle_osd_map decoding full epoch " << m->get_last() << dendl;
 	osdmap->decode(m->maps[m->get_last()]);
 
-	scan_requests(false, false, need_resend, need_resend_linger,
+	scan_requests(&homeless_session, false, false, need_resend, need_resend_linger,
 		      need_resend_command);
       } else {
 	ldout(cct, 3) << "handle_osd_map hmm, i want a full map, requesting" << dendl;
@@ -758,8 +778,7 @@ void Objecter::check_op_pool_dne(Op *op)
       if (op->oncommit) {
 	op->oncommit->complete(-ENOENT);
       }
-      op->session_item.remove_myself();
-      ops.erase(op->tid);
+      op->session->ops.erase(op->tid);
       delete op;
     }
   } else {
@@ -829,7 +848,7 @@ void Objecter::check_linger_pool_dne(LingerOp *op)
       if (op->on_reg_commit) {
 	op->on_reg_commit->complete(-ENOENT);
       }
-      unregister_linger(op->linger_id);
+      op->session->unregister_linger(op->linger_id);
     }
   } else {
     _send_linger_map_check(op);
@@ -1044,8 +1063,8 @@ void Objecter::kick_requests(OSDSession *session)
 
   // resend ops
   map<tid_t,Op*> resend;  // resend in tid order
-  for (xlist<Op*>::iterator p = session->ops.begin(); !p.end();) {
-    Op *op = *p;
+  for (map<tid_t, Op*>::iterator p = session->ops.begin(); p != session->ops.end();) {
+    Op *op = p->second;
     ++p;
     logger->inc(l_osdc_op_resend);
     if (op->should_resend) {
@@ -1062,9 +1081,9 @@ void Objecter::kick_requests(OSDSession *session)
 
   // resend lingers
   map<uint64_t, LingerOp*> lresend;  // resend in order
-  for (xlist<LingerOp*>::iterator j = session->linger_ops.begin(); !j.end(); ++j) {
+  for (map<tid_t, LingerOp*>::iterator j = session->linger_ops.begin(); j != session->linger_ops.end(); ++j) {
     logger->inc(l_osdc_linger_resend);
-    lresend[(*j)->linger_id] = *j;
+    lresend[j->first] = j->second;
   }
   while (!lresend.empty()) {
     send_linger(lresend.begin()->second);
@@ -1073,9 +1092,9 @@ void Objecter::kick_requests(OSDSession *session)
 
   // resend commands
   map<uint64_t,CommandOp*> cresend;  // resend in order
-  for (xlist<CommandOp*>::iterator k = session->command_ops.begin(); !k.end(); ++k) {
+  for (map<tid_t, CommandOp*>::iterator k = session->command_ops.begin(); k != session->command_ops.end(); ++k) {
     logger->inc(l_osdc_command_resend);
-    cresend[(*k)->tid] = *k;
+    cresend[k->first] = k->second;
   }
   while (!cresend.empty()) {
     _send_command(cresend.begin()->second);
@@ -1107,36 +1126,34 @@ void Objecter::tick()
   cutoff -= cct->_conf->objecter_timeout;  // timeout
 
   unsigned laggy_ops = 0;
-  for (map<tid_t,Op*>::iterator p = ops.begin();
-       p != ops.end();
-       ++p) {
-    Op *op = p->second;
-    if (op->session && op->stamp < cutoff) {
-      ldout(cct, 2) << " tid " << p->first << " on osd." << op->session->osd << " is laggy" << dendl;
-      toping.insert(op->session);
-      ++laggy_ops;
+  for (map<int,OSDSession*>::iterator siter = osd_sessions.begin(); siter != osd_sessions.end(); ++siter) {
+    OSDSession *s = siter->second;
+    for (map<tid_t,Op*>::iterator p = s->ops.begin();
+         p != s->ops.end();
+         ++p) {
+      Op *op = p->second;
+      assert(op->session);
+      if (op->stamp < cutoff) {
+        ldout(cct, 2) << " tid " << p->first << " on osd." << op->session->osd << " is laggy" << dendl;
+        toping.insert(op->session);
+        ++laggy_ops;
+      }
     }
-  }
-  for (map<uint64_t,LingerOp*>::iterator p = linger_ops.begin();
-       p != linger_ops.end();
-       ++p) {
-    LingerOp *op = p->second;
-    if (op->session) {
+    for (map<uint64_t,LingerOp*>::iterator p = s->linger_ops.begin();
+         p != s->linger_ops.end();
+         ++p) {
+      LingerOp *op = p->second;
+      assert(op->session);
       ldout(cct, 10) << " pinging osd that serves lingering tid " << p->first << " (osd." << op->session->osd << ")" << dendl;
       toping.insert(op->session);
-    } else {
-      ldout(cct, 10) << " lingering tid " << p->first << " does not have session" << dendl;
     }
-  }
-  for (map<uint64_t,CommandOp*>::iterator p = command_ops.begin();
-       p != command_ops.end();
-       ++p) {
-    CommandOp *op = p->second;
-    if (op->session) {
+    for (map<uint64_t,CommandOp*>::iterator p = s->command_ops.begin();
+         p != s->command_ops.end();
+         ++p) {
+      CommandOp *op = p->second;
+      assert(op->session);
       ldout(cct, 10) << " pinging osd that serves command tid " << p->first << " (osd." << op->session->osd << ")" << dendl;
       toping.insert(op->session);
-    } else {
-      ldout(cct, 10) << " command tid " << p->first << " does not have session" << dendl;
     }
   }
   logger->set(l_osdc_op_laggy, laggy_ops);
@@ -1214,7 +1231,7 @@ public:
 						     objecter(objecter) {}
   void finish(int r) {
     // note that objecter lock == timer lock, and is already held
-    objecter->op_cancel(op->tid, -ETIMEDOUT);
+    objecter->op_cancel(op->session, op->tid, -ETIMEDOUT);
   }
 };
 
@@ -1249,6 +1266,7 @@ tid_t Objecter::_op_submit(Op *op)
   // pick target
   num_homeless_ops++;  // initially; recalc_op_target() will decrement if it finds a target
   int r = recalc_op_target(op);
+  assert(op->session);
   bool check_for_latest_map = (r == RECALC_OP_TARGET_POOL_DNE);
 
   // add to gather set(s)
@@ -1262,9 +1280,12 @@ tid_t Objecter::_op_submit(Op *op)
   } else {
     ldout(cct, 20) << " note: not requesting commit" << dendl;
   }
-  ops[op->tid] = op;
+  op->session->ops[op->tid] = op;
 
+#warning FIXME
+#if 0
   logger->set(l_osdc_op_active, ops.size());
+#endif
 
   logger->inc(l_osdc_op);
   if ((op->flags & (CEPH_OSD_FLAG_READ|CEPH_OSD_FLAG_WRITE)) == (CEPH_OSD_FLAG_READ|CEPH_OSD_FLAG_WRITE))
@@ -1348,13 +1369,13 @@ tid_t Objecter::_op_submit(Op *op)
   return op->tid;
 }
 
-int Objecter::op_cancel(tid_t tid, int r)
+int Objecter::op_cancel(OSDSession *s, tid_t tid, int r)
 {
   assert(client_lock.is_locked());
   assert(initialized);
 
-  map<tid_t, Op*>::iterator p = ops.find(tid);
-  if (p == ops.end()) {
+  map<tid_t, Op*>::iterator p = s->ops.find(tid);
+  if (p == s->ops.end()) {
     ldout(cct, 10) << __func__ << " tid " << tid << " dne" << dendl;
     return -ENOENT;
   }
@@ -1483,7 +1504,7 @@ int Objecter::recalc_op_target(Op *op)
     ldout(cct, 10) << "recalc_op_target tid " << op->tid
 	     << " pgid " << pgid << " acting " << acting << dendl;
 
-    OSDSession *s = NULL;
+    OSDSession *s = &homeless_session;
     op->used_replica = false;
     if (primary != -1) {
       int osd;
@@ -1525,13 +1546,11 @@ int Objecter::recalc_op_target(Op *op)
     }
 
     if (op->session != s) {
-      if (!op->session)
+      if (op->session->is_homeless())
 	num_homeless_ops--;
-      op->session_item.remove_myself();
       op->session = s;
-      if (s)
-	s->ops.push_back(&op->session_item);
-      else
+      s->ops[op->tid] = op;
+      if (s->is_homeless())
 	num_homeless_ops++;
     }
     need_resend = true;
@@ -1562,12 +1581,10 @@ bool Objecter::recalc_linger_op_target(LingerOp *linger_op)
     ldout(cct, 10) << "recalc_linger_op_target tid " << linger_op->linger_id
 	     << " pgid " << pgid << " acting " << acting << dendl;
     
-    OSDSession *s = primary != -1 ? get_session(primary) : NULL;
+    OSDSession *s = primary != -1 ? get_session(primary) : &homeless_session;
     if (linger_op->session != s) {
-      linger_op->session_item.remove_myself();
       linger_op->session = s;
-      if (s)
-	s->linger_ops.push_back(&linger_op->session_item);
+      s->linger_ops[linger_op->register_tid] = linger_op;
     }
     return RECALC_OP_TARGET_NEED_RESEND;
   }
@@ -1589,12 +1606,14 @@ void Objecter::finish_op(Op *op)
 {
   ldout(cct, 15) << "finish_op " << op->tid << dendl;
 
-  op->session_item.remove_myself();
   if (op->budgeted)
     put_op_budget(op);
 
-  ops.erase(op->tid);
+  op->session->ops.erase(op->tid);
+#warning FIXME
+#if 0
   logger->set(l_osdc_op_active, ops.size());
+#endif
   assert(check_latest_map_ops.find(op->tid) == check_latest_map_ops.end());
 
   if (op->ontimeout)
@@ -1699,7 +1718,7 @@ void Objecter::unregister_op(Op *op)
     num_unacked--;
   if (op->oncommit)
     num_uncommitted--;
-  ops.erase(op->tid);
+  op->session->ops.erase(op->tid);
 }
 
 /* This function DOES put the passed message before returning */
@@ -1712,7 +1731,21 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   // get pio
   tid_t tid = m->get_tid();
 
-  if (ops.count(tid) == 0) {
+  int osd_num = (int)m->get_source().num();
+
+  map<int, OSDSession *>::iterator siter = osd_sessions.find(osd_num);
+
+  if (siter == osd_sessions.end()) {
+    ldout(cct, 7) << "handle_osd_op_reply " << tid
+	    << (m->is_ondisk() ? " ondisk":(m->is_onnvram() ? " onnvram":" ack"))
+	    << " ... unknown osd" << dendl;
+    m->put();
+    return;
+  }
+
+  OSDSession *s = siter->second;
+
+  if (s->ops.count(tid) == 0) {
     ldout(cct, 7) << "handle_osd_op_reply " << tid
 	    << (m->is_ondisk() ? " ondisk":(m->is_onnvram() ? " onnvram":" ack"))
 	    << " ... stray" << dendl;
@@ -1726,7 +1759,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 		<< " in " << m->get_pg()
 		<< " attempt " << m->get_retry_attempt()
 		<< dendl;
-  Op *op = ops[tid];
+  Op *op = s->ops[tid];
 
   if (m->get_retry_attempt() >= 0) {
     if (m->get_retry_attempt() != (op->attempts - 1)) {
@@ -2511,14 +2544,23 @@ void Objecter::ms_handle_remote_reset(Connection *con)
 }
 
 
+void Objecter::dump_active(OSDSession *s)
+{
+  for (map<tid_t,Op*>::iterator p = s->ops.begin(); p != s->ops.end(); ++p) {
+    Op *op = p->second;
+    ldout(cct, 20) << op->tid << "\t" << op->pgid << "\tosd." << (op->session ? op->session->osd : -1)
+      << "\t" << op->base_oid << "\t" << op->ops << dendl;
+  }
+}
+
 void Objecter::dump_active()
 {
   ldout(cct, 20) << "dump_active .. " << num_homeless_ops << " homeless" << dendl;
-  for (map<tid_t,Op*>::iterator p = ops.begin(); p != ops.end(); ++p) {
-    Op *op = p->second;
-    ldout(cct, 20) << op->tid << "\t" << op->pgid << "\tosd." << (op->session ? op->session->osd : -1)
-	    << "\t" << op->base_oid << "\t" << op->ops << dendl;
+  for (map<int, OSDSession *>::iterator siter = osd_sessions.begin(); siter != osd_sessions.end(); ++siter) {
+    OSDSession *s = siter->second;
+    dump_active(s);
   }
+  dump_active(&homeless_session);
 }
 
 void Objecter::dump_requests(Formatter *fmt) const
@@ -2535,11 +2577,10 @@ void Objecter::dump_requests(Formatter *fmt) const
   fmt->close_section(); // requests object
 }
 
-void Objecter::dump_ops(Formatter *fmt) const
+void Objecter::dump_ops(const OSDSession *s, Formatter *fmt) const
 {
-  fmt->open_array_section("ops");
-  for (map<tid_t,Op*>::const_iterator p = ops.begin();
-       p != ops.end();
+  for (map<tid_t,Op*>::const_iterator p = s->ops.begin();
+       p != s->ops.end();
        ++p) {
     Op *op = p->second;
     fmt->open_object_section("op");
@@ -2565,14 +2606,23 @@ void Objecter::dump_ops(Formatter *fmt) const
 
     fmt->close_section(); // op object
   }
+}
+
+void Objecter::dump_ops(Formatter *fmt) const
+{
+  fmt->open_array_section("ops");
+  for (map<int, OSDSession *>::const_iterator siter = osd_sessions.begin(); siter != osd_sessions.end(); ++siter) {
+    OSDSession *s = siter->second;
+    dump_ops(s, fmt);
+  }
+  dump_ops(&homeless_session, fmt);
   fmt->close_section(); // ops array
 }
 
-void Objecter::dump_linger_ops(Formatter *fmt) const
+void Objecter::dump_linger_ops(const OSDSession *s, Formatter *fmt) const
 {
-  fmt->open_array_section("linger_ops");
-  for (map<uint64_t, LingerOp*>::const_iterator p = linger_ops.begin();
-       p != linger_ops.end();
+  for (map<uint64_t, LingerOp*>::const_iterator p = s->linger_ops.begin();
+       p != s->linger_ops.end();
        ++p) {
     LingerOp *op = p->second;
     fmt->open_object_section("linger_op");
@@ -2585,14 +2635,23 @@ void Objecter::dump_linger_ops(Formatter *fmt) const
     fmt->dump_stream("registered") << op->registered;
     fmt->close_section(); // linger_op object
   }
+}
+
+void Objecter::dump_linger_ops(Formatter *fmt) const
+{
+  fmt->open_array_section("linger_ops");
+  for (map<int, OSDSession *>::const_iterator siter = osd_sessions.begin(); siter != osd_sessions.end(); ++siter) {
+    OSDSession *s = siter->second;
+    dump_linger_ops(s, fmt);
+  }
+  dump_linger_ops(&homeless_session, fmt);
   fmt->close_section(); // linger_ops array
 }
 
-void Objecter::dump_command_ops(Formatter *fmt) const
+void Objecter::dump_command_ops(const OSDSession *s, Formatter *fmt) const
 {
-  fmt->open_array_section("command_ops");
-  for (map<uint64_t, CommandOp*>::const_iterator p = command_ops.begin();
-       p != command_ops.end();
+  for (map<uint64_t, CommandOp*>::const_iterator p = s->command_ops.begin();
+       p != s->command_ops.end();
        ++p) {
     CommandOp *op = p->second;
     fmt->open_object_section("command_op");
@@ -2608,6 +2667,16 @@ void Objecter::dump_command_ops(Formatter *fmt) const
       fmt->dump_stream("target_pg") << op->target_pg;
     fmt->close_section(); // command_op object
   }
+}
+
+void Objecter::dump_command_ops(Formatter *fmt) const
+{
+  fmt->open_array_section("command_ops");
+  for (map<int, OSDSession *>::const_iterator siter = osd_sessions.begin(); siter != osd_sessions.end(); ++siter) {
+    OSDSession *s = siter->second;
+    dump_command_ops(s, fmt);
+  }
+  dump_command_ops(&homeless_session, fmt);
   fmt->close_section(); // command_ops array
 }
 
@@ -2714,8 +2783,19 @@ void Objecter::blacklist_self(bool set)
 
 void Objecter::handle_command_reply(MCommandReply *m)
 {
-  map<tid_t,CommandOp*>::iterator p = command_ops.find(m->get_tid());
-  if (p == command_ops.end()) {
+  int osd_num = (int)m->get_source().num();
+
+  map<int, OSDSession *>::iterator siter = osd_sessions.find(osd_num);
+  if (siter == osd_sessions.end()) {
+    ldout(cct, 10) << "handle_command_reply tid " << m->get_tid() << " osd not found" << dendl;
+    m->put();
+    return;
+  }
+
+  OSDSession *s = siter->second;
+
+  map<tid_t,CommandOp*>::iterator p = s->command_ops.find(m->get_tid());
+  if (p == s->command_ops.end()) {
     ldout(cct, 10) << "handle_command_reply tid " << m->get_tid() << " not found" << dendl;
     m->put();
     return;
@@ -2737,14 +2817,15 @@ void Objecter::handle_command_reply(MCommandReply *m)
 
 class C_CancelCommandOp : public Context
 {
+  Objecter::OSDSession *s;
   tid_t tid;
   Objecter *objecter;
 public:
-  C_CancelCommandOp(tid_t tid, Objecter *objecter) : tid(tid),
+  C_CancelCommandOp(Objecter::OSDSession *s, tid_t tid, Objecter *objecter) : s(s), tid(tid),
 						     objecter(objecter) {}
   void finish(int r) {
     // note that objecter lock == timer lock, and is already held
-    objecter->command_op_cancel(tid, -ETIMEDOUT);
+    objecter->command_op_cancel(s, tid, -ETIMEDOUT);
   }
 };
 
@@ -2753,15 +2834,15 @@ int Objecter::_submit_command(CommandOp *c, tid_t *ptid)
   tid_t tid = ++last_tid;
   ldout(cct, 10) << "_submit_command " << tid << " " << c->cmd << dendl;
   c->tid = tid;
-  if (osd_timeout > 0) {
-    c->ontimeout = new C_CancelCommandOp(tid, this);
-    timer.add_event_after(osd_timeout, c->ontimeout);
-  }
-  command_ops[tid] = c;
+  homeless_session.command_ops[tid] = c;
   num_homeless_ops++;
   (void)recalc_command_target(c);
+  if (osd_timeout > 0) {
+    c->ontimeout = new C_CancelCommandOp(c->session, tid, this);
+    timer.add_event_after(osd_timeout, c->ontimeout);
+  }
 
-  if (c->session)
+  if (!c->session->is_homeless())
     _send_command(c);
   else
     maybe_request_map();
@@ -2769,13 +2850,16 @@ int Objecter::_submit_command(CommandOp *c, tid_t *ptid)
     _send_command_map_check(c);
   *ptid = tid;
 
+#warning FIXME
+#if 0
   logger->set(l_osdc_command_active, command_ops.size());
+#endif
   return 0;
 }
 
 int Objecter::recalc_command_target(CommandOp *c)
 {
-  OSDSession *s = NULL;
+  OSDSession *s = &homeless_session;
   c->map_check_error = 0;
   if (c->target_osd >= 0) {
     if (!osdmap->exists(c->target_osd)) {
@@ -2804,12 +2888,11 @@ int Objecter::recalc_command_target(CommandOp *c)
   if (c->session != s) {
     ldout(cct, 10) << "recalc_command_target " << c->tid << " now " << c->session << dendl;
     if (s) {
-      if (!c->session)
+      if (c->session->is_homeless())
 	num_homeless_ops--;
       c->session = s;
-      s->command_ops.push_back(&c->session_item);
     } else {
-      c->session = NULL;
+      c->session = &homeless_session;
       num_homeless_ops++;
     }
     return RECALC_OP_TARGET_NEED_RESEND;
@@ -2831,13 +2914,13 @@ void Objecter::_send_command(CommandOp *c)
   logger->inc(l_osdc_command_send);
 }
 
-int Objecter::command_op_cancel(tid_t tid, int r)
+int Objecter::command_op_cancel(OSDSession *s, tid_t tid, int r)
 {
   assert(client_lock.is_locked());
   assert(initialized);
 
-  map<tid_t, CommandOp*>::iterator it = command_ops.find(tid);
-  if (it == command_ops.end()) {
+  map<tid_t, CommandOp*>::iterator it = s->command_ops.find(tid);
+  if (it == s->command_ops.end()) {
     ldout(cct, 10) << __func__ << " tid " << tid << " dne" << dendl;
     return -ENOENT;
   }
@@ -2853,15 +2936,16 @@ int Objecter::command_op_cancel(tid_t tid, int r)
 void Objecter::_finish_command(CommandOp *c, int r, string rs)
 {
   ldout(cct, 10) << "_finish_command " << c->tid << " = " << r << " " << rs << dendl;
-  c->session_item.remove_myself();
   if (c->prs)
     *c->prs = rs;
   if (c->onfinish)
     c->onfinish->complete(r);
-  command_ops.erase(c->tid);
+  c->session->command_ops.erase(c->tid);
   if (c->ontimeout)
     timer.cancel_event(c->ontimeout);
   c->put();
 
+#if 0
   logger->set(l_osdc_command_active, command_ops.size());
+#endif
 }

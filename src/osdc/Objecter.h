@@ -17,7 +17,6 @@
 
 #include "include/types.h"
 #include "include/buffer.h"
-#include "include/xlist.h"
 
 #include "osd/OSDMap.h"
 #include "messages/MOSDOp.h"
@@ -1045,7 +1044,6 @@ public:
 
   struct Op {
     OSDSession *session;
-    xlist<Op*>::item session_item;
     int incarnation;
     
     object_t base_oid;
@@ -1097,7 +1095,7 @@ public:
 
     Op(const object_t& o, const object_locator_t& ol, vector<OSDOp>& op,
        int f, Context *ac, Context *co, version_t *ov) :
-      session(NULL), session_item(this), incarnation(0),
+      session(NULL), incarnation(0),
       base_oid(o), base_oloc(ol),
       precalc_pgid(false),
       primary(-1),
@@ -1280,7 +1278,6 @@ public:
 
   // -- osd commands --
   struct CommandOp : public RefCountedObject {
-    xlist<CommandOp*>::item session_item;
     OSDSession *session;
     tid_t tid;
     vector<string> cmd;
@@ -1296,7 +1293,7 @@ public:
     utime_t last_submit;
 
     CommandOp()
-      : session_item(this), session(NULL),
+      : session(NULL),
 	tid(0), poutbl(NULL), prs(NULL), target_osd(-1),
 	map_dne_bound(0),
 	map_check_error(0),
@@ -1307,7 +1304,7 @@ public:
   int _submit_command(CommandOp *c, tid_t *ptid);
   int recalc_command_target(CommandOp *c);
   void _send_command(CommandOp *c);
-  int command_op_cancel(tid_t tid, int r);
+  int command_op_cancel(OSDSession *s, tid_t tid, int r);
   void _finish_command(CommandOp *c, int r, string rs);
   void handle_command_reply(MCommandReply *m);
 
@@ -1337,7 +1334,6 @@ public:
     Context *on_reg_ack, *on_reg_commit;
 
     OSDSession *session;
-    xlist<LingerOp*>::item session_item;
 
     tid_t register_tid;
     epoch_t map_dne_bound;
@@ -1347,7 +1343,7 @@ public:
 		 poutbl(NULL), pobjver(NULL),
 		 registered(false),
 		 on_reg_ack(NULL), on_reg_commit(NULL),
-		 session(NULL), session_item(this),
+		 session(NULL),
 		 register_tid(0),
 		 map_dne_bound(0) {}
 
@@ -1397,27 +1393,31 @@ public:
 
   // -- osd sessions --
   struct OSDSession {
-    xlist<Op*> ops;
-    xlist<LingerOp*> linger_ops;
-    xlist<CommandOp*> command_ops;
+    // pending ops
+    map<tid_t,Op*>            ops;
+    map<uint64_t, LingerOp*>  linger_ops;
+    map<tid_t,CommandOp*>     command_ops;
+
     int osd;
     int incarnation;
     ConnectionRef con;
 
     OSDSession(int o) : osd(o), incarnation(0), con(NULL) {}
+
+    bool is_homeless() { return (osd == -1); }
+
+    void unregister_linger(uint64_t linger_id);
   };
   map<int,OSDSession*> osd_sessions;
 
 
  private:
-  // pending ops
-  map<tid_t,Op*>            ops;
-  int                       num_homeless_ops;
-  map<uint64_t, LingerOp*>  linger_ops;
   map<tid_t,PoolStatOp*>    poolstat_ops;
   map<tid_t,StatfsOp*>      statfs_ops;
   map<tid_t,PoolOp*>        pool_ops;
-  map<tid_t,CommandOp*>     command_ops;
+  int                       num_homeless_ops;
+
+  OSDSession homeless_session;
 
   // ops waiting for an osdmap with a new pool or confirmation that
   // the pool does not exist (may be expanded to other uses later)
@@ -1516,6 +1516,7 @@ public:
     logger(NULL), tick_event(NULL),
     m_request_state_hook(NULL),
     num_homeless_ops(0),
+    homeless_session(-1),
     mon_timeout(mon_timeout),
     osd_timeout(osd_timeout),
     op_throttle_bytes(cct, "objecter_bytes", cct->_conf->objecter_inflight_op_bytes),
@@ -1545,7 +1546,8 @@ public:
   void set_honor_osdmap_full() { honor_osdmap_full = true; }
   void unset_honor_osdmap_full() { honor_osdmap_full = false; }
 
-  void scan_requests(bool force_resend,
+  void scan_requests(OSDSession *s,
+                     bool force_resend,
 		     bool force_resend_writes,
 		     map<tid_t, Op*>& need_resend,
 		     list<LingerOp*>& need_resend_linger,
@@ -1569,17 +1571,25 @@ private:
   // public interface
 public:
   tid_t op_submit(Op *op);
-  bool is_active() {
+  bool is_active();
+#warning FIXME
+#if 0
+  {
     return !(ops.empty() && linger_ops.empty() && poolstat_ops.empty() && statfs_ops.empty());
   }
+#endif
 
   /**
    * Output in-flight requests
    */
+  void dump_active(OSDSession *s);
   void dump_active();
   void dump_requests(Formatter *fmt) const;
+  void dump_ops(const OSDSession *s, Formatter *fmt) const;
   void dump_ops(Formatter *fmt) const;
+  void dump_linger_ops(const OSDSession *s, Formatter *fmt) const;
   void dump_linger_ops(Formatter *fmt) const;
+  void dump_command_ops(const OSDSession *s, Formatter *fmt) const;
   void dump_command_ops(Formatter *fmt) const;
   void dump_pool_ops(Formatter *fmt) const;
   void dump_pool_stat_ops(Formatter *fmt) const;
@@ -1600,7 +1610,7 @@ public:
   void clear_global_op_flag(int flags) { global_op_flags &= ~flags; }
 
   /// cancel an in-progress request with the given return code
-  int op_cancel(tid_t tid, int r);
+  int op_cancel(OSDSession *s, tid_t tid, int r);
 
   // commands
   int osd_command(int osd, vector<string>& cmd,
@@ -1698,7 +1708,6 @@ public:
 		    snapid_t snap, bufferlist& inbl, bufferlist *poutbl, int flags,
 		    Context *onack,
 		    version_t *objver);
-  void unregister_linger(uint64_t linger_id);
 
   /**
    * set up initial ops in the op vector, and allocate a final op slot.
