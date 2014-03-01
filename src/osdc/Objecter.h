@@ -23,6 +23,7 @@
 
 #include "common/admin_socket.h"
 #include "common/Timer.h"
+#include "common/RWLock.h"
 #include "include/rados/rados_types.h"
 #include "include/rados/rados_types.hpp"
 
@@ -1011,6 +1012,7 @@ private:
   version_t last_seen_pgmap_version;
 
   Mutex &client_lock;
+  RWLock sessions_lock;
   SafeTimer &timer;
 
   PerfCounters *logger;
@@ -1392,7 +1394,9 @@ public:
   };
 
   // -- osd sessions --
-  struct OSDSession {
+  struct OSDSession : public RefCountedObject {
+    RWLock lock;
+
     // pending ops
     map<tid_t,Op*>            ops;
     map<uint64_t, LingerOp*>  linger_ops;
@@ -1402,7 +1406,7 @@ public:
     int incarnation;
     ConnectionRef con;
 
-    OSDSession(int o) : osd(o), incarnation(0), con(NULL) {}
+    OSDSession(int o) : lock("OSDSession"), osd(o), incarnation(0), con(NULL) {}
 
     bool is_homeless() { return (osd == -1); }
   };
@@ -1431,7 +1435,11 @@ public:
 
   void send_op(Op *op);
   void cancel_linger_op(Op *op);
+  void _cancel_linger_op(Op *op);
   void finish_op(Op *op);
+  void _finish_op(Op *op);
+  void _finish_op_start(Op *op);
+  void _finish_op_end(Op *op);
   static bool is_pg_changed(
     int oldprimary,
     const vector<int>& oldacting,
@@ -1466,6 +1474,7 @@ public:
   void kick_requests(OSDSession *session);
 
   OSDSession *get_session(int osd);
+  void put_session(OSDSession *s);
   void reopen_session(OSDSession *session);
   void close_session(OSDSession *session);
   
@@ -1512,7 +1521,7 @@ public:
     keep_balanced_budget(false), honor_osdmap_full(true),
     last_seen_osdmap_version(0),
     last_seen_pgmap_version(0),
-    client_lock(l), timer(t),
+    client_lock(l), sessions_lock("Objecter::sessions_lock"), timer(t),
     logger(NULL), tick_event(NULL),
     m_request_state_hook(NULL),
     num_homeless_ops(0),
@@ -1582,15 +1591,16 @@ public:
   /**
    * Output in-flight requests
    */
-  void dump_active(OSDSession *s);
+  void _dump_active(OSDSession *s);
+  void _dump_active();
   void dump_active();
-  void dump_requests(Formatter *fmt) const;
-  void dump_ops(const OSDSession *s, Formatter *fmt) const;
-  void dump_ops(Formatter *fmt) const;
-  void dump_linger_ops(const OSDSession *s, Formatter *fmt) const;
-  void dump_linger_ops(Formatter *fmt) const;
-  void dump_command_ops(const OSDSession *s, Formatter *fmt) const;
-  void dump_command_ops(Formatter *fmt) const;
+  void dump_requests(Formatter *fmt);
+  void _dump_ops(const OSDSession *s, Formatter *fmt);
+  void dump_ops(Formatter *fmt);
+  void _dump_linger_ops(const OSDSession *s, Formatter *fmt);
+  void dump_linger_ops(Formatter *fmt);
+  void _dump_command_ops(const OSDSession *s, Formatter *fmt);
+  void dump_command_ops(Formatter *fmt);
   void dump_pool_ops(Formatter *fmt) const;
   void dump_pool_stat_ops(Formatter *fmt) const;
   void dump_statfs_ops(Formatter *fmt) const;
