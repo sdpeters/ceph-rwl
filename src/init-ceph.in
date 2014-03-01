@@ -191,8 +191,8 @@ for name in $what; do
 
     check_host || continue
 
-    binary="$BINDIR/ceph-$type"
-    cmd="$binary -i $id"
+    binary_basename="ceph-$type"
+    binary="$BINDIR/$binary_basename"
 
     get_conf run_dir "/var/run/ceph" "run dir"
 
@@ -215,7 +215,7 @@ for name in $what; do
             fi
         fi
 
-	if daemon_is_running $name ceph-$type $id $pid_file; then
+	if daemon_is_running $name $binary_basename $id $pid_file; then
 	    echo "Starting Ceph $name on $host...already running"
 	    continue
 	fi
@@ -367,7 +367,7 @@ for name in $what; do
 	    get_conf pre_stop "" "pre stop command"
 	    get_conf post_stop "" "post stop command"
 	    [ -n "$pre_stop" ] && do_cmd "$pre_stop"
-	    stop_daemon $name ceph-$type $pid_file
+	    stop_daemon $name $binary_basename $pid_file
 	    [ -n "$post_stop" ] && do_cmd "$post_stop"
 	    [ -n "$lockfile" ] && [ "$?" -eq 0 ] && rm -f $lockfile
 	    if [ $dofsumount -eq 1 ] && [ -n "$fs_devs" ]; then
@@ -377,7 +377,7 @@ for name in $what; do
 	    ;;
 
 	status)
-	    if daemon_is_running $name ceph-$type $id $pid_file; then
+	    if daemon_is_running $name $binary_basename $id $pid_file; then
 		echo -n "$name: running "
 		do_cmd "$BINDIR/ceph --admin-daemon $asok version 2>/dev/null" || echo unknown
             elif [ -e "$pid_file" ]; then
@@ -399,19 +399,19 @@ for name in $what; do
 	    get_conf pre_forcestop "" "pre forcestop command"
 	    get_conf post_forcestop "" "post forcestop command"
 	    [ -n "$pre_forcestop" ] && do_cmd "$pre_forcestop"
-	    stop_daemon $name ceph-$type $pid_file -9
+	    stop_daemon $name $binary_basename $pid_file -9
 	    [ -n "$post_forcestop" ] && do_cmd "$post_forcestop"
 	    [ -n "$lockfile" ] && [ "$?" -eq 0 ] && rm -f $lockfile
 	    ;;
 
 	killall)
-	    echo "killall ceph-$type on $host"
-	    do_cmd "pkill ^ceph-$type || true"
+	    echo "killall $binary_basename on $host"
+	    do_cmd "pkill ^$binary_basename || true"
 	    [ -n "$lockfile" ] && [ "$?" -eq 0 ] && rm -f $lockfile
 	    ;;
 
 	force-reload | reload)
-	    signal_daemon $name ceph-$type $pid_file -1 "Reloading"
+	    signal_daemon $name $binary_basename $pid_file -1 "Reloading"
 	    ;;
 
 	restart)
@@ -420,7 +420,7 @@ for name in $what; do
 	    ;;
 
         condrestart)
-            if daemon_is_running $name ceph-$type $id $pid_file; then
+            if daemon_is_running $name $binary_basename $id $pid_file; then
                 $0 $options stop $name
                 $0 $options start $name
             else
