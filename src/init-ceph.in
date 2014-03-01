@@ -29,7 +29,7 @@ else
 fi
 
 usage_exit() {
-    echo "usage: $0 [options] {start|stop|restart|condrestart} [mon|osd|mds]..."
+    echo "usage: $0 [options] {start|stop|restart|condrestart} [mon|osd|mds|rest-api]..."
     printf "\t-c ceph.conf\n"
     printf "\t--valgrind\trun via valgrind\n"
     printf "\t--hostname [hostname]\toverride hostname lookup\n"
@@ -193,6 +193,13 @@ for name in $what; do
 
     binary_basename="ceph-$type"
     binary="$BINDIR/$binary_basename"
+    if [ "$type" = "rest-api" ]; then
+	# the rest-api instances are clients and use ids prefixed by
+	# 'rest-api.'
+	type="client"
+	id="rest-api.$id"
+    fi
+    cmd="$binary -i $id"
 
     get_conf run_dir "/var/run/ceph" "run dir"
 

@@ -155,6 +155,7 @@ get_local_name_list() {
     get_local_daemon_list "mon"
     get_local_daemon_list "osd"
     get_local_daemon_list "mds"
+    get_local_daemon_list "rest-api"
 }
 
 get_name_list() {
