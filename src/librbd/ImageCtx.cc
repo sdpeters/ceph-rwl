@@ -188,7 +188,7 @@ namespace librbd {
       uint64_t obj = cct->_conf->rbd_cache_size / (1ull << order);
       ldout(cct, 10) << " cache bytes " << cct->_conf->rbd_cache_size << " order " << (int)order
 		     << " -> about " << obj << " objects" << dendl;
-      object_cacher->set_max_objects(obj * 4 + 10);
+      object_cacher->set_max_objects(cct->_conf->client_oc_max_objects);
     }
 
     ldout(cct, 10) << "init_layout stripe_unit " << stripe_unit
