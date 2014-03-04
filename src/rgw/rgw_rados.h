@@ -1179,6 +1179,8 @@ class RGWRados
   Mutex bucket_id_lock;
   uint64_t max_bucket_id;
 
+  uint64_t max_chunk_size;
+
   int get_obj_state(RGWRadosCtx *rctx, rgw_obj& obj, RGWObjState **state, RGWObjVersionTracker *objv_tracker);
   int append_atomic_test(RGWRadosCtx *rctx, rgw_obj& obj,
                          librados::ObjectOperation& op, RGWObjState **state);
@@ -1243,6 +1245,7 @@ public:
                num_watchers(0), watchers(NULL), watch_handles(NULL),
                watch_initialized(false),
                bucket_id_lock("rados_bucket_id"), max_bucket_id(0),
+               max_chunk_size(0),
                cct(NULL), rados(NULL),
                pools_initialized(false),
                quota_handler(NULL),
@@ -1278,6 +1281,10 @@ public:
       rados->shutdown();
       delete rados;
     }
+  }
+
+  uint64_t get_max_chunk_size() {
+    return max_chunk_size;
   }
 
   int list_raw_objects(rgw_bucket& pool, const string& prefix_filter, int max,
