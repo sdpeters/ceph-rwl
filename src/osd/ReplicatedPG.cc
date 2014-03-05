@@ -2212,7 +2212,7 @@ ReplicatedPG::RepGather *ReplicatedPG::trim_object(const hobject_t &coid)
   ObjectContextRef obc = get_object_context(coid, false, NULL);
   if (!obc) {
     derr << __func__ << "could not find coid " << coid << dendl;
-    assert(0);
+    return NULL;
   }
 
   object_info_t &coi = obc->obs.oi;
@@ -11250,7 +11250,12 @@ boost::statechart::result ReplicatedPG::TrimmingObjects::react(const SnapTrim&)
 
   dout(10) << "TrimmingObjects react trimming " << pos << dendl;
   RepGather *repop = pg->trim_object(pos);
-  assert(repop);
+  if (!repop) {
+    pg->osd->clog.error() << "pg " << pg->info.pgid
+			  << " TrimmingObjects failed " << pos << "\n";
+    post_event(SnapTrim());
+    return transit< WaitingOnReplicas >();
+  }
   repop->queue_snap_trimmer = true;
 
   repops.insert(repop->get());
