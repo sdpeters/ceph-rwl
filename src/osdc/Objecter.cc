@@ -277,6 +277,7 @@ void Objecter::shutdown()
   }
 
   if (tick_event) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(tick_event);
     tick_event = NULL;
   }
@@ -1180,11 +1181,17 @@ void Objecter::schedule_tick()
 {
   assert(tick_event == NULL);
   tick_event = new C_Tick(this);
+  Mutex::Locker l(timer_lock);
   timer.add_event_after(cct->_conf->objecter_tick_interval, tick_event);
 }
 
 void Objecter::tick()
 {
+  if (!initialized.read())
+    return;
+
+  timer_lock.Unlock();
+
   ldout(cct, 10) << "tick" << dendl;
   assert(initialized.read());
 
@@ -1310,10 +1317,15 @@ public:
   C_CancelOp(Objecter::Op *op, Objecter *objecter) : op(op),
 						     objecter(objecter) {}
   void finish(int r) {
-    // note that objecter lock == timer lock, and is already held
     objecter->op_cancel(op->session, op->tid, -ETIMEDOUT);
   }
 };
+
+tid_t Objecter::op_submit(Op *op)
+{
+  RWLock::RLocker rl(rwlock);
+  return _op_submit_with_budget(op);
+}
 
 tid_t Objecter::_op_submit_with_budget(Op *op)
 {
@@ -1325,6 +1337,7 @@ tid_t Objecter::_op_submit_with_budget(Op *op)
 
   if (osd_timeout > 0) {
     op->ontimeout = new C_CancelOp(op, this);
+    Mutex::Locker l(timer_lock);
     timer.add_event_after(osd_timeout, op->ontimeout);
   }
 
@@ -1723,8 +1736,10 @@ void Objecter::_finish_op_end(Op *op)
 #endif
   assert(check_latest_map_ops.find(op->tid) == check_latest_map_ops.end());
 
-  if (op->ontimeout)
+  if (op->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(op->ontimeout);
+  }
 
   op->session->put();
   delete op;
@@ -2356,7 +2371,6 @@ public:
   C_CancelPoolOp(tid_t tid, Objecter *objecter) : tid(tid),
 						  objecter(objecter) {}
   void finish(int r) {
-    // note that objecter lock == timer lock, and is already held
     objecter->pool_op_cancel(tid, -ETIMEDOUT);
   }
 };
@@ -2365,6 +2379,7 @@ void Objecter::pool_op_submit(PoolOp *op)
 {
   if (mon_timeout > 0) {
     op->ontimeout = new C_CancelPoolOp(op->tid, this);
+    Mutex::Locker l(timer_lock);
     timer.add_event_after(mon_timeout, op->ontimeout);
   }
   _pool_op_submit(op);
@@ -2458,8 +2473,10 @@ void Objecter::_finish_pool_op(PoolOp *op)
   pool_ops.erase(op->tid);
   logger->set(l_osdc_poolop_active, pool_ops.size());
 
-  if (op->ontimeout)
+  if (op->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(op->ontimeout);
+  }
 
   delete op;
 }
@@ -2492,6 +2509,7 @@ void Objecter::get_pool_stats(list<string>& pools, map<string,pool_stat_t> *resu
   op->ontimeout = NULL;
   if (mon_timeout > 0) {
     op->ontimeout = new C_CancelPoolStatOp(op->tid, this);
+    Mutex::Locker l(timer_lock);
     timer.add_event_after(mon_timeout, op->ontimeout);
   }
   poolstat_ops[op->tid] = op;
@@ -2562,8 +2580,10 @@ void Objecter::_finish_pool_stat_op(PoolStatOp *op)
   poolstat_ops.erase(op->tid);
   logger->set(l_osdc_poolstat_active, poolstat_ops.size());
 
-  if (op->ontimeout)
+  if (op->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(op->ontimeout);
+  }
 
   delete op;
 }
@@ -2576,7 +2596,6 @@ public:
   C_CancelStatfsOp(tid_t tid, Objecter *objecter) : tid(tid),
 						    objecter(objecter) {}
   void finish(int r) {
-    // note that objecter lock == timer lock, and is already held
     objecter->statfs_op_cancel(tid, -ETIMEDOUT);
   }
 };
@@ -2592,6 +2611,7 @@ void Objecter::get_fs_stats(ceph_statfs& result, Context *onfinish)
   op->ontimeout = NULL;
   if (mon_timeout > 0) {
     op->ontimeout = new C_CancelStatfsOp(op->tid, this);
+    Mutex::Locker l(timer_lock);
     timer.add_event_after(mon_timeout, op->ontimeout);
   }
   statfs_ops[op->tid] = op;
@@ -2660,8 +2680,10 @@ void Objecter::_finish_statfs_op(StatfsOp *op)
   statfs_ops.erase(op->tid);
   logger->set(l_osdc_statfs_active, statfs_ops.size());
 
-  if (op->ontimeout)
+  if (op->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(op->ontimeout);
+  }
 
   delete op;
 }
@@ -3044,7 +3066,6 @@ public:
   C_CancelCommandOp(Objecter::OSDSession *s, tid_t tid, Objecter *objecter) : s(s), tid(tid),
 						     objecter(objecter) {}
   void finish(int r) {
-    // note that objecter lock == timer lock, and is already held
     objecter->command_op_cancel(s, tid, -ETIMEDOUT);
   }
 };
@@ -3059,6 +3080,7 @@ int Objecter::_submit_command(CommandOp *c, tid_t *ptid)
   (void)recalc_command_target(c);
   if (osd_timeout > 0) {
     c->ontimeout = new C_CancelCommandOp(c->session, tid, this);
+    Mutex::Locker l(timer_lock);
     timer.add_event_after(osd_timeout, c->ontimeout);
   }
 
@@ -3167,8 +3189,10 @@ void Objecter::_finish_command(CommandOp *c, int r, string rs)
   c->session->lock.get_write();
   c->session->command_ops.erase(c->tid);
   c->session->lock.unlock();
-  if (c->ontimeout)
+  if (c->ontimeout) {
+    Mutex::Locker l(timer_lock);
     timer.cancel_event(c->ontimeout);
+  }
   c->put();
 
 #if 0
