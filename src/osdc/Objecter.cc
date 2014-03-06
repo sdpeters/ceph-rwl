@@ -325,12 +325,17 @@ void Objecter::_send_linger(LingerOp *info)
     OSDSession *session = info->session;
     assert(session);
 
+    session->lock.get_write();
+
     // repeat send.  cancel old registeration op, if any.
     if (session->ops.count(info->register_tid)) {
       Op *o = session->ops[info->register_tid];
       _op_cancel_map_check(o);
       cancel_linger_op(o);
     }
+
+    session->lock.unlock();
+
     info->register_tid = _op_submit(o);
   } else {
     // first send
@@ -344,7 +349,9 @@ void Objecter::_send_linger(LingerOp *info)
   if (info->session != s) {
     info->session = s;
     assert(info->session);
+    s->lock.get_write();
     s->linger_ops[info->linger_id] = info;
+    s->lock.unlock();
   }
 
   logger->inc(l_osdc_linger_send);
@@ -377,7 +384,9 @@ void Objecter::unregister_linger(uint64_t linger_id)
   map<uint64_t, LingerOp*>::iterator iter = linger_ops.find(linger_id);
   if (iter != linger_ops.end()) {
     LingerOp *info = iter->second;
+    info->session->lock.get_write();
     info->session->linger_ops.erase(linger_id);
+    info->session->lock.unlock();
     linger_ops.erase(iter);
     info->put();
 #warning need per-session logger
@@ -414,7 +423,9 @@ tid_t Objecter::linger_mutate(const object_t& oid, const object_locator_t& oloc,
   info->linger_id = ++max_linger_id;
 
   linger_ops[info->linger_id] = info;
+  homeless_session.lock.get_write();
   homeless_session.linger_ops[info->linger_id] = info;
+  homeless_session.lock.unlock();
 
 #warning per-session logger
 #if 0
@@ -501,6 +512,8 @@ void Objecter::_scan_requests(OSDSession *s,
 {
   assert(rwlock.is_wlocked());
   assert(osdmap_lock.is_wlocked());
+
+  RWLock::WLocker wl(s->lock);
 
   // check for changed linger mappings (_before_ regular ops)
   map<tid_t,LingerOp*>::iterator lp = s->linger_ops.begin();
@@ -791,6 +804,7 @@ void Objecter::_check_op_pool_dne(Op *op)
       if (op->oncommit) {
 	op->oncommit->complete(-ENOENT);
       }
+      RWLock::WLocker wl(op->session->lock);
       op->session->ops.erase(op->tid);
       delete op;
     }
@@ -1148,6 +1162,8 @@ void Objecter::kick_requests(OSDSession *session)
 
   RWLock::WLocker wl(rwlock);
 
+  RWLock::WLocker(session->lock);
+
   // resend ops
   map<tid_t,Op*> resend;  // resend in tid order
   for (map<tid_t, Op*>::iterator p = session->ops.begin(); p != session->ops.end();) {
@@ -1158,7 +1174,7 @@ void Objecter::kick_requests(OSDSession *session)
       if (!op->paused)
 	resend[op->tid] = op;
     } else {
-      cancel_linger_op(op);
+      _cancel_linger_op(op);
     }
   }
   while (!resend.empty()) {
@@ -1742,6 +1758,8 @@ void Objecter::_finish_op_start(Op *op)
   if (op->budgeted)
     put_op_budget(op);
 
+  assert(op->session->lock.is_wlocked());
+
   op->session->ops.erase(op->tid);
 }
 
@@ -1776,9 +1794,9 @@ void Objecter::finish_op(Op *op)
  ldout(cct, 15) << "finish_op " << op->tid << dendl;
  RWLock::RLocker rl(rwlock);
 
-  op->session->lock.get_write();
+ RWLock::WLocker wl(op->session->lock);
+
   _finish_op_start(op);
-  op->session->lock.unlock();
   _finish_op_end(op);
 }
 
@@ -1851,7 +1869,9 @@ void Objecter::_send_op(Op *op)
     tid_t mytid = ++last_tid;
     op->tid = mytid;
     m->set_tid(mytid);
+    op->session->lock.get_write();
     op->session->ops[op->tid] = op;
+    op->session->lock.unlock();
   }
 
   messenger->send_message(m, con);
