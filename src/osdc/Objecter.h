@@ -1307,7 +1307,7 @@ public:
   };
 
   int _submit_command(CommandOp *c, tid_t *ptid);
-  int recalc_command_target(CommandOp *c);
+  int _recalc_command_target(CommandOp *c);
   void _send_command(CommandOp *c);
   int command_op_cancel(OSDSession *s, tid_t tid, int r);
   void _finish_command(CommandOp *c, int r, string rs);
@@ -1458,9 +1458,9 @@ public:
   };
   bool op_should_be_paused(Op *op);
   int _recalc_op_target(Op *op);
-  bool recalc_linger_op_target(LingerOp *op);
+  bool _recalc_linger_op_target(LingerOp *op);
 
-  void send_linger(LingerOp *info);
+  void _send_linger(LingerOp *info);
   void _linger_ack(LingerOp *info, int r);
   void _linger_commit(LingerOp *info, int r);
 
@@ -1477,6 +1477,7 @@ public:
   void kick_requests(OSDSession *session);
 
   OSDSession *get_session(int osd);
+  OSDSession *_get_session(int osd);
   void put_session(OSDSession *s);
   void reopen_session(OSDSession *session);
   void close_session(OSDSession *session);
