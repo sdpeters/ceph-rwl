@@ -1662,9 +1662,11 @@ int Objecter::_recalc_op_target(Op *op)
       }
       put_session(op->session);
       op->session = s;
+      s->lock.get_write();
       s->ops[op->tid] = op;
       if (s->is_homeless())
 	num_homeless_ops.inc();
+      s->lock.unlock();
     } else {
       put_session(s);
     }
