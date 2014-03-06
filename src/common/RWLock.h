@@ -25,7 +25,7 @@ class RWLock
   mutable pthread_rwlock_t L;
   const char *name;
   int id;
-  int nrlock, nwlock;
+  atomic_t nrlock, nwlock;
 
 public:
   RWLock(const RWLock& other);
@@ -37,11 +37,11 @@ public:
   }
 
   bool is_locked() const {
-    return (nrlock > 0) || (nwlock > 0);
+    return (nrlock.read() > 0) || (nwlock.read() > 0);
   }
 
   bool is_wlocked() const {
-    return (nwlock > 0);
+    return (nwlock.read() > 0);
   }
 
   virtual ~RWLock() {
@@ -50,6 +50,11 @@ public:
   }
 
   void unlock() {
+    if (nwlock.read() > 0) {
+      nwlock.dec();
+    } else {
+      nrlock.dec();
+    }
     if (g_lockdep) id = lockdep_will_unlock(name, id);
     pthread_rwlock_unlock(&L);
   }
@@ -59,18 +64,17 @@ public:
     if (g_lockdep) id = lockdep_will_lock(name, id);
     pthread_rwlock_rdlock(&L);
     if (g_lockdep) id = lockdep_locked(name, id);
-    nrlock++;
+    nrlock.inc();
   }
   bool try_get_read() {
     if (pthread_rwlock_tryrdlock(&L) == 0) {
-      nrlock++;
+      nrlock.inc();
       if (g_lockdep) id = lockdep_locked(name, id);
       return true;
     }
     return false;
   }
   void put_read() {
-    nrlock--;
     unlock();
   }
 
@@ -79,18 +83,18 @@ public:
     if (g_lockdep) id = lockdep_will_lock(name, id);
     pthread_rwlock_wrlock(&L);
     if (g_lockdep) id = lockdep_locked(name, id);
-    nwlock++;
+    nwlock.inc();
+
   }
   bool try_get_write() {
     if (pthread_rwlock_trywrlock(&L) == 0) {
       if (g_lockdep) id = lockdep_locked(name, id);
-      nwlock++;
+      nwlock.inc();
       return true;
     }
     return false;
   }
   void put_write() {
-    nwlock--;
     unlock();
   }
 
@@ -111,7 +115,7 @@ public:
       m_lock.get_read();
     }
     ~RLocker() {
-      m_lock.put_read();
+      m_lock.unlock();
     }
   };
 
@@ -123,7 +127,7 @@ public:
       m_lock.get_write();
     }
     ~WLocker() {
-      m_lock.put_write();
+      m_lock.unlock();
     }
   };
 };
