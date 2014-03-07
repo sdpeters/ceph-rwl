@@ -19,6 +19,7 @@
 
 #include <pthread.h>
 #include "lockdep.h"
+#include "include/atomic.h"
 
 class RWLock
 {
