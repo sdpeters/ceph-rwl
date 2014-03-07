@@ -1516,7 +1516,7 @@ public:
 
  public:
   Objecter(CephContext *cct_, Messenger *m, MonClient *mc,
-	   OSDMap *om, Mutex& l, SafeTimer& t, double mon_timeout,
+	   OSDMap *om, double mon_timeout,
 	   double osd_timeout) :
     messenger(m), monc(mc), osdmap(om), cct(cct_),
     initialized(false),

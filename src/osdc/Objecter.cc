@@ -806,7 +806,6 @@ void Objecter::_check_op_pool_dne(Op *op)
       }
       RWLock::WLocker wl(op->session->lock);
       op->session->ops.erase(op->tid);
-      delete op;
     }
   } else {
     _send_op_map_check(op);
@@ -1492,7 +1491,7 @@ int Objecter::op_cancel(OSDSession *s, tid_t tid, int r)
 {
   assert(initialized.read());
 
-  RWLock::WLocker wl(rwlock);
+  s->lock.get_write();
 
   map<tid_t, Op*>::iterator p = s->ops.find(tid);
   if (p == s->ops.end()) {
@@ -1511,7 +1510,9 @@ int Objecter::op_cancel(OSDSession *s, tid_t tid, int r)
     op->oncommit = NULL;
   }
   _op_cancel_map_check(op);
-  finish_op(op);
+  _finish_op(op);
+  s->lock.unlock();
+
   return 0;
 }
 
@@ -1778,7 +1779,6 @@ void Objecter::_finish_op_end(Op *op)
   }
 
   op->session->put();
-  delete op;
 }
 
 void Objecter::_finish_op(Op *op)
@@ -1966,6 +1966,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 	    << (m->is_ondisk() ? " ondisk":(m->is_onnvram() ? " onnvram":" ack"))
 	    << " ... stray" << dendl;
     s->lock.unlock();
+    s->put();
     m->put();
     return;
   }
@@ -2085,7 +2086,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     ldout(cct, 15) << "handle_osd_op_reply completed tid " << tid << dendl;
     finish_op(op);
   }
-  
+
   ldout(cct, 5) << num_unacked.read() << " unacked, " << num_uncommitted.read() << " uncommitted" << dendl;
 
   // do callbacks
