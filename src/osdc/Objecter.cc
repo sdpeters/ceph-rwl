@@ -2117,7 +2117,6 @@ uint32_t Objecter::list_objects_seek(ListContext *list_context,
 
 void Objecter::list_objects(ListContext *list_context, Context *onfinish)
 {
-  RWLock::RLocker rl(osdmap_lock);
   ldout(cct, 10) << "list_objects" << dendl;
   ldout(cct, 20) << " pool_id " << list_context->pool_id
 	   << " pool_snap_seq " << list_context->pool_snap_seq
@@ -2144,8 +2143,10 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
     return;
   }
 
+  osdmap_lock.get_read();
   const pg_pool_t *pool = osdmap->get_pg_pool(list_context->pool_id);
   int pg_num = pool->get_pg_num();
+  osdmap_lock.unlock();
 
   if (list_context->starting_pg_num == 0) {     // there can't be zero pgs!
     list_context->starting_pg_num = pg_num;
@@ -2167,8 +2168,6 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
   list_context->bl.clear();
   C_List *onack = new C_List(list_context, onfinish, this);
   object_locator_t oloc(list_context->pool_id, list_context->nspace);
-
-#warning what kind of locking do we need here?
 
   pg_read(list_context->current_pg, oloc, op,
 	  &list_context->bl, 0, onack, &onack->epoch);
@@ -3140,6 +3139,8 @@ int Objecter::_submit_command(CommandOp *c, tid_t *ptid)
 
 int Objecter::_recalc_command_target(CommandOp *c)
 {
+  assert(rwlock.is_wlocked());
+
   OSDSession *s = &homeless_session;
   c->map_check_error = 0;
   if (c->target_osd >= 0) {
@@ -3153,7 +3154,7 @@ int Objecter::_recalc_command_target(CommandOp *c)
       c->map_check_error_str = "osd down";
       return RECALC_OP_TARGET_OSD_DOWN;
     }
-    s = get_session(c->target_osd);
+    s = _get_session(c->target_osd);
   } else {
     if (!osdmap->have_pg_pool(c->target_pg.pool())) {
       c->map_check_error = -ENOENT;
@@ -3164,9 +3165,10 @@ int Objecter::_recalc_command_target(CommandOp *c)
     vector<int> acting;
     osdmap->pg_to_acting_osds(c->target_pg, &acting, &primary);
     if (primary != -1)
-      s = get_session(primary);
+      s = _get_session(primary);
   }
   if (c->session != s) {
+    s->lock.get_read();
     ldout(cct, 10) << "_recalc_command_target " << c->tid << " now " << c->session << dendl;
     if (!s->is_homeless()) {
       if (c->session->is_homeless())
@@ -3177,6 +3179,7 @@ int Objecter::_recalc_command_target(CommandOp *c)
       c->session = &homeless_session;
       num_homeless_ops.inc();
     }
+    s->lock.unlock();
     return RECALC_OP_TARGET_NEED_RESEND;
   } else {
     put_session(s);
