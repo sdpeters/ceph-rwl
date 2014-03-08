@@ -1048,6 +1048,8 @@ public:
   struct OSDSession;
 
   struct Op {
+    Mutex lock;
+
     OSDSession *session;
     int incarnation;
     
@@ -1100,6 +1102,7 @@ public:
 
     Op(const object_t& o, const object_locator_t& ol, vector<OSDOp>& op,
        int f, Context *ac, Context *co, version_t *ov) :
+      lock("Objecter::Op::lock"),
       session(NULL), incarnation(0),
       base_oid(o), base_oloc(ol),
       precalc_pgid(false),
@@ -1437,12 +1440,9 @@ public:
   double mon_timeout, osd_timeout;
 
   void _send_op(Op *op);
-  void cancel_linger_op(Op *op);
   void _cancel_linger_op(Op *op);
-  void finish_op(Op *op);
+  void finish_op(OSDSession *session, tid_t tid);
   void _finish_op(Op *op);
-  void _finish_op_start(Op *op);
-  void _finish_op_end(Op *op);
   static bool is_pg_changed(
     int oldprimary,
     const vector<int>& oldacting,

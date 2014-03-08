@@ -331,7 +331,7 @@ void Objecter::_send_linger(LingerOp *info)
     if (session->ops.count(info->register_tid)) {
       Op *o = session->ops[info->register_tid];
       _op_cancel_map_check(o);
-      cancel_linger_op(o);
+      _cancel_linger_op(o);
     }
 
     session->lock.unlock();
@@ -709,12 +709,13 @@ void Objecter::handle_osd_map(MOSDMap *m)
   for (map<tid_t, Op*>::iterator p = need_resend.begin(); p != need_resend.end(); ++p) {
     Op *op = p->second;
     if (op->should_resend) {
-      if (op->session && !op->paused) {
+      if (!op->session->is_homeless() && !op->paused) {
 	logger->inc(l_osdc_op_resend);
 	_send_op(op);
       }
     } else {
-      cancel_linger_op(op);
+      RWLock::WLocker wl(op->session->lock);
+      _cancel_linger_op(op);
     }
   }
   for (list<LingerOp*>::iterator p = need_resend_linger.begin(); p != need_resend_linger.end(); ++p) {
@@ -805,7 +806,7 @@ void Objecter::_check_op_pool_dne(Op *op)
 	op->oncommit->complete(-ENOENT);
       }
       RWLock::WLocker wl(op->session->lock);
-      op->session->ops.erase(op->tid);
+      _finish_op(op);
     }
   } else {
     _send_op_map_check(op);
@@ -1741,32 +1742,20 @@ void Objecter::_cancel_linger_op(Op *op)
   _finish_op(op);
 }
 
-void Objecter::cancel_linger_op(Op *op)
-{
-  ldout(cct, 15) << "cancel_op " << op->tid << dendl;
-
-  assert(!op->should_resend);
-  delete op->onack;
-  delete op->oncommit;
-
-  finish_op(op);
-}
-
-void Objecter::_finish_op_start(Op *op)
+void Objecter::_finish_op(Op *op)
 {
   ldout(cct, 15) << "finish_op " << op->tid << dendl;
+  assert(rwlock.is_locked());
 
   if (op->budgeted)
     put_op_budget(op);
 
   assert(op->session->lock.is_wlocked());
 
-  op->session->ops.erase(op->tid);
-}
+  op->lock.Lock();
 
-void Objecter::_finish_op_end(Op *op)
-{
-  assert(rwlock.is_locked());
+  op->session->ops.erase(op->tid);
+
 #warning FIXME
 #if 0
   logger->set(l_osdc_op_active, ops.size());
@@ -1779,25 +1768,26 @@ void Objecter::_finish_op_end(Op *op)
   }
 
   op->session->put();
+
+  op->lock.Unlock();
+
+  delete op;
 }
 
-void Objecter::_finish_op(Op *op)
+void Objecter::finish_op(OSDSession *session, tid_t tid)
 {
- ldout(cct, 15) << "finish_op " << op->tid << dendl;
+  ldout(cct, 15) << "finish_op " << tid << dendl;
+  RWLock::RLocker rl(rwlock);
 
-  _finish_op_start(op);
-  _finish_op_end(op);
-}
+  RWLock::WLocker wl(session->lock);
 
-void Objecter::finish_op(Op *op)
-{
- ldout(cct, 15) << "finish_op " << op->tid << dendl;
- RWLock::RLocker rl(rwlock);
+  map<tid_t, Op *>::iterator iter = session->ops.find(tid);
+  if (iter == session->ops.end())
+    return;
 
- RWLock::WLocker wl(op->session->lock);
+  Op *op = iter->second;
 
-  _finish_op_start(op);
-  _finish_op_end(op);
+  _finish_op(op);
 }
 
 void Objecter::_send_op(Op *op)
@@ -1978,8 +1968,8 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 		<< " attempt " << m->get_retry_attempt()
 		<< dendl;
   Op *op = iter->second;
+  op->lock.Lock();
   s->lock.unlock();
-  s->put();
 
   if (m->get_retry_attempt() >= 0) {
     if (m->get_retry_attempt() != (op->attempts - 1)) {
@@ -1988,6 +1978,8 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 		    << "; last attempt " << (op->attempts - 1) << " sent to "
 		    << op->session->con->get_peer_addr() << dendl;
       m->put();
+      s->put();
+      op->lock.Unlock();
       return;
     }
   } else {
@@ -2007,6 +1999,8 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     m->get_redirect().combine_with_locator(op->target_oloc, op->target_oid.name);
     _op_submit(op);
     m->put();
+    s->put();
+    op->lock.Unlock();
     return;
   }
 
@@ -2084,8 +2078,13 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   // done with this tid?
   if (!op->onack && !op->oncommit) {
     ldout(cct, 15) << "handle_osd_op_reply completed tid " << tid << dendl;
-    finish_op(op);
+    tid_t tid = op->tid;
+    op->lock.Unlock();
+    finish_op(s, tid);
+  } else {
+    op->lock.Unlock();
   }
+
 
   ldout(cct, 5) << num_unacked.read() << " unacked, " << num_uncommitted.read() << " uncommitted" << dendl;
 
@@ -2098,6 +2097,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   }
 
   m->put();
+  s->put();
 }
 
 
