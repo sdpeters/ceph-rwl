@@ -1476,7 +1476,7 @@ public:
   bool osdmap_full_flag() const;
   bool op_should_be_paused(Op *op);
   int _recalc_op_target(Op *op, RWLock::Context& lc);
-  bool _recalc_linger_op_target(LingerOp *op, RWLock::Context& lc);
+  int _recalc_linger_op_target(LingerOp *op, RWLock::Context& lc);
 
   void _send_linger(LingerOp *info);
   void _linger_ack(LingerOp *info, int r);
@@ -1595,6 +1595,8 @@ public:
   void wait_for_osd_map();
 
 private:
+  bool _promote_lock_check_race(RWLock::Context& lc);
+
   // low-level
   ceph_tid_t _op_submit(Op *op, RWLock::Context& lc);
   ceph_tid_t _op_submit_with_budget(Op *op, RWLock::Context& lc);
