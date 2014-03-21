@@ -53,6 +53,7 @@ static int read_refcount(cls_method_context_t hctx, bool implicit_ref, obj_refco
   bufferlist bl;
   objr->refs.clear();
   int ret = cls_cxx_getxattr(hctx, REFCOUNT_ATTR, &bl);
+CLS_LOG(0, "%s:%d ret=%d", __FILE__, __LINE__, ret);
   if (ret == -ENOENT || ret == -ENODATA) {
     if (implicit_ref) {
       objr->refs[wildcard_tag] = true;
@@ -122,6 +123,7 @@ static int cls_rc_refcount_put(cls_method_context_t hctx, bufferlist *in, buffer
   bufferlist::iterator in_iter = in->begin();
 
   cls_refcount_put_op op;
+CLS_LOG(0, "%s:%d", __FILE__, __LINE__);
   try {
     ::decode(op, in_iter);
   } catch (buffer::error& err) {
@@ -131,9 +133,11 @@ static int cls_rc_refcount_put(cls_method_context_t hctx, bufferlist *in, buffer
 
   obj_refcount objr;
   int ret = read_refcount(hctx, op.implicit_ref, &objr);
+CLS_LOG(0, "%s:%d ret=%d", __FILE__, __LINE__, ret);
   if (ret < 0)
     return ret;
 
+CLS_LOG(0, "%s:%d", __FILE__, __LINE__);
   if (objr.refs.empty()) {// shouldn't happen!
     CLS_LOG(0, "ERROR: cls_rc_refcount_put() was called without any references!\n");
     return -EINVAL;
@@ -158,10 +162,13 @@ static int cls_rc_refcount_put(cls_method_context_t hctx, bufferlist *in, buffer
   objr.refs.erase(iter);
 
   if (objr.refs.empty()) {
-    return cls_cxx_remove(hctx);
+    ret = cls_cxx_remove(hctx);
+CLS_LOG(0, "%s:%d ret=%d", __FILE__, __LINE__, ret);
+    return ret;
   }
 
   ret = set_refcount(hctx, objr.refs);
+CLS_LOG(0, "%s:%d ret=%d", __FILE__, __LINE__, ret);
   if (ret < 0)
     return ret;
 
