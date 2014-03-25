@@ -904,3 +904,9 @@ noinst_HEADERS += \
 	test/system/systest_settings.h \
 	test/unit.h
 
+
+ceph_make_many_xattrs_SOURCES = test/make_many_xattrs.c
+bin_DEBUGPROGRAMS += ceph_make_many_xattrs
+
+ceph_salvage_ceph_xattrs_SOURCES = test/salvage_ceph_xattrs.c
+bin_DEBUGPROGRAMS += ceph_salvage_ceph_xattrs
