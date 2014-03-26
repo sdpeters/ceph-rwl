@@ -1466,26 +1466,28 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
            << dendl;
 
   assert(op->flags & (CEPH_OSD_FLAG_READ|CEPH_OSD_FLAG_WRITE));
+  bool submitted = false;
 
   do {
     r = 0;
 
     if ((op->flags & CEPH_OSD_FLAG_WRITE) &&
         osdmap->test_flag(CEPH_OSDMAP_PAUSEWR)) {
-      ldout(cct, 10) << " paused modify " << op << " tid " << last_tid << dendl;
+      ldout(cct, 10) << " paused modify " << op << " tid " << last_tid.read() << dendl;
       op->paused = true;
       r = _maybe_request_map();
     } else if ((op->flags & CEPH_OSD_FLAG_READ) &&
 	       osdmap->test_flag(CEPH_OSDMAP_PAUSERD)) {
-      ldout(cct, 10) << " paused read " << op << " tid " << last_tid << dendl;
+      ldout(cct, 10) << " paused read " << op << " tid " << last_tid.read() << dendl;
       op->paused = true;
       r = _maybe_request_map();
     } else if ((op->flags & CEPH_OSD_FLAG_WRITE) && osdmap_full_flag()) {
-      ldout(cct, 0) << " FULL, paused modify " << op << " tid " << last_tid << dendl;
+      ldout(cct, 0) << " FULL, paused modify " << op << " tid " << last_tid.read() << dendl;
       op->paused = true;
       r = _maybe_request_map();
     } else if (!op->session->is_homeless()) {
       _send_op(op);
+      submitted = true;
     } else {
       r = _maybe_request_map();
     }
@@ -1508,6 +1510,13 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
 
   ldout(cct, 5) << num_unacked.read() << " unacked, " << num_uncommitted.read() << " uncommitted" << dendl;
   
+  if (!submitted) {
+    RWLock::WLocker wl(op->session->lock);
+    if (!op->tid) {
+      op->tid = last_tid.inc();
+      op->session->ops[op->tid] = op;
+    }
+  }
   return op->tid;
 }
 
@@ -1708,6 +1717,11 @@ int Objecter::_recalc_op_target(Op *op, RWLock::Context& lc)
       if (!op->session || op->session->is_homeless()) {
 	num_homeless_ops.dec();
       }
+      if (op->tid) {
+        op->session->lock.get_write();
+        op->session->ops.erase(op->tid);
+        op->session->lock.unlock();
+      }
       put_session(op->session);
       op->session = s;
       s->lock.get_write();
@@ -1902,21 +1916,16 @@ void Objecter::_send_op(Op *op)
   logger->inc(l_osdc_op_send);
   logger->inc(l_osdc_op_send_bytes, m->get_data().length());
 
-  if (!rwlock.is_wlocked()) {
-    rwlock.unlock();
-    rwlock.get_write();
-  }
-
+  op->session->lock.get_write();
   if (!op->tid) {
-    ceph_tid_t mytid = ++last_tid;
+    ceph_tid_t mytid = last_tid.inc();
     op->tid = mytid;
-    m->set_tid(mytid);
-    op->session->lock.get_write();
     op->session->ops[op->tid] = op;
-    op->session->lock.unlock();
+    m->set_tid(op->tid);
   }
 
   messenger->send_message(m, con);
+  op->session->lock.unlock();
 }
 
 int Objecter::calc_op_budget(Op *op)
@@ -2299,7 +2308,7 @@ int Objecter::create_pool_snap(int64_t pool, string& snap_name, Context *onfinis
   PoolOp *op = new PoolOp;
   if (!op)
     return -ENOMEM;
-  op->tid = ++last_tid;
+  op->tid = last_tid.inc();
   op->pool = pool;
   op->name = snap_name;
   op->onfinish = onfinish;
@@ -2331,7 +2340,7 @@ int Objecter::allocate_selfmanaged_snap(int64_t pool, snapid_t *psnapid,
   ldout(cct, 10) << "allocate_selfmanaged_snap; pool: " << pool << dendl;
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
-  op->tid = ++last_tid;
+  op->tid = last_tid.inc();
   op->pool = pool;
   C_SelfmanagedSnap *fin = new C_SelfmanagedSnap(psnapid, onfinish);
   op->onfinish = fin;
@@ -2356,7 +2365,7 @@ int Objecter::delete_pool_snap(int64_t pool, string& snap_name, Context *onfinis
   PoolOp *op = new PoolOp;
   if (!op)
     return -ENOMEM;
-  op->tid = ++last_tid;
+  op->tid = last_tid.inc();
   op->pool = pool;
   op->name = snap_name;
   op->onfinish = onfinish;
@@ -2374,7 +2383,7 @@ int Objecter::delete_selfmanaged_snap(int64_t pool, snapid_t snap,
 	   << snap << dendl;
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
-  op->tid = ++last_tid;
+  op->tid = last_tid.inc();
   op->pool = pool;
   op->onfinish = onfinish;
   op->pool_op = POOL_OP_DELETE_UNMANAGED_SNAP;
@@ -2397,7 +2406,7 @@ int Objecter::create_pool(string& name, Context *onfinish, uint64_t auid,
   PoolOp *op = new PoolOp;
   if (!op)
     return -ENOMEM;
-  op->tid = ++last_tid;
+  op->tid = last_tid.inc();
   op->pool = 0;
   op->name = name;
   op->onfinish = onfinish;
@@ -2420,7 +2429,7 @@ int Objecter::delete_pool(int64_t pool, Context *onfinish)
 
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
-  op->tid = ++last_tid;
+  op->tid = last_tid.inc();
   op->pool = pool;
   op->name = "delete";
   op->onfinish = onfinish;
@@ -2443,7 +2452,7 @@ int Objecter::change_pool_auid(int64_t pool, Context *onfinish, uint64_t auid)
   ldout(cct, 10) << "change_pool_auid " << pool << " to " << auid << dendl;
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
-  op->tid = ++last_tid;
+  op->tid = last_tid.inc();
   op->pool = pool;
   op->name = "change_pool_auid";
   op->onfinish = onfinish;
@@ -2600,7 +2609,7 @@ void Objecter::get_pool_stats(list<string>& pools, map<string,pool_stat_t> *resu
   ldout(cct, 10) << "get_pool_stats " << pools << dendl;
 
   PoolStatOp *op = new PoolStatOp;
-  op->tid = ++last_tid;
+  op->tid = last_tid.inc();
   op->pools = pools;
   op->pool_stats = result;
   op->onfinish = onfinish;
@@ -2702,7 +2711,7 @@ void Objecter::get_fs_stats(ceph_statfs& result, Context *onfinish)
   RWLock::WLocker l(rwlock);
 
   StatfsOp *op = new StatfsOp;
-  op->tid = ++last_tid;
+  op->tid = last_tid.inc();
   op->stats = &result;
   op->onfinish = onfinish;
   op->ontimeout = NULL;
@@ -3171,7 +3180,7 @@ int Objecter::_submit_command(CommandOp *c, ceph_tid_t *ptid)
 {
   assert(rwlock.is_wlocked());
 
-  ceph_tid_t tid = ++last_tid;
+  ceph_tid_t tid = last_tid.inc();
   ldout(cct, 10) << "_submit_command " << tid << " " << c->cmd << dendl;
   c->tid = tid;
   homeless_session.command_ops[tid] = c;

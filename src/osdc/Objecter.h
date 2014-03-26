@@ -1013,7 +1013,8 @@ public:
   atomic_t initialized;
 
 private:
-  ceph_tid_t last_tid;
+#warning need atomic64_t here
+  atomic_t last_tid;
   atomic_t client_inc;
   uint64_t max_linger_id;
   atomic_t num_unacked;
