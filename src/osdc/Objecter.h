@@ -1605,7 +1605,9 @@ private:
   // public interface
 public:
   ceph_tid_t op_submit(Op *op);
-  bool is_active();
+  bool is_active() {
+    return !(ops.empty() && linger_ops.empty() && poolstat_ops.empty() && statfs_ops.empty());
+  }
 
   /**
    * Output in-flight requests
