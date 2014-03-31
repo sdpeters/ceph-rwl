@@ -1326,7 +1326,7 @@ public:
 	onfinish(NULL), ontimeout(NULL) {}
   };
 
-  int _submit_command(CommandOp *c, ceph_tid_t *ptid);
+  int submit_command(CommandOp *c, ceph_tid_t *ptid);
   int _recalc_command_target(CommandOp *c);
   void _send_command(CommandOp *c);
   int command_op_cancel(OSDSession *s, ceph_tid_t tid, int r);
@@ -1661,7 +1661,7 @@ public:
     c->prs = prs;
     c->onfinish = onfinish;
     c->target_osd = osd;
-    return _submit_command(c, ptid);
+    return submit_command(c, ptid);
   }
   int pg_command(pg_t pgid, vector<string>& cmd,
 		 const bufferlist& inbl, ceph_tid_t *ptid,
@@ -1673,7 +1673,7 @@ public:
     c->prs = prs;
     c->onfinish = onfinish;
     c->target_pg = pgid;
-    return _submit_command(c, ptid);
+    return submit_command(c, ptid);
   }
 
   // mid-level helpers
@@ -2102,7 +2102,7 @@ public:
   // --------------------------
   // pool stats
 private:
-  void poolstat_submit(PoolStatOp *op);
+  void _poolstat_submit(PoolStatOp *op);
 public:
   void handle_get_pool_stats_reply(MGetPoolStatsReply *m);
   void get_pool_stats(list<string>& pools, map<string,pool_stat_t> *result,
