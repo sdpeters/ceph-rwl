@@ -1645,6 +1645,7 @@ public:
 
   /// cancel an in-progress request with the given return code
   int op_cancel(OSDSession *s, ceph_tid_t tid, int r);
+  int op_cancel(ceph_tid_t tid, int r);
 
   // commands
   int osd_command(int osd, vector<string>& cmd,
