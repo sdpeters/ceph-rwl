@@ -1819,15 +1819,17 @@ int Objecter::_recalc_op_target(Op *op, RWLock::Context& lc)
 	     << " pgid " << pgid << " acting " << acting << dendl;
 
     if (op->session != s) {
-      if (!op->session || op->session->is_homeless()) {
-	num_homeless_ops.dec();
+      if (op->session) {
+        if (op->session->is_homeless()) {
+	  num_homeless_ops.dec();
+        }
+        if (op->tid) {
+          op->session->lock.get_write();
+          op->session->ops.erase(op->tid);
+          op->session->lock.unlock();
+        }
+        put_session(op->session);
       }
-      if (op->tid) {
-        op->session->lock.get_write();
-        op->session->ops.erase(op->tid);
-        op->session->lock.unlock();
-      }
-      put_session(op->session);
       op->session = s;
       s->lock.get_write();
       if (op->tid) {
@@ -3245,24 +3247,23 @@ void Objecter::handle_command_reply(MCommandReply *m)
 {
   int osd_num = (int)m->get_source().num();
 
-  rwlock.get_read();
+  RWLock::WLocker wl(rwlock);
 
   map<int, OSDSession *>::iterator siter = osd_sessions.find(osd_num);
   if (siter == osd_sessions.end()) {
     ldout(cct, 10) << "handle_command_reply tid " << m->get_tid() << " osd not found" << dendl;
-    rwlock.unlock();
     m->put();
     return;
   }
 
   OSDSession *s = siter->second;
-  RWLock::RLocker rl(s->lock);
-  rwlock.unlock();
 
+  s->lock.get_read();
   map<ceph_tid_t,CommandOp*>::iterator p = s->command_ops.find(m->get_tid());
   if (p == s->command_ops.end()) {
     ldout(cct, 10) << "handle_command_reply tid " << m->get_tid() << " not found" << dendl;
     m->put();
+    s->lock.unlock();
     return;
   }
 
@@ -3272,10 +3273,15 @@ void Objecter::handle_command_reply(MCommandReply *m)
     ldout(cct, 10) << "handle_command_reply tid " << m->get_tid() << " got reply from wrong connection "
 		   << m->get_connection() << " " << m->get_source_inst() << dendl;
     m->put();
+    s->lock.unlock();
     return;
   }
   if (c->poutbl)
     c->poutbl->claim(m->get_data());
+
+  s->lock.unlock();
+
+
   _finish_command(c, m->r, m->rs);
   m->put();
 }
@@ -3302,6 +3308,7 @@ int Objecter::submit_command(CommandOp *c, ceph_tid_t *ptid)
   c->tid = tid;
   homeless_session.command_ops[tid] = c;
   num_homeless_ops.inc();
+  c->session = &homeless_session;
   (void)_recalc_command_target(c);
   if (osd_timeout > 0) {
     c->ontimeout = new C_CancelCommandOp(c->session, tid, this);
@@ -3358,23 +3365,33 @@ int Objecter::_recalc_command_target(CommandOp *c)
       assert(r != -EAGAIN); /* shouldn't happen as we're holding the write lock */
     }
   }
+
   if (c->session != s) {
-    s->lock.get_read();
     ldout(cct, 10) << "_recalc_command_target " << c->tid << " now " << c->session << dendl;
-    if (!s->is_homeless()) {
-      if (c->session->is_homeless())
-	num_homeless_ops.dec();
+    if (c->session) {
+      if (c->session->is_homeless()) {
+        num_homeless_ops.dec();
+      }
+      if (c->tid) {
+        c->session->lock.get_write();
+        c->session->command_ops.erase(c->tid);
+        c->session->lock.unlock();
+      }
       put_session(c->session);
-      c->session = s;
-    } else {
-      c->session = &homeless_session;
-      num_homeless_ops.inc();
     }
+    c->session = s;
+    s->lock.get_write();
+    if (c->tid) {
+      s->command_ops[c->tid] = c;
+    }
+    if (s->is_homeless())
+      num_homeless_ops.inc();
     s->lock.unlock();
     return RECALC_OP_TARGET_NEED_RESEND;
   } else {
     put_session(s);
   }
+
   ldout(cct, 20) << "_recalc_command_target " << c->tid << " no change, " << c->session << dendl;
   return RECALC_OP_TARGET_NO_ACTION;
 }
@@ -3429,7 +3446,5 @@ void Objecter::_finish_command(CommandOp *c, int r, string rs)
   }
   c->put();
 
-#if 0
-  logger->set(l_osdc_command_active, command_ops.size());
-#endif
+  logger->dec(l_osdc_command_active);
 }
