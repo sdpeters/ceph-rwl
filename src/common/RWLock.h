@@ -63,7 +63,8 @@ public:
   // read
   void get_read() {
     if (g_lockdep) id = lockdep_will_lock(name, id);
-    pthread_rwlock_rdlock(&L);
+    int r = pthread_rwlock_rdlock(&L);
+    assert (r == 0);
     if (g_lockdep) id = lockdep_locked(name, id);
     nrlock.inc();
   }
@@ -82,7 +83,8 @@ public:
   // write
   void get_write() {
     if (g_lockdep) id = lockdep_will_lock(name, id);
-    pthread_rwlock_wrlock(&L);
+    int r = pthread_rwlock_wrlock(&L);
+    assert (r == 0);
     if (g_lockdep) id = lockdep_locked(name, id);
     nwlock.inc();
 
