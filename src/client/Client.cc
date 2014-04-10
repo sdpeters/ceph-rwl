@@ -1618,6 +1618,12 @@ void Client::handle_client_session(MClientSession *m)
     break;
 
   case CEPH_SESSION_CLOSE:
+    if (g_conf->client_shutdown_on_failed_reconnect &&
+	session->state == MetaSession::STATE_RECONNECT) {
+      lderr(cct) << " mds." << from << " refused our reconnect request, "
+		 << "shutting down" << dendl;
+      exit(1);
+    }
     _closed_mds_session(session);
     break;
 
