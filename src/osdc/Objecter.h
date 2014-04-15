@@ -1493,7 +1493,12 @@ public:
   bool target_should_be_paused(op_target_t *op);
   void set_homeless_op(Op *op);
   int _calc_target(op_target_t *t);
-  int _recalc_op_target(Op *op, RWLock::Context& lc);
+  void _session_op_set(Op *op, OSDSession *s);
+  int _session_op_handoff(Op *op, OSDSession *to, bool src_session_locked, bool dst_session_locked);
+  int _get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession);
+  int _assign_op_target_session(Op *op, RWLock::Context& lc, bool src_session_locked, bool dst_session_locked);
+  int _get_op_target_session(Op *op, RWLock::Context& lc, OSDSession **psession);
+  int _recalc_op_target(Op *op, RWLock::Context& lc, bool src_session_locked = false, bool dst_session_locked = false);
   int _recalc_linger_op_target(LingerOp *op, RWLock::Context& lc);
 
   void _send_linger(LingerOp *info);

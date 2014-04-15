@@ -510,7 +510,7 @@ void Objecter::_scan_requests(OSDSession *s,
 
   RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
 
-  RWLock::WLocker wl(s->lock);
+  s->lock.get_write();
 
   // check for changed linger mappings (_before_ regular ops)
   map<ceph_tid_t,LingerOp*>::iterator lp = s->linger_ops.begin();
@@ -534,14 +534,19 @@ void Objecter::_scan_requests(OSDSession *s,
     }
   }
 
+  map<int, list<ceph_tid_t> > target_osds;
+
   // check for changed request mappings
   map<ceph_tid_t,Op*>::iterator p = s->ops.begin();
   while (p != s->ops.end()) {
     Op *op = p->second;
     ++p;   // check_op_pool_dne() may touch ops; prevent iterator invalidation
     ldout(cct, 10) << " checking op " << op->tid << dendl;
-    int r = _recalc_op_target(op, lc);
+    int r = _recalc_op_target(op, lc, true);
     switch (r) {
+    case -EAGAIN:
+      target_osds[op->target.osd].push_back(op->tid);
+      continue;
     case RECALC_OP_TARGET_NO_ACTION:
       if (!force_resend &&
 	  (!force_resend_writes || !(op->target.flags & CEPH_OSD_FLAG_WRITE)))
@@ -580,6 +585,40 @@ void Objecter::_scan_requests(OSDSession *s,
       _check_command_map_dne(c);
       break;
     }     
+  }
+
+  s->lock.unlock();
+
+
+  map<int, list<ceph_tid_t> >::iterator iter;
+
+  for (iter = target_osds.begin(); iter != target_osds.end(); ++iter) {
+    int osd = iter->first;
+
+    OSDSession *target_session;
+    int ret = _get_osd_session(osd, lc, &target_session);
+    assert (ret == 0); /* shouldn't fail, we're under rwlock write */
+
+    target_session->lock.get_write();
+    s->lock.get_write();
+
+    list<ceph_tid_t>::iterator liter = iter->second.begin();
+    for (; liter != iter->second.end(); ++liter) {
+      ceph_tid_t tid = *liter;
+      map<ceph_tid_t, Op *>::iterator titer = s->ops.find(tid);
+      if (titer == s->ops.end()) { /* raced! */
+        continue;
+      }
+      Op *op = titer->second;
+
+      int ret = _assign_op_target_session(op, lc, true, true);
+      assert (ret == 0); /* can only fail due to missing locks, but we already hold everything */
+    }
+
+    target_session->lock.unlock();
+    s->lock.unlock();
+
+    put_session(target_session);
   }
 }
 
@@ -1811,49 +1850,144 @@ int Objecter::_calc_target(op_target_t *t)
   return RECALC_OP_TARGET_NO_ACTION;
 }
 
-int Objecter::_recalc_op_target(Op *op, RWLock::Context& lc)
+void Objecter::_session_op_set(Op *op, OSDSession *s)
+{
+  assert(s->lock.is_wlocked());
+
+  op->session = s;
+  if (op->tid) {
+    s->ops[op->tid] = op;
+  }
+  if (s->is_homeless()) {
+    num_homeless_ops.inc();
+  }
+}
+
+int Objecter::_session_op_handoff(Op *op, OSDSession *to, bool src_session_locked,bool dst_session_locked)
+{
+  assert(rwlock.is_locked());
+
+  OSDSession *from = op->session;
+
+  if (!from) {
+    to->lock.get_write();
+    _session_op_set(op, to);
+    to->lock.unlock();
+    return 0;
+  }
+
+  if (from->is_homeless()) {
+    num_homeless_ops.dec();
+  }
+
+  /* now need to be careful about lock ordering, we lock sessions by order of osd # */
+
+  assert(from->osd != to->osd);
+
+  if (src_session_locked) {
+    if (!dst_session_locked) {
+      if (from->osd > to->osd) {
+        return -EAGAIN;
+      }
+      to->lock.get_write();
+    }
+  } else {
+    assert (!dst_session_locked);
+
+    if (from->osd < to->osd) {
+      from->lock.get_write();
+      to->lock.get_write();
+    } else {
+      to->lock.get_write();
+      from->lock.get_write();
+    }
+  }
+
+  if (op->tid) {
+    from->ops.erase(op->tid);
+  }
+
+  op->session = to;
+  if (op->tid) {
+    to->ops[op->tid] = op;
+  }
+  if (to->is_homeless()) {
+    num_homeless_ops.inc();
+  }
+  if (!dst_session_locked) {
+    to->lock.unlock();
+  }
+
+  if (!src_session_locked) {
+    from->lock.unlock();
+  }
+
+  return 0;
+}
+
+int Objecter::_get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession)
+{
+  OSDSession *s = NULL;
+  if (osd >= 0) {
+    int r = _get_session(osd, &s, lc);
+    if (r == -EAGAIN) {
+      assert(!lc.is_wlocked());
+
+      if (!_promote_lock_check_race(lc)) {
+        return r;
+      }
+      r = _get_session(osd, &s, lc);
+    }
+    assert(r == 0);
+  } else {
+    s = &homeless_session;
+  }
+
+  *psession = s;
+
+  return 0;
+}
+
+int Objecter::_get_op_target_session(Op *op, RWLock::Context& lc, OSDSession **psession)
+{
+  return _get_osd_session(op->target.osd, lc, psession);
+}
+
+int Objecter::_assign_op_target_session(Op *op, RWLock::Context& lc,
+                                        bool src_session_locked,
+                                        bool dst_session_locked)
+{
+  assert(rwlock.is_locked());
+
+  OSDSession *orig_session = op->session;
+  OSDSession *s;
+  int r = _get_op_target_session(op, lc, &s);
+  if (r < 0) {
+    return r;
+  }
+  if (op->session != s) {
+    r = _session_op_handoff(op, s, src_session_locked, dst_session_locked);
+    if (r < 0) {
+      put_session(s);
+      return r;
+    }
+  }
+  put_session(orig_session);
+
+  return 0;
+}
+
+int Objecter::_recalc_op_target(Op *op, RWLock::Context& lc,
+                                bool src_session_locked,
+                                bool dst_session_locked)
 {
   assert(rwlock.is_locked());
 
   int r = _calc_target(&op->target);
   if (r == RECALC_OP_TARGET_NEED_RESEND) {
-    OSDSession *s = NULL;
-    if (op->target.osd >= 0) {
-      r = _get_session(op->target.osd, &s, lc);
-      if (r == -EAGAIN) {
-        assert(!lc.is_wlocked());
-
-        if (!_promote_lock_check_race(lc)) {
-          return r;
-        }
-        r = _get_session(op->target.osd, &s, lc);
-      }
-      assert(r == 0);
-    } else {
-      s = &homeless_session;
-    }
-    if (op->session != s) {
-      if (op->session) {
-        if (op->session->is_homeless()) {
-	  num_homeless_ops.dec();
-        }
-        if (op->tid) {
-          op->session->lock.get_write();
-          op->session->ops.erase(op->tid);
-          op->session->lock.unlock();
-        }
-        put_session(op->session);
-      }
-      op->session = s;
-      s->lock.get_write();
-      if (op->tid) {
-        s->ops[op->tid] = op;
-      }
-      if (s->is_homeless())
-	num_homeless_ops.inc();
-      s->lock.unlock();
-    } else {
-      put_session(s);
+    int ret = _assign_op_target_session(op, lc, src_session_locked, dst_session_locked);
+    if (ret < 0) {
+      return ret;
     }
   }
   return r;
