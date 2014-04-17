@@ -1498,7 +1498,7 @@ public:
   int _get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession);
   int _assign_op_target_session(Op *op, RWLock::Context& lc, bool src_session_locked, bool dst_session_locked);
   int _get_op_target_session(Op *op, RWLock::Context& lc, OSDSession **psession);
-  int _validate_op_session(Op *op, RWLock::Context& lc, bool session_locked);
+  void _session_op_validate(Op *op, RWLock::Context& lc, bool session_locked);
   int _recalc_op_target(Op *op, RWLock::Context& lc, bool session_locked = false);
   int _recalc_linger_op_target(LingerOp *op, RWLock::Context& lc);
 

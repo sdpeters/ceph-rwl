@@ -1913,22 +1913,15 @@ int Objecter::_get_op_target_session(Op *op, RWLock::Context& lc, OSDSession **p
   return _get_osd_session(op->target.osd, lc, psession);
 }
 
-int Objecter::_validate_op_session(Op *op, RWLock::Context& lc, bool session_locked)
+void Objecter::_session_op_validate(Op *op, RWLock::Context& lc, bool session_locked)
 {
   assert(rwlock.is_locked());
 
-  OSDSession *s;
-  int r = _get_op_target_session(op, lc, &s);
-  if (r < 0) {
-    return r;
-  }
-  if (op->session != s) {
+  if (op->session && op->session->osd != op->target.osd) {
     OSDSession *orig_session = op->session;
     _session_op_remove(op, session_locked);
     put_session(orig_session);
   }
-
-  return 0;
 }
 
 int Objecter::_recalc_op_target(Op *op, RWLock::Context& lc,
@@ -1938,10 +1931,7 @@ int Objecter::_recalc_op_target(Op *op, RWLock::Context& lc,
 
   int r = _calc_target(&op->target);
   if (r == RECALC_OP_TARGET_NEED_RESEND) {
-    int ret = _validate_op_session(op, lc, src_session_locked);
-    if (ret < 0) {
-      return ret;
-    }
+    _session_op_validate(op, lc, src_session_locked);
   }
   return r;
 }
