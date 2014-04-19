@@ -63,6 +63,10 @@ static const __SWORD_TYPE XFS_SUPER_MAGIC(0x58465342);
 static const __SWORD_TYPE ZFS_SUPER_MAGIC(0x2fc12fc1);
 #endif
 
+#ifndef F2FS_SUPER_MAGIC
+static const __SWORD_TYPE F2FS_SUPER_MAGIC(0xF2F52010);
+#endif
+
 
 class FileStoreBackend;
 

@@ -50,6 +50,7 @@
 #include "BtrfsFileStoreBackend.h"
 #include "XfsFileStoreBackend.h"
 #include "ZFSFileStoreBackend.h"
+#include "F2fsFileStoreBackend.h"
 #include "common/BackTrace.h"
 #include "include/types.h"
 #include "FileJournal.h"
@@ -585,6 +586,8 @@ FileStoreBackend *FileStoreBackend::create(long f_type, FileStore *fs)
 #if defined(__linux__)
   case BTRFS_SUPER_MAGIC:
     return new BtrfsFileStoreBackend(fs);
+  case F2FS_SUPER_MAGIC:
+    return new F2fsFileStoreBackend(fs);
 # ifdef HAVE_LIBXFS
   case XFS_SUPER_MAGIC:
     return new XfsFileStoreBackend(fs);

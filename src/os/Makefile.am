@@ -18,7 +18,9 @@ libos_la_SOURCES = \
 	common/TrackedOp.cc
 
 if LINUX
-libos_la_SOURCES += os/BtrfsFileStoreBackend.cc
+libos_la_SOURCES += \
+	os/BtrfsFileStoreBackend.cc \
+	os/F2fsFileStoreBackend.cc
 endif
 
 if WITH_LIBXFS
@@ -38,6 +40,7 @@ noinst_HEADERS += \
 	os/CollectionIndex.h \
 	os/DBObjectMap.h \
 	os/GenericObjectMap.h \
+	os/F2fsFileStoreBackend.h \
 	os/FileJournal.h \
 	os/FileStore.h \
 	os/FlatIndex.h \
