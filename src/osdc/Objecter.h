@@ -1098,7 +1098,7 @@ public:
   };
 
   struct Op {
-    Mutex lock;
+    //Mutex lock;
 
     OSDSession *session;
     int incarnation;
@@ -1140,7 +1140,6 @@ public:
 
     Op(const object_t& o, const object_locator_t& ol, vector<OSDOp>& op,
        int f, Context *ac, Context *co, version_t *ov) :
-      lock("Objecter::Op::lock"),
       session(NULL), incarnation(0),
       target(o, ol, f),
       con(NULL),
@@ -1493,8 +1492,10 @@ public:
   bool target_should_be_paused(op_target_t *op);
   void set_homeless_op(Op *op);
   int _calc_target(op_target_t *t);
-  void _session_op_remove(Op *op, bool session_locked);
-  int _session_op_assign(Op *op, RWLock::Context& lc);
+  int _map_session(op_target_t *op, OSDSession **s,
+		   RWLock::Context& lc);
+  void _session_op_remove(Op *op);
+  void _session_op_assign(Op *op, OSDSession *s);
   int _get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession);
   int _assign_op_target_session(Op *op, RWLock::Context& lc, bool src_session_locked, bool dst_session_locked);
   int _get_op_target_session(Op *op, RWLock::Context& lc, OSDSession **psession);
