@@ -1448,6 +1448,8 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
 {
   assert(rwlock.is_locked());
 
+  ldout(cct, 10) << __func__ << " op " << op << dendl;
+
   // pick target
   int r;
   assert(op->session == NULL);
@@ -1467,7 +1469,8 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   assert(s);  // may be homeless
 
   s->lock.get_write();
-  op->tid = last_tid.inc();
+  if (op->tid == 0)
+    op->tid = last_tid.inc();
   _session_op_assign(op, s);
 
   bool check_for_latest_map = (r == RECALC_OP_TARGET_POOL_DNE);
@@ -1736,7 +1739,7 @@ int Objecter::_calc_target(op_target_t *t)
   pg_t pgid;
   if (t->precalc_pgid) {
     assert(t->base_oid.name.empty()); // make sure this is a listing op
-    ldout(cct, 10) << "recalc_op_target have " << t->base_pgid << " pool "
+    ldout(cct, 10) << __func__ << " have " << t->base_pgid << " pool "
 		   << osdmap->have_pg_pool(t->base_pgid.pool()) << dendl;
     if (!osdmap->have_pg_pool(t->base_pgid.pool()))
       return RECALC_OP_TARGET_POOL_DNE;
@@ -1769,7 +1772,7 @@ int Objecter::_calc_target(op_target_t *t)
     t->pgid = pgid;
     t->acting = acting;
     t->primary = primary;
-    ldout(cct, 10) << "calc_op_target "
+    ldout(cct, 10) << __func__ << " "
 		   << " pgid " << pgid << " acting " << acting << dendl;
     t->used_replica = false;
     if (primary != -1) {
@@ -1810,6 +1813,8 @@ int Objecter::_calc_target(op_target_t *t)
       }
 
       t->osd = osd;
+    } else {
+      t->osd = -1;
     }
     need_resend = true;
   }
@@ -1974,7 +1979,6 @@ void Objecter::_cancel_linger_op(Op *op)
 void Objecter::_finish_op(Op *op)
 {
   ldout(cct, 15) << "finish_op " << op->tid << dendl;
-  assert(rwlock.is_locked());
 
   if (op->budgeted)
     put_op_budget(op);
@@ -2206,6 +2210,9 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     s->lock.unlock();
     s->put();
 
+    // FIXME: two redirects could race and reorder
+
+    op->tid = 0;
     m->get_redirect().combine_with_locator(op->target.target_oloc,
 					   op->target.target_oid.name);
     _op_submit(op, lc);
@@ -2299,6 +2306,10 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 
   ldout(cct, 5) << num_unacked.read() << " unacked, " << num_uncommitted.read() << " uncommitted" << dendl;
 
+  // serialize completions
+  completion_lock.Lock();
+  s->lock.unlock();
+
   // do callbacks
   if (onack) {
     onack->complete(rc);
@@ -2306,9 +2317,9 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   if (oncommit) {
     oncommit->complete(rc);
   }
+  completion_lock.Unlock();
 
   m->put();
-  s->lock.unlock();
   s->put();
 }
 

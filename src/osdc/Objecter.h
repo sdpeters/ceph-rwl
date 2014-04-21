@@ -1034,6 +1034,7 @@ private:
 
   RWLock rwlock;
   RWTimer timer;
+  Mutex completion_lock;
 
   PerfCounters *logger;
   
@@ -1570,6 +1571,7 @@ public:
     last_seen_pgmap_version(0),
     rwlock("Objecter::rwlock"),
     timer(cct, rwlock),
+    completion_lock("Objecter::completion_lock"),
     logger(NULL), tick_event(NULL),
     m_request_state_hook(NULL),
     num_homeless_ops(0),
