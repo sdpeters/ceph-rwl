@@ -255,8 +255,7 @@ class ClientStub : public TestStub
     dout(10) << "ClientStub::" << __func__ << " starting messenger at "
 	    << messenger->get_myaddr() << dendl;
 
-    objecter.reset(new Objecter(cct, messenger.get(), &monc, &osdmap,
-				lock, timer, 0, 0));
+    objecter.reset(new Objecter(cct, messenger.get(), &monc, &osdmap, 0, 0));
     assert(objecter.get() != NULL);
     objecter->set_balanced_budget();
 
