@@ -300,7 +300,6 @@ void Objecter::shutdown()
 void Objecter::_send_linger(LingerOp *info)
 {
   assert(rwlock.is_wlocked());
-  assert(info->session->lock.is_locked());
 
   RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
 
@@ -318,18 +317,20 @@ void Objecter::_send_linger(LingerOp *info)
   o->mtime = info->mtime;
 
   o->target = info->target;
-  _session_op_assign(o, info->session);
+  o->tid = last_tid.inc();
 
   // do not resend this; we will send a new op to reregister
   o->should_resend = false;
 
   if (info->register_tid) {
     // repeat send.  cancel old registeration op, if any.
+    info->session->lock.get_write();
     if (info->session->ops.count(info->register_tid)) {
       Op *o = info->session->ops[info->register_tid];
       _op_cancel_map_check(o);
       _cancel_linger_op(o);
     }
+    info->session->lock.unlock();
 
     info->register_tid = _op_submit(o, lc);
   } else {
@@ -417,7 +418,7 @@ ceph_tid_t Objecter::linger_read(const object_t& oid, const object_locator_t& ol
   if (info->target.base_oloc.key == oid)
     info->target.base_oloc.key.clear();
   info->snap = snap;
-  info->target.flags = flags;
+  info->target.flags = flags | CEPH_OSD_FLAG_READ;
   info->ops = op.ops;
   info->inbl = inbl;
   info->poutbl = poutbl;
@@ -445,10 +446,12 @@ void Objecter::_linger_submit(LingerOp *info)
   int r = _get_session(info->target.osd, &s, lc);
   assert(r == 0);
 
+  info->session = s;
+
   s->lock.get_write();
   s->linger_ops[info->linger_id] = info;
-  _send_linger(info);
   s->lock.unlock();
+  _send_linger(info);
 }
 
 
@@ -725,14 +728,16 @@ void Objecter::handle_osd_map(MOSDMap *m)
     } else {
       _cancel_linger_op(op);
     }
-    op->session->lock.put_write();
+    op->session->lock.unlock();
   }
   for (list<LingerOp*>::iterator p = need_resend_linger.begin();
        p != need_resend_linger.end(); ++p) {
     LingerOp *op = *p;
     if (!op->session->is_homeless()) {
+      op->session->lock.get_write();
       logger->inc(l_osdc_linger_resend);
       _send_linger(op);
+      op->session->lock.unlock();
     }
   }
   for (map<ceph_tid_t,CommandOp*>::iterator p = need_resend_command.begin();
@@ -1551,7 +1556,7 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   } else {
     _maybe_request_map();
   }
-  op->session->lock.unlock();
+  s->lock.unlock();
 
   if (check_for_latest_map) {
     _send_op_map_check(op);
