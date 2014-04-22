@@ -442,12 +442,9 @@ void Objecter::_linger_submit(LingerOp *info)
 
   OSDSession *s = NULL;
   _calc_target(&info->target);
-  if (info->target.osd >= 0) {
-    int r = _get_session(info->target.osd, &s, lc);
-    assert(r == 0);
-  } else {
-    s = &homeless_session;
-  }
+  int r = _get_session(info->target.osd, &s, lc);
+  assert(r == 0);
+
   s->lock.get_write();
   s->linger_ops[info->linger_id] = info;
   _send_linger(info);
@@ -1053,6 +1050,11 @@ int Objecter::_get_session(int osd, OSDSession **session, RWLock::Context& lc)
 {
   assert(rwlock.is_locked());
 
+  if (osd < 0) {
+    *session = &homeless_session;
+    return 0;
+  }
+
   map<int,OSDSession*>::iterator p = osd_sessions.find(osd);
   if (p != osd_sessions.end()) {
     OSDSession *s = p->second;
@@ -1447,13 +1449,9 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   OSDSession *s = NULL;
   while (true) {
     r = _calc_target(&op->target);
-    if (op->target.osd >= 0) {
-      if (_get_session(op->target.osd, &s, lc) == -EAGAIN) {
-	lc.promote();
-	continue;
-      }
-    } else {
-      s = &homeless_session;
+    if (_get_session(op->target.osd, &s, lc) == -EAGAIN) {
+      lc.promote();
+      continue;
     }
     break;
   }
@@ -1799,14 +1797,10 @@ int Objecter::_map_session(op_target_t *target, OSDSession **s,
 			   RWLock::Context& lc)
 {
   int r = _calc_target(target);
-  if (target->osd >= 0) {
-    int ret = _get_session(target->osd, s, lc);
-    if (ret < 0)
-      return ret;
-  } else {
-    *s = &homeless_session;
+  if (r < 0) {
+    return r;
   }
-  return r;
+  return _get_session(target->osd, s, lc);
 }
 
 void Objecter::_session_op_assign(Op *op, OSDSession *to)
@@ -1851,23 +1845,18 @@ void Objecter::_session_linger_op_remove(LingerOp *info)
 
 int Objecter::_get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession)
 {
-  OSDSession *s = NULL;
-  if (osd >= 0) {
-    int r = _get_session(osd, &s, lc);
+  int r;
+  do {
+    r = _get_session(osd, psession, lc);
     if (r == -EAGAIN) {
       assert(!lc.is_wlocked());
 
       if (!_promote_lock_check_race(lc)) {
         return r;
       }
-      r = _get_session(osd, &s, lc);
     }
-    assert(r == 0);
-  } else {
-    s = &homeless_session;
-  }
-
-  *psession = s;
+  } while (r == -EAGAIN);
+  assert(r == 0);
 
   return 0;
 }
@@ -1918,19 +1907,9 @@ int Objecter::_recalc_linger_op_target(LingerOp *linger_op, RWLock::Context& lc)
 		   << " acting " << linger_op->target.acting << dendl;
     
     OSDSession *s;
-    if (linger_op->target.osd != -1) {
-      r = _get_session(linger_op->target.osd, &s, lc);
-      if (r == -EAGAIN) {
-        assert(!lc.is_wlocked());
-
-        if (!_promote_lock_check_race(lc)) {
-          return r;
-        }
-        r = _get_session(linger_op->target.osd, &s, lc);
-      }
-      assert(r == 0);
-    } else {
-      s = &homeless_session;
+    r = _get_osd_session(linger_op->target.osd, lc, &s);
+    if (r < 0) {
+      return r;
     }
 
     s->lock.get_write();
