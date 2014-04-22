@@ -300,10 +300,14 @@ void Objecter::shutdown()
 void Objecter::_send_linger(LingerOp *info)
 {
   assert(rwlock.is_wlocked());
+  assert(info->session->lock.is_locked());
+
+  RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
 
   ldout(cct, 15) << "send_linger " << info->linger_id << dendl;
   vector<OSDOp> opv = info->ops; // need to pass a copy to ops
-  Context *onack = (!info->registered && info->on_reg_ack) ? new C_Linger_Ack(this, info) : NULL;
+  Context *onack = (!info->registered && info->on_reg_ack) ?
+    new C_Linger_Ack(this, info) : NULL;
   Context *oncommit = new C_Linger_Commit(this, info);
   Op *o = new Op(info->target.base_oid, info->target.base_oloc,
 		 opv, info->target.flags | CEPH_OSD_FLAG_READ,
@@ -313,57 +317,25 @@ void Objecter::_send_linger(LingerOp *info)
   o->snapc = info->snapc;
   o->mtime = info->mtime;
 
-#warning write me
-  /*
-  OSDSession *s = NULL;
-  r = _calc_target(&info->target);
-  if (info->target.osd >= 0) {
-    int ret =_get_session(info->target.osd, &s);
-    assert(ret != -EAGAIN);
-  } else {
-    s = &homeless_session;
-  }
-  info->session = s;
-  s->linger_ops[info->register_tid] = info;
-
   o->target = info->target;
-  _session_op_assign(o, s);
+  _session_op_assign(o, info->session);
 
   // do not resend this; we will send a new op to reregister
   o->should_resend = false;
 
   if (info->register_tid) {
-    OSDSession *session = info->session;
-    assert(session);
-
-    session->lock.get_write();
-
     // repeat send.  cancel old registeration op, if any.
-    if (session->ops.count(info->register_tid)) {
-      Op *o = session->ops[info->register_tid];
+    if (info->session->ops.count(info->register_tid)) {
+      Op *o = info->session->ops[info->register_tid];
       _op_cancel_map_check(o);
       _cancel_linger_op(o);
     }
 
-    session->lock.unlock();
-
     info->register_tid = _op_submit(o, lc);
   } else {
     // first send
-    // populate info->pgid and info->acting so we
-    // don't resend the linger op on the next osdmap update
-    _recalc_linger_op_target(info, lc);
     info->register_tid = _op_submit_with_budget(o, lc);
   }
-
-  OSDSession *s = o->session;
-  if (info->session != s) {
-    info->session = s;
-    assert(info->session);
-    s->lock.get_write();
-    s->linger_ops[info->linger_id] = info;
-    s->lock.unlock();
-    }*/
 
   logger->inc(l_osdc_linger_send);
 }
@@ -428,18 +400,8 @@ ceph_tid_t Objecter::linger_mutate(const object_t& oid, const object_locator_t& 
   info->on_reg_commit = oncommit;
 
   RWLock::WLocker wl(rwlock);
-
-  info->linger_id = ++max_linger_id;
-
-  linger_ops[info->linger_id] = info;
-  homeless_session.lock.get_write();
-  homeless_session.linger_ops[info->linger_id] = info;
-  homeless_session.lock.unlock();
-
+  _linger_submit(info);
   logger->inc(l_osdc_linger_active);
-
-  _send_linger(info);
-
   return info->linger_id;
 }
 
@@ -463,15 +425,36 @@ ceph_tid_t Objecter::linger_read(const object_t& oid, const object_locator_t& ol
   info->on_reg_commit = onfinish;
 
   RWLock::WLocker wl(rwlock);
-
-  info->linger_id = ++max_linger_id;
-
+  _linger_submit(info);
   logger->inc(l_osdc_linger_active);
-
-  _send_linger(info);
-
   return info->linger_id;
 }
+
+void Objecter::_linger_submit(LingerOp *info)
+{
+  assert(rwlock.is_wlocked());
+  RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
+
+  info->linger_id = ++max_linger_id;
+  ldout(cct, 10) << __func__ << " info " << info
+		 << " linger_id " << info->linger_id << dendl;
+  linger_ops[info->linger_id] = info;
+
+  OSDSession *s = NULL;
+  _calc_target(&info->target);
+  if (info->target.osd >= 0) {
+    int r = _get_session(info->target.osd, &s, lc);
+    assert(r == 0);
+  } else {
+    s = &homeless_session;
+  }
+  s->lock.get_write();
+  s->linger_ops[info->linger_id] = info;
+  _send_linger(info);
+  s->lock.unlock();
+}
+
+
 
 void Objecter::dispatch(Message *m)
 {
@@ -1699,23 +1682,6 @@ int64_t Objecter::get_object_pg_hash_position(int64_t pool, const string& key,
   return p->raw_hash_to_pg(p->hash_key(key, ns));
 }
 
-void Objecter::set_homeless_op(Op *op)
-{
-  if (op->session && !op->session->is_homeless()) {
-    num_homeless_ops.inc();
-  }
-
-  OSDSession *s = &homeless_session;
-  op->session = &homeless_session;
-  bool new_op = !op->tid;
-  s->lock.get_write();
-  if (new_op) {
-    op->tid = last_tid.inc();
-  }
-  s->ops[op->tid] = op;
-  s->lock.unlock();
-}
-
 int Objecter::_calc_target(op_target_t *t)
 {
   assert(rwlock.is_locked());
@@ -1756,10 +1722,7 @@ int Objecter::_calc_target(op_target_t *t)
     int ret = osdmap->object_locator_to_pg(t->target_oid, t->target_oloc,
 					   pgid);
     if (ret == -ENOENT) {
-#warning FIXME
-#if 0
-      set_homeless_op(op);
-#endif
+      t->osd = -1;
       return RECALC_OP_TARGET_POOL_DNE;
     }
   }
@@ -1875,15 +1838,15 @@ void Objecter::_session_op_remove(Op *op)
   op->session = NULL;
 }
 
-void Objecter::_session_linger_op_remove(LingerOp *op)
+void Objecter::_session_linger_op_remove(LingerOp *info)
 {
   assert(rwlock.is_locked());
-  OSDSession *s = op->session;
+  OSDSession *s = info->session;
   assert(s);
   assert(s->lock.is_locked());
 
-  s->linger_ops.erase(op->linger_id);
-  op->session = NULL;
+  s->linger_ops.erase(info->linger_id);
+  info->session = NULL;
 }
 
 int Objecter::_get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession)

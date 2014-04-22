@@ -1491,12 +1491,11 @@ public:
   bool osdmap_full_flag() const;
 
   bool target_should_be_paused(op_target_t *op);
-  void set_homeless_op(Op *op);
   int _calc_target(op_target_t *t);
   int _map_session(op_target_t *op, OSDSession **s,
 		   RWLock::Context& lc);
   void _session_op_remove(Op *op);
-  void _session_linger_op_remove(LingerOp *op);
+  void _session_linger_op_remove(LingerOp *info);
   void _session_op_assign(Op *op, OSDSession *s);
   int _get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession);
   int _assign_op_target_session(Op *op, RWLock::Context& lc, bool src_session_locked, bool dst_session_locked);
@@ -1505,6 +1504,7 @@ public:
   int _recalc_op_target(Op *op, RWLock::Context& lc, bool session_locked = false);
   int _recalc_linger_op_target(LingerOp *op, RWLock::Context& lc);
 
+  void _linger_submit(LingerOp *info);
   void _send_linger(LingerOp *info);
   void _linger_ack(LingerOp *info, int r);
   void _linger_commit(LingerOp *info, int r);
