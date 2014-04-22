@@ -531,7 +531,9 @@ void Objecter::_scan_requests(OSDSession *s,
 	break;
       // -- fall-thru --
     case RECALC_OP_TARGET_NEED_RESEND:
-#warning fixme
+      if (op->session) {
+	_session_linger_op_remove(op);
+      }
       need_resend_linger.push_back(op);
       _linger_cancel_map_check(op);
       break;
@@ -723,13 +725,17 @@ void Objecter::handle_osd_map(MOSDMap *m)
   RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
 
   // resend requests
-  for (map<ceph_tid_t, Op*>::iterator p = need_resend.begin(); p != need_resend.end(); ++p) {
+  for (map<ceph_tid_t, Op*>::iterator p = need_resend.begin();
+       p != need_resend.end(); ++p) {
     Op *op = p->second;
     if (!op->session) {
       OSDSession *s;
       int r = _map_session(&op->target, &s, lc);
       assert(r == 0);
+      s->lock.get_write();
       _session_op_assign(op, s);
+    } else {
+      op->session->lock.get_write();
     }
     if (op->should_resend) {
       if (!op->session->is_homeless() && !op->target.paused) {
@@ -737,18 +743,20 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	_send_op(op);
       }
     } else {
-      RWLock::WLocker wl(op->session->lock);
       _cancel_linger_op(op);
     }
+    op->session->lock.put_write();
   }
-  for (list<LingerOp*>::iterator p = need_resend_linger.begin(); p != need_resend_linger.end(); ++p) {
+  for (list<LingerOp*>::iterator p = need_resend_linger.begin();
+       p != need_resend_linger.end(); ++p) {
     LingerOp *op = *p;
     if (!op->session->is_homeless()) {
       logger->inc(l_osdc_linger_resend);
       _send_linger(op);
     }
   }
-  for (map<ceph_tid_t,CommandOp*>::iterator p = need_resend_command.begin(); p != need_resend_command.end(); ++p) {
+  for (map<ceph_tid_t,CommandOp*>::iterator p = need_resend_command.begin();
+       p != need_resend_command.end(); ++p) {
     CommandOp *c = p->second;
     if (c->session) {
       _send_command(c);
@@ -1859,11 +1867,22 @@ void Objecter::_session_op_remove(Op *op)
   OSDSession *s = op->session;
   assert(s);
   assert(s->lock.is_locked());
-  
+
   if (s->is_homeless()) {
     num_homeless_ops.dec();
   }
   s->ops.erase(op->tid);
+  op->session = NULL;
+}
+
+void Objecter::_session_linger_op_remove(LingerOp *op)
+{
+  assert(rwlock.is_locked());
+  OSDSession *s = op->session;
+  assert(s);
+  assert(s->lock.is_locked());
+
+  s->linger_ops.erase(op->linger_id);
   op->session = NULL;
 }
 

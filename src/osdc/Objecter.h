@@ -1496,6 +1496,7 @@ public:
   int _map_session(op_target_t *op, OSDSession **s,
 		   RWLock::Context& lc);
   void _session_op_remove(Op *op);
+  void _session_linger_op_remove(LingerOp *op);
   void _session_op_assign(Op *op, OSDSession *s);
   int _get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession);
   int _assign_op_target_session(Op *op, RWLock::Context& lc, bool src_session_locked, bool dst_session_locked);
