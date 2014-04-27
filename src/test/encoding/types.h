@@ -29,6 +29,9 @@ TYPEWITHSTRAYDATA(OSDMap::Incremental)
 #include "crush/CrushWrapper.h"
 TYPE(CrushWrapper)
 
+#include "include/rbd_types.h"
+TYPE(RBDFormat1Header)
+
 #include "osd/osd_types.h"
 TYPE(osd_reqid_t)
 TYPE(object_locator_t)

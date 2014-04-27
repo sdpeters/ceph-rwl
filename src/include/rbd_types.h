@@ -13,6 +13,9 @@
 #ifndef CEPH_RBD_TYPES_H
 #define CEPH_RBD_TYPES_H
 
+#include "common/Formatter.h"
+#include "include/encoding.h"
+
 #if defined(__linux__)
 #include <linux/types.h>
 #elif defined(__FreeBSD__)
@@ -101,6 +104,40 @@ struct rbd_obj_header_ondisk {
 	__le64 snap_names_len;
 	struct rbd_obj_snap_ondisk snaps[0];
 } __attribute__((packed));
+
+class RBDFormat1Header {
+private:
+    struct rbd_obj_header_ondisk header;
+public:
+    RBDFormat1Header() {}
+    RBDFormat1Header(std::string block_name, int order, uint64_t size) {
+	snprintf(header.block_name, sizeof(header.block_name), "%s", block_name.c_str());
+	header.options.order = order;
+	header.image_size = size;
+    }
+    void encode(bufferlist &bl) const
+    {
+	bl.append((const char *) &header, sizeof(header));
+    }
+    void decode(bufferlist::iterator &p)
+    {
+	p.copy(sizeof(header), (char *) &header);
+    }
+    void dump(Formatter *f) const
+    {
+	f->dump_string("block_name_prefix", std::string(header.block_name, sizeof(header.block_name)));
+	f->dump_int("order", header.options.order);
+	f->dump_int("size", header.image_size);
+    }
+    static void generate_test_instances(std::list<RBDFormat1Header*>& o)
+    {
+	o.push_back(new RBDFormat1Header);
+	o.push_back(new RBDFormat1Header("rb.18.deadbeef", 22, 1024 * 1024 * 100));
+	o.push_back(new RBDFormat1Header("prefix", 24, 0));
+	o.push_back(new RBDFormat1Header("", 0, 0));
+    }
+};
+WRITE_CLASS_ENCODER(RBDFormat1Header)
 
 
 #endif
