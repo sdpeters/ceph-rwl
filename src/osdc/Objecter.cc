@@ -711,14 +711,16 @@ void Objecter::handle_osd_map(MOSDMap *m)
   for (map<ceph_tid_t, Op*>::iterator p = need_resend.begin();
        p != need_resend.end(); ++p) {
     Op *op = p->second;
-    if (!op->session) {
-      OSDSession *s;
+    OSDSession *s = op->session;
+    bool mapped_session = false;
+    if (!s) {
       int r = _map_session(&op->target, &s, lc);
       assert(r == 0);
-      s->lock.get_write();
+      mapped_session = true;
+    }
+    s->lock.get_write();
+    if (mapped_session) {
       _session_op_assign(op, s);
-    } else {
-      op->session->lock.get_write();
     }
     if (op->should_resend) {
       if (!op->session->is_homeless() && !op->target.paused) {
@@ -728,16 +730,19 @@ void Objecter::handle_osd_map(MOSDMap *m)
     } else {
       _cancel_linger_op(op);
     }
-    op->session->lock.unlock();
+    s->lock.unlock();
   }
   for (list<LingerOp*>::iterator p = need_resend_linger.begin();
        p != need_resend_linger.end(); ++p) {
     LingerOp *op = *p;
+    if (!op->session) {
+      _calc_target(&op->target);
+      int r = _get_session(op->target.osd, &op->session, lc);
+      assert(r == 0);
+    }
     if (!op->session->is_homeless()) {
-      op->session->lock.get_write();
       logger->inc(l_osdc_linger_resend);
       _send_linger(op);
-      op->session->lock.unlock();
     }
   }
   for (map<ceph_tid_t,CommandOp*>::iterator p = need_resend_command.begin();
@@ -1225,7 +1230,7 @@ void Objecter::kick_requests(OSDSession *session)
 
   RWLock::WLocker wl(rwlock);
 
-  RWLock::WLocker(session->lock);
+  session->lock.get_write();
 
   // resend ops
   map<ceph_tid_t,Op*> resend;  // resend in tid order
@@ -1240,6 +1245,7 @@ void Objecter::kick_requests(OSDSession *session)
       _cancel_linger_op(op);
     }
   }
+
   while (!resend.empty()) {
     _send_op(resend.begin()->second);
     resend.erase(resend.begin());
@@ -1251,10 +1257,6 @@ void Objecter::kick_requests(OSDSession *session)
     logger->inc(l_osdc_linger_resend);
     lresend[j->first] = j->second;
   }
-  while (!lresend.empty()) {
-    _send_linger(lresend.begin()->second);
-    lresend.erase(lresend.begin());
-  }
 
   // resend commands
   map<uint64_t,CommandOp*> cresend;  // resend in order
@@ -1265,6 +1267,12 @@ void Objecter::kick_requests(OSDSession *session)
   while (!cresend.empty()) {
     _send_command(cresend.begin()->second);
     cresend.erase(cresend.begin());
+  }
+  session->lock.unlock();
+
+  while (!lresend.empty()) {
+    _send_linger(lresend.begin()->second);
+    lresend.erase(lresend.begin());
   }
 }
 
@@ -1462,11 +1470,6 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   }
   assert(s);  // may be homeless
 
-  s->lock.get_write();
-  if (op->tid == 0)
-    op->tid = last_tid.inc();
-  _session_op_assign(op, s);
-
   bool check_for_latest_map = (r == RECALC_OP_TARGET_POOL_DNE);
 
   inflight_ops.inc();
@@ -1537,6 +1540,8 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
 
   assert(op->target.flags & (CEPH_OSD_FLAG_READ|CEPH_OSD_FLAG_WRITE));
 
+  bool need_send = false;
+
   if ((op->target.flags & CEPH_OSD_FLAG_WRITE) &&
       osdmap->test_flag(CEPH_OSDMAP_PAUSEWR)) {
     ldout(cct, 10) << " paused modify " << op << " tid " << last_tid.read() << dendl;
@@ -1551,10 +1556,21 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
     ldout(cct, 0) << " FULL, paused modify " << op << " tid " << last_tid.read() << dendl;
     op->target.paused = true;
     _maybe_request_map();
-  } else if (!op->session->is_homeless()) {
-    _send_op(op);
+  } else if (!s->is_homeless()) {
+    need_send = true;
   } else {
     _maybe_request_map();
+  }
+
+  MOSDOp *m = _prepare_osd_op(op);
+
+  s->lock.get_write();
+  if (op->tid == 0)
+    op->tid = last_tid.inc();
+  _session_op_assign(op, s);
+
+  if (need_send) {
+    _send_op(op, m);
   }
   s->lock.unlock();
 
@@ -1984,12 +2000,9 @@ void Objecter::finish_op(OSDSession *session, ceph_tid_t tid)
   _finish_op(op);
 }
 
-void Objecter::_send_op(Op *op)
+MOSDOp *Objecter::_prepare_osd_op(Op *op)
 {
   assert(rwlock.is_locked());
-  assert(op->session->lock.is_locked());
-
-  ldout(cct, 15) << "_send_op " << op->tid << " to osd." << op->session->osd << dendl;
 
   int flags = op->target.flags;
   if (op->oncommit)
@@ -1997,22 +2010,7 @@ void Objecter::_send_op(Op *op)
   if (op->onack)
     flags |= CEPH_OSD_FLAG_ACK;
 
-  ConnectionRef con = op->session->con;
-  assert(con);
-
-  // preallocated rx buffer?
-  if (op->con) {
-    ldout(cct, 20) << " revoking rx buffer for " << op->tid << " on " << op->con << dendl;
-    op->con->revoke_rx_buffer(op->tid);
-  }
-  if (op->outbl && op->outbl->length()) {
-    ldout(cct, 20) << " posting rx buffer for " << op->tid << " on " << con << dendl;
-    op->con = con;
-    op->con->post_rx_buffer(op->tid, *op->outbl);
-  }
-
   op->target.paused = false;
-  op->incarnation = op->session->incarnation;
   op->stamp = ceph_clock_now(cct);
 
   MOSDOp *m = new MOSDOp(client_inc.read(), op->tid, 
@@ -2039,6 +2037,37 @@ void Objecter::_send_op(Op *op)
 
   logger->inc(l_osdc_op_send);
   logger->inc(l_osdc_op_send_bytes, m->get_data().length());
+
+  return m;
+}
+
+void Objecter::_send_op(Op *op, MOSDOp *m)
+{
+  assert(rwlock.is_locked());
+  assert(op->session->lock.is_locked());
+
+  if (!m) {
+    assert(op->tid > 0);
+    m = _prepare_osd_op(op);
+  }
+
+  ldout(cct, 15) << "_send_op " << op->tid << " to osd." << op->session->osd << dendl;
+
+  ConnectionRef con = op->session->con;
+  assert(con);
+
+  // preallocated rx buffer?
+  if (op->con) {
+    ldout(cct, 20) << " revoking rx buffer for " << op->tid << " on " << op->con << dendl;
+    op->con->revoke_rx_buffer(op->tid);
+  }
+  if (op->outbl && op->outbl->length()) {
+    ldout(cct, 20) << " posting rx buffer for " << op->tid << " on " << con << dendl;
+    op->con = con;
+    op->con->post_rx_buffer(op->tid, *op->outbl);
+  }
+
+  op->incarnation = op->session->incarnation;
 
   m->set_tid(op->tid);
 
