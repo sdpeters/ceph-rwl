@@ -1430,7 +1430,7 @@ public:
   // -- osd sessions --
   struct OSDSession : public RefCountedObject {
     RWLock lock;
-    Mutex completion_lock;
+    Mutex **completion_locks;
 
     // pending ops
     map<ceph_tid_t,Op*>            ops;
@@ -1441,9 +1441,24 @@ public:
     int incarnation;
     ConnectionRef con;
 
-    OSDSession(int o) : lock("OSDSession"), completion_lock("OSDSession::completion_lock"), osd(o), incarnation(0), con(NULL) {}
+    OSDSession(int o) : lock("OSDSession"), osd(o), incarnation(0), con(NULL) {
+#define COMPLETION_LOCKS_PER_SESSION 32
+      completion_locks = new Mutex *[COMPLETION_LOCKS_PER_SESSION];
+      for (int i = 0; i < COMPLETION_LOCKS_PER_SESSION; i++) {
+        completion_locks[i] = new Mutex("OSDSession::completion_lock");
+      }
+    }
+
+    ~OSDSession() {
+      for (int i = 0; i < COMPLETION_LOCKS_PER_SESSION; i++) {
+        delete completion_locks[i];
+      }
+      delete[] completion_locks;
+    }
 
     bool is_homeless() { return (osd == -1); }
+
+    Mutex *get_lock(object_t& oid);
   };
   map<int,OSDSession*> osd_sessions;
 

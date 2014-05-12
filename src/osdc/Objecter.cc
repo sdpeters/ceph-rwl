@@ -136,6 +136,13 @@ static const char *config_keys[] = {
   NULL
 };
 
+Mutex *Objecter::OSDSession::get_lock(object_t& oid)
+{
+  uint32_t h = ceph_str_hash_linux(oid.name.c_str(), oid.name.size()) % 1023;
+
+  return completion_locks[h % COMPLETION_LOCKS_PER_SESSION];
+}
+
 const char** Objecter::get_tracked_conf_keys() const
 {
   return config_keys;
@@ -2301,6 +2308,9 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     op->outbl = 0;
   }
 
+  /* get it before we call _finish_op() */
+  Mutex *completion_lock = s->get_lock(op->target.base_oid);
+
   // done with this tid?
   if (!op->onack && !op->oncommit) {
     ldout(cct, 15) << "handle_osd_op_reply completed tid " << tid << dendl;
@@ -2310,7 +2320,8 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   ldout(cct, 5) << num_unacked.read() << " unacked, " << num_uncommitted.read() << " uncommitted" << dendl;
 
   // serialize completions
-  s->completion_lock.Lock();
+
+  completion_lock->Lock();
   s->lock.unlock();
 
   // do callbacks
@@ -2320,7 +2331,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   if (oncommit) {
     oncommit->complete(rc);
   }
-  s->completion_lock.Unlock();
+  completion_lock->Unlock();
 
   m->put();
   s->put();
