@@ -2310,7 +2310,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   ldout(cct, 5) << num_unacked.read() << " unacked, " << num_uncommitted.read() << " uncommitted" << dendl;
 
   // serialize completions
-  completion_lock.Lock();
+  s->completion_lock.Lock();
   s->lock.unlock();
 
   // do callbacks
@@ -2320,7 +2320,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   if (oncommit) {
     oncommit->complete(rc);
   }
-  completion_lock.Unlock();
+  s->completion_lock.Unlock();
 
   m->put();
   s->put();

@@ -1034,7 +1034,6 @@ private:
 
   RWLock rwlock;
   RWTimer timer;
-  Mutex completion_lock;
 
   PerfCounters *logger;
   
@@ -1431,6 +1430,7 @@ public:
   // -- osd sessions --
   struct OSDSession : public RefCountedObject {
     RWLock lock;
+    Mutex completion_lock;
 
     // pending ops
     map<ceph_tid_t,Op*>            ops;
@@ -1441,7 +1441,7 @@ public:
     int incarnation;
     ConnectionRef con;
 
-    OSDSession(int o) : lock("OSDSession"), osd(o), incarnation(0), con(NULL) {}
+    OSDSession(int o) : lock("OSDSession"), completion_lock("OSDSession::completion_lock"), osd(o), incarnation(0), con(NULL) {}
 
     bool is_homeless() { return (osd == -1); }
   };
@@ -1570,7 +1570,6 @@ public:
     last_seen_pgmap_version(0),
     rwlock("Objecter::rwlock"),
     timer(cct, rwlock),
-    completion_lock("Objecter::completion_lock"),
     logger(NULL), tick_event(NULL),
     m_request_state_hook(NULL),
     num_homeless_ops(0),
