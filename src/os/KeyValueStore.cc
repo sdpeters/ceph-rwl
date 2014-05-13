@@ -623,19 +623,14 @@ int KeyValueStore::mkfs()
   }
 
   {
-    KeyValueDB *store;
-    if (kv_type == KV_TYPE_LEVELDB) {
-      store = new LevelDBStore(g_ceph_context, current_fn);
-#ifdef HAVE_KINETIC
-    } else if (kv_type == KV_TYPE_KINETIC) {
-      store = new KineticStore(g_ceph_context);
-#endif
-    } else {
-      derr << "KeyValueStore::mkfs error: unknown backend type" << kv_type << dendl;
+    KeyValueDB *store = KeyValueDB::create(g_ceph_context, g_conf->osd_keyvaluedb, current_fn.c_str());
+    if(! store)
+    {
+      derr << "KeyValueStore::mkfs backend type " << g_conf->osd_keyvaluedb << " error" << dendl;
       ret = -1;
       goto close_fsid_fd;
-    }
 
+    }
     store->init();
     stringstream err;
     if (store->create_and_open(err)) {
@@ -827,18 +822,14 @@ int KeyValueStore::mount()
   }
 
   {
-    KeyValueDB *store;
-    if (kv_type == KV_TYPE_LEVELDB) {
-      store = new LevelDBStore(g_ceph_context, current_fn);
-#ifdef HAVE_KINETIC
-    } else if (kv_type == KV_TYPE_KINETIC) {
-      store = new KineticStore(g_ceph_context);
-#endif
-    } else {
-      derr << "KeyValueStore::mount error: unknown backend type" << kv_type
-           << dendl;
+
+    KeyValueDB *store = KeyValueDB::create(g_ceph_context, g_conf->osd_keyvaluedb, current_fn.c_str());
+    if(! store)
+    {
+      derr << "KeyValueStore::mount backend type " << g_conf->osd_keyvaluedb << " error" << dendl;
       ret = -1;
-      goto close_current_fd;
+      goto close_fsid_fd;
+
     }
 
     store->init();
@@ -3054,4 +3045,14 @@ void KeyValueStore::handle_conf_change(const struct md_config_t *conf,
 
 void KeyValueStore::dump_transactions(list<ObjectStore::Transaction*>& ls, uint64_t seq, OpSequencer *osr)
 {
+}
+int KeyValueStore::_detect_backend()
+{
+  if (g_conf->osd_keyvaluedb == "leveldb")
+    kv_type = KV_TYPE_LEVELDB;
+  if (g_conf->osd_keyvaluedb == "rocksdb")
+    kv_type = KV_TYPE_ROCKSDB;
+  if (g_conf->osd_keyvaluedb == "kinetic")
+    kv_type = KV_TYPE_KINETIC;
+  return 0;
 }
