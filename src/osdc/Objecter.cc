@@ -1546,7 +1546,7 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   ldout(cct, 10) << "_op_submit oid " << op->target.base_oid
            << " " << op->target.base_oloc << " " << op->target.target_oloc
 	   << " " << op->ops << " tid " << op->tid
-           << " osd." << (!op->session->is_homeless() ? op->session->osd : -1)
+           << " osd." << (!s->is_homeless() ? s->osd : -1)
            << dendl;
 
   assert(op->target.flags & (CEPH_OSD_FLAG_READ|CEPH_OSD_FLAG_WRITE));
