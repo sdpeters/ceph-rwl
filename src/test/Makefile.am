@@ -686,6 +686,11 @@ ceph_multi_stress_watch_SOURCES = test/multi_stress_watch.cc
 ceph_multi_stress_watch_LDADD = $(LIBRADOS) $(CEPH_GLOBAL) $(RADOS_TEST_LDADD)
 bin_DEBUGPROGRAMS += ceph_multi_stress_watch
 
+ceph_test_osd_stale_read_SOURCES = test/osd/ceph_test_osd_stale_read.cc
+ceph_test_osd_stale_read_LDADD = $(LIBRBD) $(LIBRADOS) $(UNITTEST_LDADD) $(CEPH_GLOBAL) $(RADOS_TEST_LDADD)
+ceph_test_osd_stale_read_CXXFLAGS = $(UNITTEST_CXXFLAGS)
+bin_DEBUGPROGRAMS += ceph_test_osd_stale_read
+
 ceph_test_librbd_SOURCES = test/librbd/test_librbd.cc
 ceph_test_librbd_LDADD = $(LIBRBD) $(LIBRADOS) $(UNITTEST_LDADD) $(CEPH_GLOBAL) $(RADOS_TEST_LDADD)
 ceph_test_librbd_CXXFLAGS = $(UNITTEST_CXXFLAGS)
