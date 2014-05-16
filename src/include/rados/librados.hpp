@@ -979,6 +979,8 @@ namespace librados
 
     int mon_command(std::string cmd, const bufferlist& inbl,
 		    bufferlist *outbl, std::string *outs);
+    int osd_command(int osd, std::string cmd, const bufferlist& inbl,
+		    bufferlist *outbl, std::string *outs);
 
     int ioctx_create(const char *name, IoCtx &pioctx);
 
