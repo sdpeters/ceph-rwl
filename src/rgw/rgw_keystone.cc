@@ -35,6 +35,7 @@ int KeystoneToken::parse(CephContext *cct, bufferlist& bl)
     ldout(cct, 0) << "Keystone token parse error: " << err.message << dendl;
     return -EINVAL;
   }
+  ldout(cct, 20) << __FILE__ << ":" << __LINE__ << ": parsed token expires=" << token.expires << dendl;
 
   return 0;
 }
@@ -45,6 +46,7 @@ bool RGWKeystoneTokenCache::find(const string& token_id, KeystoneToken& token)
   map<string, token_entry>::iterator iter = tokens.find(token_id);
   if (iter == tokens.end()) {
     lock.Unlock();
+    ldout(cct, 20) << __FILE__ << ":" << __LINE__ << ": could not find token id in cache: " << token_id << dendl;
     if (perfcounter) perfcounter->inc(l_rgw_keystone_token_cache_miss);
     return false;
   }
@@ -53,6 +55,7 @@ bool RGWKeystoneTokenCache::find(const string& token_id, KeystoneToken& token)
   tokens_lru.erase(entry.lru_iter);
 
   if (entry.token.expired()) {
+    ldout(cct, 20) << __FILE__ << ":" << __LINE__ << ": found token_id: " << token_id << ", but expired" << " now=" << ceph_clock_now(NULL) << " expires=" << entry.token.token.expires << dendl;
     tokens.erase(iter);
     lock.Unlock();
     if (perfcounter) perfcounter->inc(l_rgw_keystone_token_cache_hit);
@@ -72,6 +75,7 @@ bool RGWKeystoneTokenCache::find(const string& token_id, KeystoneToken& token)
 void RGWKeystoneTokenCache::add(const string& token_id, KeystoneToken& token)
 {
   lock.Lock();
+  ldout(cct, 20) << __FILE__ << ":" << __LINE__ << ": token cache: adding token " << token_id << " expires=" << token.token.expires << dendl;
   map<string, token_entry>::iterator iter = tokens.find(token_id);
   if (iter != tokens.end()) {
     token_entry& e = iter->second;
@@ -103,6 +107,7 @@ void RGWKeystoneTokenCache::invalidate(const string& token_id)
 
   ldout(cct, 20) << "invalidating revoked token id=" << token_id << dendl;
   token_entry& e = iter->second;
+  ldout(cct, 20) << __FILE__ << ":" << __LINE__ << ": token cache: invalidating token " << token_id << " expires=" << e.token.token.expires << dendl;
   tokens_lru.erase(e.lru_iter);
   tokens.erase(iter);
 }
