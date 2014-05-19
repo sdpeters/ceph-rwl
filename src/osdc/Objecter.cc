@@ -138,9 +138,10 @@ static const char *config_keys[] = {
 
 Mutex *Objecter::OSDSession::get_lock(object_t& oid)
 {
-  uint32_t h = ceph_str_hash_linux(oid.name.c_str(), oid.name.size()) % 1023;
+#define HASH_PRIME 1021
+  uint32_t h = ceph_str_hash_linux(oid.name.c_str(), oid.name.size()) % HASH_PRIME;
 
-  return completion_locks[h % COMPLETION_LOCKS_PER_SESSION];
+  return completion_locks[h % num_locks];
 }
 
 const char** Objecter::get_tracked_conf_keys() const
@@ -1086,7 +1087,7 @@ int Objecter::_get_session(int osd, OSDSession **session, RWLock::Context& lc)
   if (!lc.is_wlocked()) {
     return -EAGAIN;
   }
-  OSDSession *s = new OSDSession(osd);
+  OSDSession *s = new OSDSession(cct, osd);
   osd_sessions[osd] = s;
   s->con = messenger->get_connection(osdmap->get_inst(osd));
   logger->inc(l_osdc_osd_session_open);

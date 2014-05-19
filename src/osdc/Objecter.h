@@ -1439,18 +1439,19 @@ public:
 
     int osd;
     int incarnation;
+    int num_locks;
     ConnectionRef con;
 
-    OSDSession(int o) : lock("OSDSession"), osd(o), incarnation(0), con(NULL) {
-#define COMPLETION_LOCKS_PER_SESSION 32
-      completion_locks = new Mutex *[COMPLETION_LOCKS_PER_SESSION];
-      for (int i = 0; i < COMPLETION_LOCKS_PER_SESSION; i++) {
+    OSDSession(CephContext *cct, int o) : lock("OSDSession"), osd(o), incarnation(0), con(NULL) {
+      num_locks = cct->_conf->objecter_completion_locks_per_session;
+      completion_locks = new Mutex *[num_locks];
+      for (int i = 0; i < num_locks; i++) {
         completion_locks[i] = new Mutex("OSDSession::completion_lock");
       }
     }
 
     ~OSDSession() {
-      for (int i = 0; i < COMPLETION_LOCKS_PER_SESSION; i++) {
+      for (int i = 0; i < num_locks; i++) {
         delete completion_locks[i];
       }
       delete[] completion_locks;
@@ -1588,7 +1589,7 @@ public:
     logger(NULL), tick_event(NULL),
     m_request_state_hook(NULL),
     num_homeless_ops(0),
-    homeless_session(-1),
+    homeless_session(cct, -1),
     mon_timeout(mon_timeout),
     osd_timeout(osd_timeout),
     op_throttle_bytes(cct, "objecter_bytes", cct->_conf->objecter_inflight_op_bytes),
