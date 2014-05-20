@@ -1326,6 +1326,7 @@ public:
     string *prs;
     int target_osd;
     pg_t target_pg;
+    int osd; /* calculated osd for sending request */
     epoch_t map_dne_bound;
     int map_check_error;           // error to return if map check fails
     const char *map_check_error_str;
@@ -1334,7 +1335,7 @@ public:
 
     CommandOp()
       : session(NULL),
-	tid(0), poutbl(NULL), prs(NULL), target_osd(-1),
+	tid(0), poutbl(NULL), prs(NULL), target_osd(-1), osd(-1),
 	map_dne_bound(0),
 	map_check_error(0),
 	map_check_error_str(NULL),
@@ -1342,7 +1343,8 @@ public:
   };
 
   int submit_command(CommandOp *c, ceph_tid_t *ptid);
-  int _recalc_command_target(CommandOp *c);
+  int _calc_command_target(CommandOp *c);
+  void _assign_command_session(CommandOp *c);
   void _send_command(CommandOp *c);
   int command_op_cancel(OSDSession *s, ceph_tid_t tid, int r);
   void _finish_command(CommandOp *c, int r, string rs);
@@ -1510,12 +1512,11 @@ public:
 		   RWLock::Context& lc);
   void _session_op_remove(Op *op);
   void _session_linger_op_remove(LingerOp *info);
+  void _session_command_op_remove(CommandOp *op);
   void _session_op_assign(Op *op, OSDSession *s);
   int _get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession);
   int _assign_op_target_session(Op *op, RWLock::Context& lc, bool src_session_locked, bool dst_session_locked);
   int _get_op_target_session(Op *op, RWLock::Context& lc, OSDSession **psession);
-  void _session_op_validate(Op *op, RWLock::Context& lc, bool session_locked);
-  int _recalc_op_target(Op *op, RWLock::Context& lc, bool session_locked = false);
   int _recalc_linger_op_target(LingerOp *op, RWLock::Context& lc);
 
   void _linger_submit(LingerOp *info);

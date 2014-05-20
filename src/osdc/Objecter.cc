@@ -570,7 +570,7 @@ void Objecter::_scan_requests(OSDSession *s,
     CommandOp *c = cp->second;
     ++cp;
     ldout(cct, 10) << " checking command " << c->tid << dendl;
-    int r = _recalc_command_target(c);
+    int r = _calc_command_target(c);
     switch (r) {
     case RECALC_OP_TARGET_NO_ACTION:
       // resend if skipped map; otherwise do nothing.
@@ -579,6 +579,9 @@ void Objecter::_scan_requests(OSDSession *s,
       // -- fall-thru --
     case RECALC_OP_TARGET_NEED_RESEND:
       need_resend_command[c->tid] = c;
+      if (c->session) {
+        _session_command_op_remove(c);
+      }
       _command_cancel_map_check(c);
       break;
     case RECALC_OP_TARGET_POOL_DNE:
@@ -760,7 +763,8 @@ void Objecter::handle_osd_map(MOSDMap *m)
   for (map<ceph_tid_t,CommandOp*>::iterator p = need_resend_command.begin();
        p != need_resend_command.end(); ++p) {
     CommandOp *c = p->second;
-    if (c->session) {
+    _assign_command_session(c);
+    if (c->session && !c->session->is_homeless()) {
       _send_command(c);
     }
   }
@@ -1880,6 +1884,17 @@ void Objecter::_session_linger_op_remove(LingerOp *info)
   info->session = NULL;
 }
 
+void Objecter::_session_command_op_remove(CommandOp *op)
+{
+  assert(rwlock.is_locked());
+  OSDSession *s = op->session;
+  assert(s);
+  assert(s->lock.is_locked());
+
+  s->command_ops.erase(op->tid);
+  op->session = NULL;
+}
+
 int Objecter::_get_osd_session(int osd, RWLock::Context& lc, OSDSession **psession)
 {
   int r;
@@ -1901,29 +1916,6 @@ int Objecter::_get_osd_session(int osd, RWLock::Context& lc, OSDSession **psessi
 int Objecter::_get_op_target_session(Op *op, RWLock::Context& lc, OSDSession **psession)
 {
   return _get_osd_session(op->target.osd, lc, psession);
-}
-
-void Objecter::_session_op_validate(Op *op, RWLock::Context& lc, bool session_locked)
-{
-  assert(rwlock.is_locked());
-
-  if (op->session && op->session->osd != op->target.osd) {
-    OSDSession *orig_session = op->session;
-    _session_op_remove(op);
-    put_session(orig_session);
-  }
-}
-
-int Objecter::_recalc_op_target(Op *op, RWLock::Context& lc,
-                                bool src_session_locked)
-{
-  assert(rwlock.is_locked());
-
-  int r = _calc_target(&op->target);
-  if (r == RECALC_OP_TARGET_NEED_RESEND) {
-    _session_op_validate(op, lc, src_session_locked);
-  }
-  return r;
 }
 
 bool Objecter::_promote_lock_check_race(RWLock::Context& lc)
@@ -3373,13 +3365,16 @@ int Objecter::submit_command(CommandOp *c, ceph_tid_t *ptid)
 {
   RWLock::WLocker wl(rwlock);
 
+  RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
+
   ceph_tid_t tid = last_tid.inc();
   ldout(cct, 10) << "_submit_command " << tid << " " << c->cmd << dendl;
   c->tid = tid;
   homeless_session.command_ops[tid] = c;
   num_homeless_ops.inc();
   c->session = &homeless_session;
-  (void)_recalc_command_target(c);
+  (void)_calc_command_target(c);
+  _assign_command_session(c);
   if (osd_timeout > 0) {
     c->ontimeout = new C_CancelCommandOp(c->session, tid, this);
     timer.add_event_after(osd_timeout, c->ontimeout);
@@ -3400,14 +3395,14 @@ int Objecter::submit_command(CommandOp *c, ceph_tid_t *ptid)
   return 0;
 }
 
-int Objecter::_recalc_command_target(CommandOp *c)
+int Objecter::_calc_command_target(CommandOp *c)
 {
   assert(rwlock.is_wlocked());
 
   RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
 
-  OSDSession *s = &homeless_session;
   c->map_check_error = 0;
+
   if (c->target_osd >= 0) {
     if (!osdmap->exists(c->target_osd)) {
       c->map_check_error = -ENOENT;
@@ -3419,25 +3414,45 @@ int Objecter::_recalc_command_target(CommandOp *c)
       c->map_check_error_str = "osd down";
       return RECALC_OP_TARGET_OSD_DOWN;
     }
-    int r = _get_session(c->target_osd, &s, lc);
-    assert(r != -EAGAIN); /* shouldn't happen as we're holding the write lock */
+    c->osd = c->target_osd;
   } else {
     if (!osdmap->have_pg_pool(c->target_pg.pool())) {
       c->map_check_error = -ENOENT;
       c->map_check_error_str = "pool dne";
       return RECALC_OP_TARGET_POOL_DNE;
     }
-    int primary;
     vector<int> acting;
-    osdmap->pg_to_acting_osds(c->target_pg, &acting, &primary);
-    if (primary != -1) {
-      int r = _get_session(primary, &s, lc);
-      assert(r != -EAGAIN); /* shouldn't happen as we're holding the write lock */
-    }
+    osdmap->pg_to_acting_osds(c->target_pg, &acting, &c->osd);
   }
 
+  OSDSession *s;
+  int r = _get_session(c->osd, &s, lc);
+  assert(r != -EAGAIN); /* shouldn't happen as we're holding the write lock */
+
   if (c->session != s) {
-    ldout(cct, 10) << "_recalc_command_target " << c->tid << " now " << c->session << dendl;
+    put_session(s);
+    return RECALC_OP_TARGET_NEED_RESEND;
+  }
+
+  put_session(s);
+
+  ldout(cct, 20) << "_recalc_command_target " << c->tid << " no change, " << c->session << dendl;
+
+  return RECALC_OP_TARGET_NO_ACTION;
+}
+
+void Objecter::_assign_command_session(CommandOp *c)
+{
+  assert(rwlock.is_wlocked());
+
+  RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
+
+  OSDSession *s;
+  int r = _get_session(c->osd, &s, lc);
+  assert(r != -EAGAIN); /* shouldn't happen as we're holding the write lock */
+
+  if (c->session != s) {
+    ldout(cct, 10) << "_assign_command_session " << c->tid << " now " << c->session << dendl;
     if (c->session) {
       if (c->session->is_homeless()) {
         num_homeless_ops.dec();
@@ -3457,13 +3472,9 @@ int Objecter::_recalc_command_target(CommandOp *c)
     if (s->is_homeless())
       num_homeless_ops.inc();
     s->lock.unlock();
-    return RECALC_OP_TARGET_NEED_RESEND;
   } else {
     put_session(s);
   }
-
-  ldout(cct, 20) << "_recalc_command_target " << c->tid << " no change, " << c->session << dendl;
-  return RECALC_OP_TARGET_NO_ACTION;
 }
 
 void Objecter::_send_command(CommandOp *c)
