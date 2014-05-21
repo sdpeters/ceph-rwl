@@ -377,6 +377,12 @@ void Objecter::_linger_commit(LingerOp *info, int r)
 
 void Objecter::unregister_linger(uint64_t linger_id)
 {
+  RWLock::WLocker wl(rwlock);
+  _unregister_linger(linger_id);
+}
+
+void Objecter::_unregister_linger(uint64_t linger_id)
+{
   map<uint64_t, LingerOp*>::iterator iter = linger_ops.find(linger_id);
   if (iter != linger_ops.end()) {
     LingerOp *info = iter->second;
@@ -974,7 +980,7 @@ void Objecter::_check_linger_pool_dne(LingerOp *op)
       if (op->on_reg_commit) {
 	op->on_reg_commit->complete(-ENOENT);
       }
-      unregister_linger(op->linger_id);
+      _unregister_linger(op->linger_id);
     }
   } else {
     _send_linger_map_check(op);

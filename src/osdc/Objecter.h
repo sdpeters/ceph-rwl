@@ -1787,6 +1787,7 @@ public:
 		    Context *onack,
 		    version_t *objver);
   void unregister_linger(uint64_t linger_id);
+  void _unregister_linger(uint64_t linger_id);
 
   /**
    * set up initial ops in the op vector, and allocate a final op slot.
