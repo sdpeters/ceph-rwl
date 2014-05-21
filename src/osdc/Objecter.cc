@@ -559,7 +559,7 @@ void Objecter::_scan_requests(OSDSession *s,
       _op_cancel_map_check(op);
       break;
     case RECALC_OP_TARGET_POOL_DNE:
-      _check_op_pool_dne(op);
+      _check_op_pool_dne(op, true);
       break;
     }
   }
@@ -821,7 +821,7 @@ void Objecter::C_Op_Map_Latest::finish(int r)
   if (op->map_dne_bound == 0)
     op->map_dne_bound = latest;
 
-  objecter->_check_op_pool_dne(op);
+  objecter->_check_op_pool_dne(op, false);
 }
 
 int Objecter::pool_snap_by_name(int64_t poolid, const char *snap_name, snapid_t *snap)
@@ -877,7 +877,7 @@ int Objecter::pool_snap_list(int64_t poolid, vector<uint64_t> *snaps)
   return 0;
 }
 
-void Objecter::_check_op_pool_dne(Op *op)
+void Objecter::_check_op_pool_dne(Op *op, bool session_locked)
 {
   assert(rwlock.is_wlocked());
 
@@ -897,8 +897,13 @@ void Objecter::_check_op_pool_dne(Op *op)
       if (op->oncommit) {
 	op->oncommit->complete(-ENOENT);
       }
-      RWLock::WLocker wl(op->session->lock);
+      if (!session_locked) {
+        op->session->lock.get_write();
+      }
       _finish_op(op);
+      if (!session_locked) {
+        op->session->lock.unlock();
+      }
     }
   } else {
     _send_op_map_check(op);
