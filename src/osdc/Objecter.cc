@@ -390,6 +390,7 @@ void Objecter::_unregister_linger(uint64_t linger_id)
     info->session->linger_ops.erase(linger_id);
     info->session->lock.unlock();
     linger_ops.erase(iter);
+    info->canceled = true;
     info->put();
 
     logger->dec(l_osdc_linger_active);
@@ -1281,8 +1282,10 @@ void Objecter::kick_requests(OSDSession *session)
   // resend lingers
   map<uint64_t, LingerOp*> lresend;  // resend in order
   for (map<ceph_tid_t, LingerOp*>::iterator j = session->linger_ops.begin(); j != session->linger_ops.end(); ++j) {
+    LingerOp *op = j->second;
+    op->get();
     logger->inc(l_osdc_linger_resend);
-    lresend[j->first] = j->second;
+    lresend[j->first] = op;
   }
 
   // resend commands
@@ -1298,7 +1301,11 @@ void Objecter::kick_requests(OSDSession *session)
   session->lock.unlock();
 
   while (!lresend.empty()) {
-    _send_linger(lresend.begin()->second);
+    LingerOp *op = lresend.begin()->second;
+    if (!op->canceled) {
+      _send_linger(op);
+    }
+    op->put();
     lresend.erase(lresend.begin());
   }
 }

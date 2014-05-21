@@ -1368,6 +1368,7 @@ public:
     version_t *pobjver;
 
     bool registered;
+    bool canceled;
     Context *on_reg_ack, *on_reg_commit;
 
     OSDSession *session;
@@ -1380,6 +1381,7 @@ public:
 		 snap(CEPH_NOSNAP),
 		 poutbl(NULL), pobjver(NULL),
 		 registered(false),
+		 canceled(false),
 		 on_reg_ack(NULL), on_reg_commit(NULL),
 		 session(NULL),
 		 register_tid(0),
