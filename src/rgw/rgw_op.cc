@@ -1752,8 +1752,13 @@ done:
 
 int RGWPutMetadata::verify_permission()
 {
-  if (!verify_object_permission(s, RGW_PERM_WRITE))
-    return -EACCES;
+  if (s->object) {
+    if (!verify_object_permission(s, RGW_PERM_WRITE))
+      return -EACCES;
+  } else {
+    if (!verify_bucket_permission(s, RGW_PERM_WRITE))
+      return -EACCES;
+  }
 
   return 0;
 }
