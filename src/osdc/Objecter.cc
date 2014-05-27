@@ -2003,7 +2003,7 @@ void Objecter::_finish_op(Op *op)
     timer.cancel_event(op->ontimeout);
   }
 
-  op->session->put();
+  put_session(op->session);
 
   inflight_ops.dec();
 
@@ -2145,7 +2145,7 @@ void Objecter::unregister_op(Op *op)
   op->session->lock.get_write();
   op->session->ops.erase(op->tid);
   op->session->lock.unlock();
-  op->session->put();
+  put_session(op->session);
   op->session = NULL;
 
   inflight_ops.dec();
