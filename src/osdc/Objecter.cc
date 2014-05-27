@@ -264,6 +264,8 @@ void Objecter::init()
 	       << cpp_strerror(ret) << dendl;
   }
 
+  timer.init();
+
   rwlock.get_read();
 
   schedule_tick();
@@ -307,6 +309,9 @@ void Objecter::shutdown()
     delete logger;
     logger = NULL;
   }
+
+  timer.shutdown();
+
 }
 
 void Objecter::_send_linger(LingerOp *info)
@@ -1319,8 +1324,10 @@ void Objecter::schedule_tick()
 
 void Objecter::tick()
 {
-  if (!initialized.read())
+  if (!initialized.read()) {
+    schedule_tick();
     return;
+  }
 
   assert(rwlock.is_locked());
 
