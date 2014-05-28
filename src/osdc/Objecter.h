@@ -1529,7 +1529,7 @@ public:
   void _check_op_pool_dne(Op *op, bool session_locked);
   void _send_op_map_check(Op *op);
   void _op_cancel_map_check(Op *op);
-  void _check_linger_pool_dne(LingerOp *op);
+  void _check_linger_pool_dne(LingerOp *op, bool *need_unregister);
   void _send_linger_map_check(LingerOp *op);
   void _linger_cancel_map_check(LingerOp *op);
   void _check_command_map_dne(CommandOp *op);
