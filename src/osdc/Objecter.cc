@@ -1522,17 +1522,20 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   int r;
   assert(op->session == NULL);
   OSDSession *s = NULL;
+
+  bool check_for_latest_map;
+
   while (true) {
     r = _calc_target(&op->target);
-    if (_get_session(op->target.osd, &s, lc) == -EAGAIN) {
+    check_for_latest_map = (r == RECALC_OP_TARGET_POOL_DNE);
+    if (_get_session(op->target.osd, &s, lc) == -EAGAIN ||
+        check_for_latest_map) {
       lc.promote();
       continue;
     }
     break;
   }
   assert(s);  // may be homeless
-
-  bool check_for_latest_map = (r == RECALC_OP_TARGET_POOL_DNE);
 
   inflight_ops.inc();
 
