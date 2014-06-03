@@ -1539,10 +1539,11 @@ public:
   void _command_cancel_map_check(CommandOp *op);
 
   void kick_requests(OSDSession *session);
+  void _kick_requests(OSDSession *session);
 
   int _get_session(int osd, OSDSession **session, RWLock::Context& lc);
   void put_session(OSDSession *s);
-  void reopen_session(OSDSession *session);
+  void _reopen_session(OSDSession *session);
   void close_session(OSDSession *session);
   
   void _list_reply(ListContext *list_context, int r, Context *final_finish,

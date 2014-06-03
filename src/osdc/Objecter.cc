@@ -1153,9 +1153,10 @@ void Objecter::put_session(Objecter::OSDSession *s)
   }
 }
 
-void Objecter::reopen_session(OSDSession *s)
+void Objecter::_reopen_session(OSDSession *s)
 {
-  s->lock.get_write();
+  assert(s->lock.is_locked());
+
   entity_inst_t inst = osdmap->get_inst(s->osd);
   ldout(cct, 10) << "reopen_session osd." << s->osd << " session, addr now " << inst << dendl;
   if (s->con) {
@@ -1164,7 +1165,6 @@ void Objecter::reopen_session(OSDSession *s)
   }
   s->con = messenger->get_connection(inst);
   s->incarnation++;
-  s->lock.unlock();
   logger->inc(l_osdc_osd_session_open);
 }
 
@@ -1290,6 +1290,13 @@ void Objecter::kick_requests(OSDSession *session)
   ldout(cct, 10) << "kick_requests for osd." << session->osd << dendl;
 
   RWLock::WLocker wl(rwlock);
+
+  _kick_requests(session);
+}
+
+void Objecter::_kick_requests(OSDSession *session)
+{
+  assert(rwlock.is_locked());
 
   session->lock.get_write();
 
@@ -2287,6 +2294,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     op->tid = last_tid.inc();
 
     _send_op(op);
+    s->lock.unlock();
     m->put();
     return;
   }
@@ -3077,11 +3085,11 @@ void Objecter::ms_handle_reset(Connection *con)
       map<int,OSDSession*>::iterator p = osd_sessions.find(osd);
       if (p != osd_sessions.end()) {
 	OSDSession *session = p->second;
-        session->get();
+        session->lock.get_write();
+	_reopen_session(session);
+	_kick_requests(session);
+        session->lock.unlock();
         rwlock.unlock();
-	reopen_session(session);
-	kick_requests(session);
-        session->put();
 	maybe_request_map();
       } else {
         rwlock.unlock();
