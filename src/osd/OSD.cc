@@ -237,7 +237,9 @@ OSDService::OSDService(OSD *osd) :
 #ifdef PG_DEBUG_REFS
   , pgid_lock("OSDService::pgid_lock")
 #endif
-{}
+{
+  objecter->init();
+}
 
 OSDService::~OSDService()
 {
@@ -448,7 +450,7 @@ void OSDService::init()
   reserver_finisher.start();
   objecter_finisher.start();
   objecter->set_client_incarnation(0);
-  objecter->init();
+  objecter->start();
   watch_timer.init();
   agent_timer.init();
 
@@ -1249,7 +1251,7 @@ int OSD::init()
   dout(2) << "superblock: i am osd." << superblock.whoami << dendl;
 
   create_logger();
-    
+
   // i'm ready!
   client_messenger->add_dispatcher_head(this);
   cluster_messenger->add_dispatcher_head(this);
