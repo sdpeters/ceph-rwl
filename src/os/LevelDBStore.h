@@ -199,6 +199,10 @@ public:
   int submit_transaction(KeyValueDB::Transaction t);
   int submit_transaction_sync(KeyValueDB::Transaction t);
   int get(
+      const string &prefix,
+      const string &key,
+      bufferlist *out);
+  int get(
     const string &prefix,
     const std::set<string> &key,
     std::map<string, bufferlist> *out

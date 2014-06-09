@@ -185,9 +185,36 @@ void LevelDBStore::LevelDBTransactionImpl::rmkeys_by_prefix(const string &prefix
 
 int LevelDBStore::get(
     const string &prefix,
+    const string &key,
+    bufferlist *out)
+{
+  string k = combine_strings(prefix, key);
+  string value;
+  leveldb::Status s = db->Get(leveldb::ReadOptions(), leveldb::Slice(k), &value);
+  if (s.IsNotFound()) {
+    return -ENOENT;
+  } else if (!s.ok()) {
+    std::cerr << "GET ERROR: " << s.ToString() << std::endl;
+  }
+  out->append(value.data(),value.size());
+  return (s.ok() ? 0 : -1);
+}
+
+int LevelDBStore::get(
+    const string &prefix,
     const std::set<string> &keys,
     std::map<string, bufferlist> *out)
 {
+  if (keys.size() == 1) {
+    bufferlist bl;
+    set<string>::iterator p = keys.begin();
+    int r = get(prefix, *p, &bl);
+    if (r == 0) {
+      out->insert(make_pair(*p, bl));
+    }
+    return 0;
+  }
+
   KeyValueDB::Iterator it = get_iterator(prefix);
   for (std::set<string>::const_iterator i = keys.begin();
        i != keys.end();
