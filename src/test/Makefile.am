@@ -717,6 +717,11 @@ ceph_test_mon_workloadgen_SOURCES = test/mon/test_mon_workloadgen.cc
 ceph_test_mon_workloadgen_LDADD = $(LIBOS) $(LIBOSDC) $(CEPH_GLOBAL)
 bin_DEBUGPROGRAMS += ceph_test_mon_workloadgen
 
+ceph_test_mon_store_stress_SOURCES = \
+	test/mon/mon-store-stress.cc
+ceph_test_mon_store_stress_LDADD = $(LIBOS) $(CEPH_GLOBAL) $(BOOST_PROGRAM_OPTIONS_LIBS)
+bin_DEBUGPROGRAMS += ceph-test-mon-store-stress
+
 ceph_test_rados_api_cmd_SOURCES = test/librados/cmd.cc
 ceph_test_rados_api_cmd_LDADD = $(LIBRADOS) $(UNITTEST_LDADD) $(RADOS_TEST_LDADD)
 ceph_test_rados_api_cmd_CXXFLAGS = $(UNITTEST_CXXFLAGS)
