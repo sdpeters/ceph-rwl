@@ -240,6 +240,8 @@ private:
   string cluster_snapshot;
   bool new_blacklist_entries;
 
+  uint64_t up_features;
+
  public:
   ceph::shared_ptr<CrushWrapper> crush;       // hierarchical map
 
@@ -258,6 +260,7 @@ private:
 	     osd_uuid(new vector<uuid_d>),
 	     cluster_snapshot_epoch(0),
 	     new_blacklist_entries(false),
+	     up_features(0),
 	     crush(new CrushWrapper) {
     memset(&fsid, 0, sizeof(fsid));
   }
@@ -542,7 +545,10 @@ public:
   /**
    * get intersection of features supported by up osds
    */
-  uint64_t get_up_osd_features() const;
+  void calc_up_features();
+  uint64_t get_up_osd_features() const {
+    return up_features;
+  }
 
   int apply_incremental(const Incremental &inc);
 

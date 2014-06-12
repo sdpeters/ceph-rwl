@@ -119,9 +119,11 @@ public:
     int32_t standby_for_rank;
     string standby_for_name;
     set<int32_t> export_targets;
+    uint64_t mds_features;
 
     mds_info_t() : global_id(0), rank(-1), inc(0), state(STATE_STANDBY), state_seq(0),
-		   standby_for_rank(MDS_NO_STANDBY_PREF) { }
+		   standby_for_rank(MDS_NO_STANDBY_PREF),
+		   mds_features(0) { }
 
     bool laggy() const { return !(laggy_since == utime_t()); }
     void clear_laggy() { laggy_since = utime_t(); }
@@ -129,8 +131,10 @@ public:
     entity_inst_t get_inst() const { return entity_inst_t(entity_name_t::MDS(rank), addr); }
 
     void encode(bufferlist& bl, uint64_t features) const {
-      if ((features & CEPH_FEATURE_MDSENC) == 0 ) encode_unversioned(bl);
-      else encode_versioned(bl, features);
+      if ((features & CEPH_FEATURE_MDSENC) == 0)
+	encode_unversioned(bl);
+      else
+	encode_versioned(bl, features);
     }
     void decode(bufferlist::iterator& p);
     void dump(Formatter *f) const;
@@ -183,6 +187,16 @@ protected:
   bool explicitly_allowed_snaps; //< the user has explicitly enabled snap creation
 
   bool inline_data_enabled;
+
+  uint64_t in_features; // intersection of features for in set
+  uint64_t up_features; // intersection of features for up set
+
+  void calc_up_in_features();
+
+public:
+  uint64_t get_up_features() const {
+    return up_features;
+  }
 
 public:
   CompatSet compat;
@@ -551,7 +565,9 @@ public:
     bufferlist::iterator p = bl.begin();
     decode(p);
   }
-
+  void decode_post() {
+    calc_up_in_features();
+  }
 
   void print(ostream& out);
   void print_summary(Formatter *f, ostream *out);

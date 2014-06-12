@@ -583,6 +583,12 @@ public:
 	on_finish = NULL;
       }
     }
+    uint64_t get_features() {
+      if (op && op->get_req()) {
+	return op->get_req()->get_connection()->get_features();
+      }
+      return -1ll;
+    }
   };
   friend struct OpContext;
 

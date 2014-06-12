@@ -58,7 +58,7 @@ private:
 public:
   void encode_payload(uint64_t features) {
     ::encode(tid, payload);
-    ::encode(client, payload);
+    ::encode(client, payload, features);
     ::encode(client_caps, payload, features);
     encode_message(msg, features, payload);
     ::encode(con_features, payload);

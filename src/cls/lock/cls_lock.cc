@@ -52,9 +52,9 @@ typedef struct lock_info_s {
                                                       //      as long as set of non expired lockers
                                                       //      is bigger than 0.
 
-  void encode(bufferlist &bl) const {
+  void encode(bufferlist &bl, uint64_t features) const {
     ENCODE_START(1, 1, bl);
-    ::encode(lockers, bl);
+    ::encode(lockers, bl, features);
     uint8_t t = (uint8_t)lock_type;
     ::encode(t, bl);
     ::encode(tag, bl);
@@ -71,7 +71,7 @@ typedef struct lock_info_s {
   }
   lock_info_s() : lock_type(LOCK_NONE) {}
 } lock_info_t;
-WRITE_CLASS_ENCODER(lock_info_t)
+WRITE_CLASS_ENCODER_FEATURES(lock_info_t)
 
 
 static int read_lock(cls_method_context_t hctx, const string& name, lock_info_t *lock)

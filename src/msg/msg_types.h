@@ -17,6 +17,7 @@
 
 #include <netinet/in.h>
 
+#include "include/ceph_features.h"
 #include "include/types.h"
 #include "include/blobhash.h"
 #include "include/encoding.h"
@@ -170,6 +171,12 @@ static inline void decode(sockaddr_storage& a, bufferlist::iterator& bl) {
 }
 
 struct entity_addr_t {
+  typedef enum {
+    TYPE_NONE = 0,
+    TYPE_IPV4 = 1,
+    TYPE_IPV6 = 2,
+  } type_t;
+
   __u32 type;
   __u32 nonce;
   union {
@@ -205,6 +212,11 @@ struct entity_addr_t {
   __u32 get_nonce() const { return nonce; }
   void set_nonce(__u32 n) { nonce = n; }
 
+  unsigned get_type() const { return type; }
+  bool is_none() const { return type == TYPE_NONE; }
+  bool is_ipv4() const { return type == TYPE_IPV4; }
+  bool is_ipv6() const { return type == TYPE_IPV6; }
+
   int get_family() const {
     return addr.ss_family;
   }
@@ -215,8 +227,14 @@ struct entity_addr_t {
   sockaddr_storage &ss_addr() {
     return addr;
   }
+  const sockaddr_in &in4_addr() const {
+    return addr4;
+  }
   sockaddr_in &in4_addr() {
     return addr4;
+  }
+  const sockaddr_in6 &in6_addr() const {
+    return addr6;
   }
   sockaddr_in6 &in6_addr() {
     return addr6;
@@ -313,33 +331,73 @@ struct entity_addr_t {
   }
 
   bool is_ip() const {
-    switch (addr.ss_family) {
-    case AF_INET:
-    case AF_INET6:
-      return true;
-    default:
-      return false;
-    }
+    return is_ipv4() || is_ipv6();
   }
 
   bool parse(const char *s, const char **end = 0);
 
-  void encode(bufferlist& bl) const {
+  void encode(bufferlist& bl, uint64_t features) const {
+    if ((features & CEPH_FEATURE_MSG_ADDR2) == 0) {
+      ::encode((__u32)0, bl);
+      ::encode(nonce, bl);
+      ::encode(addr, bl);
+      return;
+    }
+    ::encode((__u8)1, bl);
+    ENCODE_START(1, 1, bl);
     ::encode(type, bl);
     ::encode(nonce, bl);
-    ::encode(addr, bl);
+    __u32 elen;
+    switch (type) {
+    case TYPE_NONE:
+      elen = 0;
+      break;
+    case TYPE_IPV4:
+      elen = sizeof(in4_addr());
+      break;
+    case TYPE_IPV6:
+      elen = sizeof(in6_addr());
+      break;
+    default:
+      elen = sizeof(addr);
+      break;
+    }
+    ::encode(elen, bl);
+    if (elen) {
+      bl.append((char*)&addr, elen);
+    }
+    ENCODE_FINISH(bl);
   }
   void decode(bufferlist::iterator& bl) {
+    __u8 marker;
+    ::decode(marker, bl);
+    if (marker == 0) {
+      ::decode(marker, bl);
+      __u16 rest;
+      ::decode(rest, bl);
+      type = ((__u32)marker << 16) + rest;
+      ::decode(nonce, bl);
+      ::decode(addr, bl);
+      return;
+    }
+    if (marker != 1)
+      throw buffer::malformed_input("entity_addr_t marker != 1");
+    DECODE_START(1, bl);
     ::decode(type, bl);
     ::decode(nonce, bl);
-    ::decode(addr, bl);
+    __u32 elen;
+    ::decode(elen, bl);
+    if (elen) {
+      bl.copy(elen, (char*)&addr);
+    }
+    DECODE_FINISH(bl);
   }
 
   void dump(Formatter *f) const;
 
   static void generate_test_instances(list<entity_addr_t*>& o);
 };
-WRITE_CLASS_ENCODER(entity_addr_t)
+WRITE_CLASS_ENCODER_FEATURES(entity_addr_t)
 
 inline ostream& operator<<(ostream& out, const entity_addr_t &addr)
 {
@@ -365,6 +423,20 @@ CEPH_HASH_NAMESPACE_START
 CEPH_HASH_NAMESPACE_END
 
 
+struct entity_addrvec_t {
+  vector<entity_addr_t> v;
+
+  unsigned size() const { return v.size(); }
+  bool empty() const { return v.empty(); }
+
+  void encode(bufferlist& bl, uint64_t features) const;
+  void decode(bufferlist::iterator& bl);
+  void dump(Formatter *f) const;
+  static void generate_test_instances(list<entity_addrvec_t*>& ls);
+};
+WRITE_CLASS_ENCODER_FEATURES(entity_addrvec_t);
+
+
 /*
  * a particular entity instance
  */
@@ -380,16 +452,16 @@ struct entity_inst_t {
     return i;
   }
 
-  void encode(bufferlist& bl) const {
+  void encode(bufferlist& bl, uint64_t features) const {
     ::encode(name, bl);
-    ::encode(addr, bl);
+    ::encode(addr, bl, features);
   }
   void decode(bufferlist::iterator& bl) {
     ::decode(name, bl);
     ::decode(addr, bl);
   }
 };
-WRITE_CLASS_ENCODER(entity_inst_t)
+WRITE_CLASS_ENCODER_FEATURES(entity_inst_t)
 
 
 inline bool operator==(const entity_inst_t& a, const entity_inst_t& b) { 

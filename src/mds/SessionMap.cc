@@ -122,7 +122,7 @@ void SessionMap::save(Context *onsave, version_t needv)
   
   bufferlist bl;
   
-  encode(bl);
+  encode(bl, mds->mdsmap->get_up_features());
   committing = version;
   SnapContext snapc;
   object_t oid = get_object_name();
@@ -146,7 +146,7 @@ void SessionMap::_save_finish(version_t v)
 
 // -------------------
 
-void SessionMap::encode(bufferlist& bl) const
+void SessionMap::encode(bufferlist& bl, uint64_t features) const
 {
   uint64_t pre = -1;     // for 0.19 compatibility; we forgot an encoding prefix.
   ::encode(pre, bl);
@@ -162,7 +162,7 @@ void SessionMap::encode(bufferlist& bl) const
 	p->second->is_stale() ||
 	p->second->is_killing()) {
       ::encode(p->first, bl);
-      p->second->info.encode(bl);
+      p->second->info.encode(bl, features);
     }
   }
   ENCODE_FINISH(bl);

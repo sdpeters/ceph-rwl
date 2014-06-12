@@ -736,7 +736,7 @@ void EMetaBlob::dirlump::generate_test_instances(list<dirlump*>& ls)
 /**
  * EMetaBlob proper
  */
-void EMetaBlob::encode(bufferlist& bl) const
+void EMetaBlob::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(7, 5, bl);
   ::encode(lump_order, bl);
@@ -1651,11 +1651,11 @@ void ESession::replay(MDS *mds)
   update_segment();
 }
 
-void ESession::encode(bufferlist &bl) const
+void ESession::encode(bufferlist &bl, uint64_t features) const
 {
   ENCODE_START(3, 3, bl);
   ::encode(stamp, bl);
-  ::encode(client_inst, bl);
+  ::encode(client_inst, bl, features);
   ::encode(open, bl);
   ::encode(cmapv, bl);
   ::encode(inos, bl);
@@ -1693,10 +1693,10 @@ void ESession::generate_test_instances(list<ESession*>& ls)
 // -----------------------
 // ESessions
 
-void ESessions::encode(bufferlist &bl) const
+void ESessions::encode(bufferlist &bl, uint64_t features) const
 {
   ENCODE_START(1, 1, bl);
-  ::encode(client_map, bl);
+  ::encode(client_map, bl, features);
   ::encode(cmapv, bl);
   ::encode(stamp, bl);
   ENCODE_FINISH(bl);
@@ -1764,7 +1764,7 @@ void ESessions::replay(MDS *mds)
 // -----------------------
 // ETableServer
 
-void ETableServer::encode(bufferlist& bl) const
+void ETableServer::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(3, 3, bl);
   ::encode(stamp, bl);
@@ -1861,7 +1861,7 @@ void ETableServer::replay(MDS *mds)
 // ---------------------
 // ETableClient
 
-void ETableClient::encode(bufferlist& bl) const
+void ETableClient::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(3, 3, bl);
   ::encode(stamp, bl);
@@ -1946,12 +1946,12 @@ void ESnap::replay(MDS *mds)
 // -----------------------
 // EUpdate
 
-void EUpdate::encode(bufferlist &bl) const
+void EUpdate::encode(bufferlist &bl, uint64_t features) const
 {
   ENCODE_START(4, 4, bl);
   ::encode(stamp, bl);
   ::encode(type, bl);
-  ::encode(metablob, bl);
+  ::encode(metablob, bl, features);
   ::encode(client_map, bl);
   ::encode(cmapv, bl);
   ::encode(reqid, bl);
@@ -2037,10 +2037,10 @@ void EUpdate::replay(MDS *mds)
 // ------------------------
 // EOpen
 
-void EOpen::encode(bufferlist &bl) const {
+void EOpen::encode(bufferlist &bl, uint64_t features) const {
   ENCODE_START(3, 3, bl);
   ::encode(stamp, bl);
-  ::encode(metablob, bl);
+  ::encode(metablob, bl, features);
   ::encode(inos, bl);
   ENCODE_FINISH(bl);
 } 
@@ -2112,7 +2112,7 @@ void ECommitted::replay(MDS *mds)
   }
 }
 
-void ECommitted::encode(bufferlist& bl) const
+void ECommitted::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(3, 3, bl);
   ::encode(stamp, bl);
@@ -2323,7 +2323,7 @@ void rename_rollback::generate_test_instances(list<rename_rollback*>& ls)
   ls.back()->stray.remote_d_type = IFTODT(S_IFREG);
 }
 
-void ESlaveUpdate::encode(bufferlist &bl) const
+void ESlaveUpdate::encode(bufferlist &bl, uint64_t features) const
 {
   ENCODE_START(3, 3, bl);
   ::encode(stamp, bl);
@@ -2332,7 +2332,7 @@ void ESlaveUpdate::encode(bufferlist &bl) const
   ::encode(master, bl);
   ::encode(op, bl);
   ::encode(origop, bl);
-  ::encode(commit, bl);
+  ::encode(commit, bl, features);
   ::encode(rollback, bl);
   ENCODE_FINISH(bl);
 } 
@@ -2413,11 +2413,11 @@ void ESlaveUpdate::replay(MDS *mds)
 // -----------------------
 // ESubtreeMap
 
-void ESubtreeMap::encode(bufferlist& bl) const
+void ESubtreeMap::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(5, 5, bl);
   ::encode(stamp, bl);
-  ::encode(metablob, bl);
+  ::encode(metablob, bl, features);
   ::encode(subtrees, bl);
   ::encode(ambiguous_subtrees, bl);
   ::encode(expire_pos, bl);
@@ -2654,14 +2654,14 @@ void EFragment::replay(MDS *mds)
     in->verify_dirfrags();
 }
 
-void EFragment::encode(bufferlist &bl) const {
+void EFragment::encode(bufferlist &bl, uint64_t features) const {
   ENCODE_START(5, 4, bl);
   ::encode(stamp, bl);
   ::encode(op, bl);
   ::encode(ino, bl);
   ::encode(basefrag, bl);
   ::encode(bits, bl);
-  ::encode(metablob, bl);
+  ::encode(metablob, bl, features);
   ::encode(orig_frags, bl);
   ::encode(rollback, bl);
   ENCODE_FINISH(bl);
@@ -2750,11 +2750,11 @@ void EExport::replay(MDS *mds)
   mds->mdcache->try_trim_non_auth_subtree(dir);
 }
 
-void EExport::encode(bufferlist& bl) const
+void EExport::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(3, 3, bl);
   ::encode(stamp, bl);
-  ::encode(metablob, bl);
+  ::encode(metablob, bl, features);
   ::encode(base, bl);
   ::encode(bounds, bl);
   ENCODE_FINISH(bl);
@@ -2845,11 +2845,11 @@ void EImportStart::replay(MDS *mds)
   update_segment();
 }
 
-void EImportStart::encode(bufferlist &bl) const {
+void EImportStart::encode(bufferlist &bl, uint64_t features) const {
   ENCODE_START(3, 3, bl);
   ::encode(stamp, bl);
   ::encode(base, bl);
-  ::encode(metablob, bl);
+  ::encode(metablob, bl, features);
   ::encode(bounds, bl);
   ::encode(cmapv, bl);
   ::encode(client_map, bl);
@@ -2910,7 +2910,7 @@ void EImportFinish::replay(MDS *mds)
   }
 }
 
-void EImportFinish::encode(bufferlist& bl) const
+void EImportFinish::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(3, 3, bl);
   ::encode(stamp, bl);
@@ -2945,7 +2945,7 @@ void EImportFinish::generate_test_instances(list<EImportFinish*>& ls)
 // ------------------------
 // EResetJournal
 
-void EResetJournal::encode(bufferlist& bl) const
+void EResetJournal::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(2, 2, bl);
   ::encode(stamp, bl);
@@ -2990,7 +2990,7 @@ void EResetJournal::replay(MDS *mds)
 }
 
 
-void ENoOp::encode(bufferlist &bl) const
+void ENoOp::encode(bufferlist &bl, uint64_t features) const
 {
   ENCODE_START(2, 2, bl);
   ::encode(pad_size, bl);

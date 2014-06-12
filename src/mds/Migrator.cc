@@ -1210,7 +1210,8 @@ void Migrator::export_go_synced(CDir *dir, uint64_t tid)
 					      dir,   // recur start point
 					      exported_client_map,
 					      now);
-  ::encode(exported_client_map, req->client_map);
+  ::encode(exported_client_map, req->client_map,
+	   mds->mdsmap->get_up_features());
 
   // add bounds to message
   set<CDir*> bounds;

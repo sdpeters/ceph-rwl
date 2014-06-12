@@ -315,7 +315,7 @@ private:
   list<pair<metareqid_t,uint64_t> > client_reqs;
 
  public:
-  void encode(bufferlist& bl) const;
+  void encode(bufferlist& bl, uint64_t features) const;
   void decode(bufferlist::iterator& bl);
   void get_inodes(std::set<inodeno_t> &inodes) const;
   void get_paths(std::vector<std::string> &paths) const;
@@ -572,7 +572,7 @@ private:
   void update_segment(LogSegment *ls);
   void replay(MDS *mds, LogSegment *ls, MDSlaveUpdate *su=NULL);
 };
-WRITE_CLASS_ENCODER(EMetaBlob)
+WRITE_CLASS_ENCODER_FEATURES(EMetaBlob)
 WRITE_CLASS_ENCODER(EMetaBlob::fullbit)
 WRITE_CLASS_ENCODER(EMetaBlob::remotebit)
 WRITE_CLASS_ENCODER(EMetaBlob::nullbit)

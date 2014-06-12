@@ -13,9 +13,9 @@
 // ----
 // LogEntryKey
 
-void LogEntryKey::encode(bufferlist& bl) const
+void LogEntryKey::encode(bufferlist& bl, uint64_t features) const
 {
-  ::encode(who, bl);
+  ::encode(who, bl, features);
   ::encode(stamp, bl);
   ::encode(seq, bl);
 }
@@ -140,11 +140,11 @@ void LogEntry::log_to_syslog(string level, string facility)
   }
 }
 
-void LogEntry::encode(bufferlist& bl) const
+void LogEntry::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(2, 2, bl);
   __u16 t = type;
-  ::encode(who, bl);
+  ::encode(who, bl, features);
   ::encode(stamp, bl);
   ::encode(seq, bl);
   ::encode(t, bl);
@@ -182,11 +182,11 @@ void LogEntry::generate_test_instances(list<LogEntry*>& o)
 
 // -----
 
-void LogSummary::encode(bufferlist& bl) const
+void LogSummary::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(2, 2, bl);
   ::encode(version, bl);
-  ::encode(tail, bl);
+  ::encode(tail, bl, features);
   ENCODE_FINISH(bl);
 }
 

@@ -208,7 +208,7 @@ void MDLog::submit_entry(LogEvent *le, Context *c)
   // encode it, with event type
   {
     bufferlist bl;
-    le->encode_with_header(bl);
+    le->encode_with_header(bl, mds->mdsmap->get_up_features());
 
     dout(5) << "submit_entry " << journaler->get_write_pos() << "~" << bl.length()
 	    << " : " << *le << dendl;

@@ -230,7 +230,7 @@ void ReplicatedPG::on_local_recover(
       recovery_info.oi.prior_version = recovery_info.oi.version;
       recovery_info.oi.version = latest->version;
       bufferlist bl;
-      ::encode(recovery_info.oi, bl);
+      ::encode(recovery_info.oi, bl, get_osdmap()->get_up_osd_features());
       t->setattr(coll, recovery_info.soid, OI_ATTR, bl);
       if (obc)
 	obc->attr_cache[OI_ATTR] = bl;
@@ -2416,7 +2416,7 @@ ReplicatedPG::RepGather *ReplicatedPG::trim_object(const hobject_t &coid)
     coi.prior_version = coi.version;
     coi.version = ctx->at_version;
     bl.clear();
-    ::encode(coi, bl);
+    ::encode(coi, bl, get_osdmap()->get_up_osd_features());
     setattr_maybe_cache(ctx->obc, ctx, t, OI_ATTR, bl);
 
     ctx->log.push_back(
@@ -2495,7 +2495,7 @@ ReplicatedPG::RepGather *ReplicatedPG::trim_object(const hobject_t &coid)
     setattr_maybe_cache(ctx->snapset_obc, ctx, t, SS_ATTR, bl);
 
     bl.clear();
-    ::encode(ctx->snapset_obc->obs.oi, bl);
+    ::encode(ctx->snapset_obc->obs.oi, bl, get_osdmap()->get_up_osd_features());
     setattr_maybe_cache(ctx->snapset_obc, ctx, t, OI_ATTR, bl);
 
     if (pool.info.require_rollback()) {
@@ -3488,7 +3488,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           resp.entries.push_back(wi);
         }
 
-        resp.encode(osd_op.outdata);
+        resp.encode(osd_op.outdata, ctx->get_features());
         result = 0;
 
         ctx->delta_stats.num_rd++;
@@ -4759,7 +4759,7 @@ void ReplicatedPG::_make_clone(
   object_info_t *poi)
 {
   bufferlist bv;
-  ::encode(*poi, bv);
+  ::encode(*poi, bv, get_osdmap()->get_up_osd_features());
 
   t->clone(head, coid);
   setattr_maybe_cache(obc, ctx, t, OI_ATTR, bv);
@@ -5170,7 +5170,8 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
       ctx->snapset_obc->obs.oi.mtime = ctx->mtime;
 
       bufferlist bv(sizeof(ctx->new_obs.oi));
-      ::encode(ctx->snapset_obc->obs.oi, bv);
+      ::encode(ctx->snapset_obc->obs.oi, bv,
+	       get_osdmap()->get_up_osd_features());
       ctx->op_t->touch(snapoid);
       setattr_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t, OI_ATTR, bv);
       setattr_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t, SS_ATTR, bss);
@@ -5213,7 +5214,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     }
 
     bufferlist bv(sizeof(ctx->new_obs.oi));
-    ::encode(ctx->new_obs.oi, bv);
+    ::encode(ctx->new_obs.oi, bv, get_osdmap()->get_up_osd_features());
     setattr_maybe_cache(ctx->obc, ctx, ctx->op_t, OI_ATTR, bv);
 
     if (soid.snap == CEPH_NOSNAP) {
@@ -7016,7 +7017,7 @@ void ReplicatedPG::handle_watch_timeout(WatchRef watch)
   obc->obs.oi.prior_version = repop->obc->obs.oi.version;
   obc->obs.oi.version = ctx->at_version;
   bufferlist bl;
-  ::encode(obc->obs.oi, bl);
+  ::encode(obc->obs.oi, bl, get_osdmap()->get_up_osd_features());
   setattr_maybe_cache(obc, repop->ctx, t, OI_ATTR, bl);
 
   if (pool.info.require_rollback()) {
@@ -9060,7 +9061,7 @@ ObjectContextRef ReplicatedPG::mark_object_lost(ObjectStore::Transaction *t,
   obc->obs.oi.prior_version = version;
 
   bufferlist b2;
-  obc->obs.oi.encode(b2);
+  obc->obs.oi.encode(b2, get_osdmap()->get_up_osd_features());
   t->setattr(coll, oid, OI_ATTR, b2);
 
   return obc;
@@ -9785,7 +9786,7 @@ int ReplicatedPG::recover_primary(int max, ThreadPool::TPHandle &handle)
 	      ObjectStore::Transaction *t = new ObjectStore::Transaction;
 	      t->register_on_applied(new ObjectStore::C_DeleteTransaction(t));
 	      bufferlist b2;
-	      obc->obs.oi.encode(b2);
+	      obc->obs.oi.encode(b2, get_osdmap()->get_up_osd_features());
 	      t->setattr(coll, soid, OI_ATTR, b2);
 
 	      recover_got(soid, latest->version);
@@ -10878,7 +10879,7 @@ void ReplicatedPG::hit_set_persist()
   bufferlist bss;
   ::encode(ctx->new_snapset, bss);
   bufferlist boi(sizeof(ctx->new_obs.oi));
-  ::encode(ctx->new_obs.oi, boi);
+  ::encode(ctx->new_obs.oi, boi, get_osdmap()->get_up_osd_features());
 
   ctx->op_t->append(oid, 0, bl.length(), bl);
   setattr_maybe_cache(ctx->obc, ctx, ctx->op_t, OI_ATTR, boi);

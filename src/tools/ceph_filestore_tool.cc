@@ -229,7 +229,7 @@ int main(int argc, char **argv)
 	    cerr << *i << "/" << *obj << " is lost, fixing" << std::endl;
 	    oi.clear_flag(object_info_t::FLAG_LOST);
 	    bufferlist bl2;
-	    ::encode(oi, bl2);
+	    ::encode(oi, bl2, -1); // fixme: fast and loose with features here
 	    ObjectStore::Transaction t;
 	    t.setattr(*i, *obj, OI_ATTR, bl2);
 	    r = fs->apply_transaction(t);

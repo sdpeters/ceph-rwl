@@ -523,12 +523,12 @@ struct session_info_t {
     completed_requests.clear();
   }
 
-  void encode(bufferlist& bl) const;
+  void encode(bufferlist& bl, uint64_t features) const;
   void decode(bufferlist::iterator& p);
   void dump(Formatter *f) const;
   static void generate_test_instances(list<session_info_t*>& ls);
 };
-WRITE_CLASS_ENCODER(session_info_t)
+WRITE_CLASS_ENCODER_FEATURES(session_info_t)
 
 
 // =======
