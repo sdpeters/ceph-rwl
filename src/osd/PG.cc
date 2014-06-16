@@ -40,6 +40,19 @@
 
 #include <sstream>
 
+
+#include <sys/types.h>
+#include <unistd.h>
+#include <sys/syscall.h>   /* For SYS_xxx definitions */
+
+pid_t gettid(void)
+{
+  pid_t tid;
+  tid = syscall(SYS_gettid);
+  return tid;
+}
+
+
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 #define dout_prefix _prefix(_dout, this)
@@ -3349,6 +3362,8 @@ void PG::scrub(ThreadPool::TPHandle &handle)
     unlock();
     return;
   }
+
+  dout(2) << "scrub thread id is " << gettid() << dendl;
 
   if (!is_primary() || !is_active() || !is_clean() || !is_scrubbing()) {
     dout(10) << "scrub -- not primary or active or not clean" << dendl;
