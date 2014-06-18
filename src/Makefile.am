@@ -1571,6 +1571,7 @@ libcommon_files = \
 	common/signal.cc \
 	common/simple_spin.cc \
 	common/Thread.cc \
+	common/io_priority.c \
 	common/Formatter.cc \
 	common/HeartbeatMap.cc \
 	include/ceph_fs.cc \
@@ -1841,6 +1842,7 @@ noinst_HEADERS = \
 	common/SimpleRNG.h\
 	common/TextTable.h\
         common/Thread.h\
+	common/io_priority.h\
         common/Throttle.h\
         common/Timer.h\
 	common/TrackedOp.h\
