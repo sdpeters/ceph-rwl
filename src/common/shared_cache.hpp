@@ -90,6 +90,9 @@ public:
   ~SharedLRU() {
     contents.clear();
     lru.clear();
+    Mutex::Locker l(lock);
+    while (!weak_refs.empty())
+      cond.Wait(lock);
     assert(weak_refs.empty());
   }
 
