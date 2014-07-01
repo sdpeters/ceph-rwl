@@ -511,6 +511,7 @@ int main(int argc, const char **argv)
   ms_cluster->wait();
   ms_objecter->wait();
 
+  derr << "hi mom" << dendl;
   unregister_async_signal_handler(SIGHUP, sighup_handler);
   unregister_async_signal_handler(SIGINT, handle_osd_signal);
   unregister_async_signal_handler(SIGTERM, handle_osd_signal);
@@ -520,9 +521,11 @@ int main(int argc, const char **argv)
   derr << "final dump:\n";
   osd->service.map_cache.dump(*_dout);
   *_dout << dendl;
-  derr << "waiting" << dendl;
-  osd->service.map_cache.wait_weak_refs();
-  derr << "waited" << dendl;
+  if (0) {
+    derr << "waiting" << dendl;
+    osd->service.map_cache.wait_weak_refs();
+    derr << "waited" << dendl;
+  }
   delete osd;
   delete ms_public;
   delete ms_hbclient;
