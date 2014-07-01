@@ -28,15 +28,17 @@ struct RefCountedObject {
   
   RefCountedObject *get() {
     if (cct)
-      lgeneric_dout(cct, 0) << "RefCountedObject::get " << this << " "
-			    << nref.read() << " -> " << (nref.read() + 1) << dendl;
+      lsubdout(cct, refs, 1) << "RefCountedObject::get " << this << " "
+			     << nref.read() << " -> " << (nref.read() + 1)
+			     << dendl;
     nref.inc();
     return this;
   }
   void put() {
     if (cct)
-      lgeneric_dout(cct, 0) << "RefCountedObject::put " << this << " "
-			    << nref.read() << " -> " << (nref.read() - 1) << dendl;
+      lsubdout(cct, refs, 1) << "RefCountedObject::put " << this << " "
+			     << nref.read() << " -> " << (nref.read() - 1)
+			     << dendl;
     if (nref.dec() == 0)
       delete this;
   }
