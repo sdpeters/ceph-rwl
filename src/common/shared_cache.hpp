@@ -99,6 +99,10 @@ public:
       out << __func__ << " weak_refs: " << p->first << " = " << p->second.lock().get() << std::endl;
     }
   }
+  void clear() {
+    contents.clear();
+    lru.clear();
+  }
   void wait_weak_refs() {
     Mutex::Locker l(lock);
     while (!weak_refs.empty()) {
