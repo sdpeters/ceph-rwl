@@ -519,7 +519,10 @@ int main(int argc, const char **argv)
   // done
   derr << "final dump:\n";
   osd->service.map_cache.dump(*_dout);
-  *_dout << dendl;    
+  *_dout << dendl;
+  derr << "waiting" << dendl;
+  osd->service.map_cache.wait_weak_refs();
+  derr << "waited" << dendl;
   delete osd;
   delete ms_public;
   delete ms_hbclient;
