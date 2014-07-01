@@ -517,6 +517,9 @@ int main(int argc, const char **argv)
   shutdown_async_signal_handler();
 
   // done
+  derr << "final dump:\n";
+  osd->service.map_cache.dump(*_dout);
+  *_dout << dendl;    
   delete osd;
   delete ms_public;
   delete ms_hbclient;
