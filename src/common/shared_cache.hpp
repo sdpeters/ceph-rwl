@@ -90,10 +90,14 @@ public:
   ~SharedLRU() {
     contents.clear();
     lru.clear();
-    Mutex::Locker l(lock);
-    while (!weak_refs.empty())
-      cond.Wait(lock);
     assert(weak_refs.empty());
+  }
+
+  void dump(ostream& out) {
+    for (map<K, WeakVPtr>::iterator p = weak_refs.begin(); p != weak_refs.end();
+	 ++p) {
+      out << __func__ << " weak_refs: " << p->first << " = " << p->second << std::endl;
+    }
   }
 
   void clear(K key) {
