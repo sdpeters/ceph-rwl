@@ -452,6 +452,12 @@ void OSDService::shutdown()
   }
   osdmap = OSDMapRef();
   next_osdmap = OSDMapRef();
+
+  map_cache_lock.Lock();
+  derr << " map_cache dump:\n";
+  map_cache.dump(*_dout);
+  *_dout << dendl;
+  map_cache_lock.Unlock();
 }
 
 void OSDService::init()
@@ -6557,7 +6563,7 @@ OSDMapRef OSDService::try_get_map(epoch_t epoch)
   Mutex::Locker l(map_cache_lock);
   OSDMapRef retval = map_cache.lookup(epoch);
   if (retval) {
-    dout(30) << "get_map " << epoch << " -cached" << dendl;
+    dout(20) << "get_map " << epoch << " -cached" << dendl;
     return retval;
   }
 
