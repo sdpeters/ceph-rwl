@@ -519,8 +519,8 @@ int main(int argc, const char **argv)
 
   // done
   osd->service.map_cache.clear();
-  derr << "sleeping" << dendl;
-  sleep(1);
+  //derr << "sleeping" << dendl;
+  //sleep(1);
   derr << "final dump:\n";
   osd->service.map_cache.dump(*_dout);
   *_dout << dendl;
