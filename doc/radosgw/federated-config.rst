@@ -226,13 +226,26 @@ hosts. ::
 Create a Gateway Configuration
 ------------------------------
 
-For each instance, create an Ceph Object Gateway configuration file under the
-``/etc/apache2/sites-available`` directory on the host(s) where you installed
-the Ceph Object Gateway daemon(s). See below for an exemplary embodiment of a
-gateway configuration as discussed in the following text.
+For each instance, create a Ceph Object Gateway configuration file.  For
+Debian/Ubuntu systems, place the file in the ``/etc/apache2/sites-available``
+directory. For CentOS/RHEL systems, place the file in the ``/etc/httpd/conf.d``
+directory. 
 
-.. literalinclude:: rgw.conf
+For the master zone and secondary zones configured for backup and failover only,
+see below for an exemplary embodiment of a gateway configuration as discussed in
+the following text. For secondary zones with read affinity, see `Create a Read
+Affinity Configuration`_.
+
+.. rubric:: Debian/Ubuntu
+
+.. literalinclude:: rgw-debian.conf
    :language: ini
+
+.. rubric:: CentOS/RHEL
+
+.. literalinclude:: rgw-centos.conf
+   :language: ini
+
 
 #. Replace the ``/{path}/{socket-name}`` entry with path to the socket and
    the socket name. For example, 
@@ -250,7 +263,9 @@ gateway configuration as discussed in the following text.
 
 #. Save the configuration to a file (e.g., ``rgw-us-east.conf``).
 
-Repeat the process for the secondary zone (e.g., ``rgw-us-west.conf``).
+To configure the secondary zone for backup and failover, repeat the process 
+for the secondary zone (e.g., ``rgw-us-west.conf``). To configure the secondary
+zone for read affinity, see `Create a Read Affinity Configuration`_.
 
 .. note:: When you use this procedure to configure the secondary region, 
    replace ``us-`` with ``eu-``. You will have a total of four gateway
@@ -265,6 +280,114 @@ Finally, if you enabled SSL, make sure that you set the port to your SSL port
 	SSLCertificateFile /etc/apache2/ssl/apache.crt
 	SSLCertificateKeyFile /etc/apache2/ssl/apache.key
 	SetEnv SERVER_PORT_SECURE 443
+
+
+Create a Read Affinity Configuration
+------------------------------------
+
+The primary purpose of maintaining a secondary zone within a region is to serve
+as a backup. If the master zone goes down, you will have a backup copy of your
+data in the secondary zone. This means that you have a secondary zone that
+clients do not use. It merely copies data from the master zone, and is otherwise
+idle.
+
+To maintain consistency, all write operations **MUST** go to the master zone of
+the region. If your geographic proximity to a secondary zone provides more
+favorable read performance, or if the load on the master zone involves a lot of
+read intensive operations, you can configure a secondary zone in the region for
+read affinity. In other words, you can allow a Ceph Object Gateway client to
+make object requests to the secondary zone and thereby take advantage of the
+extra computing resources. 
+
+Referring back to `Create a Gateway Configuration`_, once you have configured
+the master zone gateway (e.g., ``rgw-us-east.conf``), instead of repeating the
+same process for the secondary zone, you may configure the secondary zone
+gateway (e.g., ``rgw-us-west.conf``) for read affinity. If you intend to allow
+clients to access the secondary zone and perform operations, you **MUST**
+configure the secondary zone (e.g., ``rgw-us-west.conf``) so that the client can
+read directly from the secondary zone, but the secondary **MUST** send all write
+operations to the master zone to maintain consistency.
+
+Configuring read affinity requires you to specify the ``FastCgiExternalServer``
+setting for both the secondary (localhost) and the master (remote). See
+`FastCgiExternalServer`_ for details.
+
+For the secondary zone, the ``FastCgiExternalServer`` configuration should look just 
+like the configuration for the master zone using the ``-socket`` option. For example:: 
+
+	FastCgiExternalServer /var/www/s3gw.fcgi -socket /{path}/{socket-name}.sock
+
+For the master zone, assuming it is a remote host, the configuration should may use 
+the ``-host`` option. For example:: 
+
+	FastCgiExternalServer s3gw-redirect.fcgi -host https://zone-name.fqdn.com:port
+
+The foregoing example assumes you will also `Add a FastCGI Script`_ named
+``s3gw-redirect.fcgi`` to the master zone.
+
+Next, preceding the rewrite rule used in the master zone, you must also insert a
+conditional rewrite that directs all ``PUT``, ``COPY``, ``DELETE`` or ``POST`` 
+requests to the master zone. ``RewriteCond`` conditions execute on the first 
+``RewriteRule`` that follows. For example::
+
+	RewriteCond %{REQUEST_METHOD} ^(PUT) [OR]
+	RewriteCond %{REQUEST_METHOD} ^(COPY) [OR]
+	RewriteCond %{REQUEST_METHOD} ^(DELETE) [OR]
+	RewriteCond %{REQUEST_METHOD} ^(POST)
+	RewriteRule ^/(.*) /s3gw-redirect.fcgi?%{QUERY_STRING} [E=HTTP_AUTHORIZATION:%{HTTP:Authorization},L]
+
+See `mod_rewrite`_ for details.
+
+A secondary zone read affinity configuration file (e.g., ``rgw-us-west.conf`` or ``rgw-eu-west.conf``)
+might look something like this:
+
+.. code-block:: ini
+
+   FastCgiExternalServer /var/www/html/s3gw.fcgi -socket /{path}/{socket-name}.sock -idle-timeout 30
+   FastCgiExternalServer s3gw-redirect.fcgi -host https://zone-name.fqdn.com:port -idle-timeout 30
+
+
+   <VirtualHost *:80>
+
+     ServerName {fqdn}
+     <!--Remove the comment. Add a server alias with *.{fqdn} for S3 subdomains-->
+     <!--ServerAlias *.{fqdn}-->
+     ServerAdmin {email.address}
+     DocumentRoot /var/www/html
+
+     RewriteEngine On
+
+     RewriteCond %{REQUEST_METHOD} ^(PUT) [OR]
+     RewriteCond %{REQUEST_METHOD} ^(COPY) [OR]
+     RewriteCond %{REQUEST_METHOD} ^(DELETE) [OR]
+     RewriteCond %{REQUEST_METHOD} ^(POST)
+     RewriteRule ^/(.*) /s3gw-redirect.fcgi?%{QUERY_STRING} [E=HTTP_AUTHORIZATION:%{HTTP:Authorization},L]
+     
+     RewriteRule ^/(.*) /s3gw.fcgi?%{QUERY_STRING} [E=HTTP_AUTHORIZATION:%{HTTP:Authorization},L]
+
+     <IfModule mod_fastcgi.c>
+       <Directory /var/www/html>
+         Options +ExecCGI
+         AllowOverride None
+         SetHandler fastcgi-script
+         Order allow,deny
+         Allow from all
+         AuthBasicAuthoritative Off
+       </Directory>
+     </IfModule>
+
+     AllowEncodedSlashes On
+
+     ErrorLog /var/log/httpd/error.log
+     CustomLog /var/log/httpd/access.log combined
+     ServerSignature Off
+
+
+     SSLEngine on
+     SSLCertificateFile /etc/httpd/ssl/apache.crt
+     SSLCertificateKeyFile /etc/httpd/ssl/apache.key
+     SetEnv SERVER_PORT_SECURE 443
+   </VirtualHost>
 
 
 Enable the Configuration
@@ -675,7 +798,8 @@ with the following differences:
 #. `Create Data Directories`_ using ``eu`` instead of ``us``.
 
 #. `Create a Gateway Configuration`_ using ``eu`` instead of ``us`` for
-   the socket names.
+   the socket names. Determine if you want to use a read affinity configuration
+   for your secondary zone.
 
 #. `Enable the Configuration`_.
 
@@ -817,3 +941,5 @@ there is a unified namespace between the two regions.
 .. _Configuration Reference - Zones: ../config-ref#zones
 .. _Pools: ../../rados/operations/pools
 .. _Simple Configuration: ../config
+.. _FastCgiExternalServer: http://www.fastcgi.com/drupal/node/25#FastCgiExternalServer
+.. _mod_rewrite: http://httpd.apache.org/docs/current/rewrite/
