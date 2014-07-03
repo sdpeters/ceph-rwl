@@ -93,11 +93,13 @@ public:
     assert(weak_refs.empty());
   }
 
-  void dump(ostream& out) {
+  int dump(ostream& out) {
+    Mutex::Locker l(lock);
     for (typename map<K, WeakVPtr>::iterator p = weak_refs.begin(); p != weak_refs.end();
 	 ++p) {
       out << __func__ << " weak_refs: " << p->first << " = " << p->second.lock().get() << std::endl;
     }
+    return weak_refs.size();
   }
   void clear() {
     contents.clear();
