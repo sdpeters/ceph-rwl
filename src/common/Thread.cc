@@ -18,6 +18,8 @@
 #include "common/signal.h"
 #include "common/io_priority.h"
 
+#include "global/global_context.h"
+
 #include <dirent.h>
 #include <errno.h>
 #include <iostream>
@@ -51,13 +53,18 @@ void *Thread::entry_wrapper()
   int p = ceph_gettid(); // may return -ENOSYS on other platforms
   if (p > 0)
     pid = p;
+  if (g_ceph_context)
+    lderr(g_ceph_context) << "Thread::entry " << this << " enter pid " << pid << dendl;
   if (ioprio_class >= 0 &&
       ioprio_priority >= 0) {
     ceph_ioprio_set(IOPRIO_WHO_PROCESS,
 		    pid,
 		    IOPRIO_PRIO_VALUE(ioprio_class, ioprio_priority));
   }
-  return entry();
+  void *r = entry();
+  if (g_ceph_context)
+    lderr(g_ceph_context) << "Thread::entry " << this << " exit" << dendl;
+  return r;
 }
 
 const pthread_t &Thread::get_thread_id()
@@ -119,6 +126,8 @@ int Thread::try_create(size_t stacksize)
 
 void Thread::create(size_t stacksize)
 {
+  if (g_ceph_context)
+    lderr(g_ceph_context) << "Thread::create " << this << dendl;
   int ret = try_create(stacksize);
   if (ret != 0) {
     char buf[256];
@@ -131,6 +140,8 @@ void Thread::create(size_t stacksize)
 
 int Thread::join(void **prval)
 {
+  if (g_ceph_context)
+    lderr(g_ceph_context) << "Thread::join " << this << " enter" << dendl;
   if (thread_id == 0) {
     assert("join on thread that was never started" == 0);
     return -EINVAL;
@@ -139,6 +150,8 @@ int Thread::join(void **prval)
   int status = pthread_join(thread_id, prval);
   assert(status == 0);
   thread_id = 0;
+  if (g_ceph_context)
+    lderr(g_ceph_context) << "Thread::join " << this << " exit, status " << status << dendl;
   return status;
 }
 

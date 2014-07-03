@@ -1351,6 +1351,8 @@ out:
 
 void OSD::final_init()
 {
+  dout(10) << __func__ << dendl;
+
   int r;
   AdminSocket *admin_socket = cct->get_admin_socket();
   asok_hook = new OSDSocketHook(this);

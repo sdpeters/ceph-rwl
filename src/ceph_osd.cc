@@ -527,10 +527,11 @@ int main(int argc, const char **argv)
     derr << "sleeping" << dendl;
     sleep(1);
     derr << "post dump:\n";
-    int n = osd->service.map_cache.dump(*_dout);
+    osd->service.map_cache.dump(*_dout);
     *_dout << dendl;
     assert(0 == "non-empty weak_refs");
   }
+  derr << "all ok" << dendl;
   if (0) {
     derr << "waiting" << dendl;
     osd->service.map_cache.wait_weak_refs();
