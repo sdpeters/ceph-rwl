@@ -288,8 +288,8 @@ Create a Read Affinity Configuration
 The primary purpose of maintaining a secondary zone within a region is to serve
 as a backup. If the master zone goes down, you will have a backup copy of your
 data in the secondary zone. This means that you have a secondary zone that
-clients do not use. It merely copies data from the master zone, and is otherwise
-idle.
+clients do not write to. It merely copies data from the master zone, and is
+otherwise idle.
 
 To maintain consistency, all write operations **MUST** go to the master zone of
 the region. If your geographic proximity to a secondary zone provides more
