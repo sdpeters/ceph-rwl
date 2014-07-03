@@ -193,10 +193,10 @@ void *Accepter::entry()
   pfd.events = POLLIN | POLLERR | POLLNVAL | POLLHUP;
   while (!done) {
     ldout(msgr->cct,20) << "accepter calling poll" << dendl;
-    int r = poll(&pfd, 1, -1);
+    int r = poll(&pfd, 1, msgr->cct->_conf->ms_accept_poll_timeout);
+    ldout(msgr->cct,20) << "accepter poll got " << r << dendl;
     if (r < 0)
       break;
-    ldout(msgr->cct,20) << "accepter poll got " << r << dendl;
 
     if (pfd.revents & (POLLERR | POLLNVAL | POLLHUP))
       break;
