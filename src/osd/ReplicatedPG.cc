@@ -1509,8 +1509,15 @@ ReplicatedPG::RepGather *ReplicatedPG::trim_object(const hobject_t &coid)
   ObjectContext *obc = 0;
   int r = find_object_context(coid, &obc, false, NULL);
   if (r == -ENOENT || coid.snap != obc->obs.oi.soid.snap) {
-    derr << __func__ << "could not find coid " << coid << dendl;
-    assert(0);
+    derr << __func__ << ": could not find coid " << coid << dendl;
+    osd->clog.error() << "osd." << osd->whoami
+		      << ": could not find object " << coid
+		      << " to trim, removing snap_mapper entry";
+    ObjectStore::Transaction *t = new ObjectStore::Transaction;
+    OSDriver::OSTransaction os_t(osdriver.get_transaction(t));
+    snap_mapper.remove_oid(coid, &os_t);
+    osd->store->queue_transaction(osr.get(), t);
+    return NULL;
   }
   assert(r == 0);
   assert(obc->registered);
@@ -7935,7 +7942,10 @@ boost::statechart::result ReplicatedPG::TrimmingObjects::react(const SnapTrim&)
 
   dout(10) << "TrimmingObjects react trimming " << pos << dendl;
   RepGather *repop = pg->trim_object(pos);
-  assert(repop);
+  if (!repop) {
+    post_event(SnapTrim());
+    return discard_event();
+  }
 
   repop->queue_snap_trimmer = true;
   eversion_t old_last_update = pg->pg_log.get_head();
