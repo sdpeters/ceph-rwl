@@ -1553,6 +1553,17 @@ void FileJournal::committed_thru(uint64_t seq)
   
   commit_cond.Signal();
 
+  // initiate *another* commit if we are still over half full
+  uint64_t room;
+  if (write_pos >= header.start)
+    room = (header.max_size - write_pos) + (header.start - get_top()) - 1;
+  else
+    room = header.start - write_pos - 1;
+  if (room < (header.max_size >> 1)) {
+    dout(10) << " still past half full mark, triggering commit" << dendl;
+    do_sync_cond->SloppySignal();  // initiate a real commit so we can trim
+  }
+
   dout(10) << "committed_thru done" << dendl;
 }
 
