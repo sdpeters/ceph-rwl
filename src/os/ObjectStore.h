@@ -386,6 +386,55 @@ public:
     list<Context *> on_applied_sync;
 
   public:
+    struct ObjectHandle {
+      int oh;
+      ghobject_t oid;
+      coll_t cid;
+      bool valid;
+      ObjectHandle(int o, const ghobject_t& oid, const coll_t& c)
+	: oh(o), oid(oid), cid(c), valid(true) {}
+
+      // no copying
+      ObjectHandle(const ObjectHandle& o);
+      const ObjectHandle& operator=(const ObjectHandle& o);
+    };
+
+    struct CollectionHandle {
+      int ch;
+      coll_t cid;
+      CollectionHandle(int c, const coll_t& co) : ch(c), cid(co) {}
+
+      // no copying
+      CollectionHandle(const ObjectHandle& o);
+      const CollectionHandle& operator=(const CollectionHandle& o);
+    };
+
+  private:
+    map<ghobject_t,ObjectHandle*> object_to_handle;
+    map<coll_t,CollectionHandle*> collection_to_handle;
+    int32_t next_handle;
+
+  public:
+    ObjectHandle *open_object(const coll_t& c, const ghobject_t& oid) {
+      map<ghobject_t,ObjectHandle*>::iterator i = object_to_handle.find(oid);
+      if (i != object_to_handle.end()) {
+	return i->second;
+      }
+      ObjectHandle *oh = new ObjectHandle(next_handle++, oid, c);
+      object_to_handle[oid] = oh;
+      return oh;
+    }
+
+    CollectionHandle *open_collection(const coll_t& c) {
+      map<coll_t,CollectionHandle*>::iterator i = collection_to_handle.find(c);
+      if (i != collection_to_handle.end()) {
+	return i->second;
+      }
+      CollectionHandle *ch = new CollectionHandle(next_handle++, c);
+      collection_to_handle[c] = ch;
+      return ch;
+    }
+
     void set_tolerate_collection_add_enoent() {
       tolerate_collection_add_enoent = true;
     }
@@ -458,6 +507,9 @@ public:
       std::swap(on_applied, other.on_applied);
       std::swap(on_commit, other.on_commit);
       std::swap(on_applied_sync, other.on_applied_sync);
+      std::swap(object_to_handle, other.object_to_handle);
+      std::swap(collection_to_handle, other.collection_to_handle);
+      std::swap(next_handle, other.next_handle);
       tbl.swap(other.tbl);
     }
 
@@ -665,6 +717,10 @@ public:
       ::encode(oid, tbl);
       ops++;
     }
+    void touch(ObjectHandle *o) {
+      assert(o->valid);
+      touch(o->cid, o->oid);
+    }
     /**
      * Write data to an offset within an object. If the object is too
      * small, it is expanded as needed.  It is possible to specify an
@@ -692,6 +748,11 @@ public:
       ::encode(data, tbl);
       ops++;
     }
+    void write(ObjectHandle *o, uint64_t off, uint64_t len,
+	       const bufferlist& data) {
+      assert(o->valid);
+      write(o->cid, o->oid, off, len, data);
+    }
     /**
      * zero out the indicated byte range within an object. Some
      * ObjectStore instances may optimize this to release the
@@ -706,6 +767,11 @@ public:
       ::encode(len, tbl);
       ops++;
     }
+    void zero(ObjectHandle *o, uint64_t off, uint64_t len) {
+      assert(o->valid);
+      zero(o->cid, o->oid, off, len);
+    }
+
     /// Discard all data in the object beyond the specified size.
     void truncate(coll_t cid, const ghobject_t& oid, uint64_t off) {
       __u32 op = OP_TRUNCATE;
@@ -715,6 +781,11 @@ public:
       ::encode(off, tbl);
       ops++;
     }
+    void truncate(ObjectHandle *o, uint64_t off) {
+      assert(o->valid);
+      truncate(o->cid, o->oid, off);
+    }
+
     /// Remove an object. All four parts of the object are removed.
     void remove(coll_t cid, const ghobject_t& oid) {
       __u32 op = OP_REMOVE;
@@ -723,11 +794,23 @@ public:
       ::encode(oid, tbl);
       ops++;
     }
+    void remove(ObjectHandle *o) {
+      assert(o->valid);
+      remove(o->cid, o->oid);
+      object_to_handle.erase(o->oid);
+      o->valid = false;
+    }
+
     /// Set an xattr of an object
     void setattr(coll_t cid, const ghobject_t& oid, const char* name, bufferlist& val) {
       string n(name);
       setattr(cid, oid, n, val);
     }
+    void setattr(ObjectHandle *o, const char* name, bufferlist& val) {
+      assert(o->valid);
+      setattr(o->cid, o->oid, name, val);
+    }
+
     /// Set an xattr of an object
     void setattr(coll_t cid, const ghobject_t& oid, const string& s, bufferlist& val) {
       __u32 op = OP_SETATTR;
@@ -738,6 +821,11 @@ public:
       ::encode(val, tbl);
       ops++;
     }
+    void setattr(ObjectHandle *o, const string& s, bufferlist& val) {
+      assert(o->valid);
+      setattr(o->cid, o->oid, s, val);
+    }
+
     /// Set multiple xattrs of an object
     void setattrs(coll_t cid, const ghobject_t& oid, map<string,bufferptr>& attrset) {
       __u32 op = OP_SETATTRS;
@@ -747,6 +835,11 @@ public:
       ::encode(attrset, tbl);
       ops++;
     }
+    void setattrs(ObjectHandle *o, map<string,bufferptr>& attrset) {
+      assert(o->valid);
+      setattrs(o->cid, o->oid, attrset);
+    }
+
     /// Set multiple xattrs of an object
     void setattrs(coll_t cid, const ghobject_t& oid, map<string,bufferlist>& attrset) {
       __u32 op = OP_SETATTRS;
@@ -756,10 +849,18 @@ public:
       ::encode(attrset, tbl);
       ops++;
     }
+    void setattrs(ObjectHandle *o, map<string,bufferlist>& attrset) {
+      assert(o->valid);
+      setattrs(o->cid, o->oid, attrset);
+    }
     /// remove an xattr from an object
     void rmattr(coll_t cid, const ghobject_t& oid, const char *name) {
       string n(name);
       rmattr(cid, oid, n);
+    }
+    void rmattr(ObjectHandle *o, const char *name) {
+      assert(o->valid);
+      rmattr(o->cid, o->oid, name);
     }
     /// remove an xattr from an object
     void rmattr(coll_t cid, const ghobject_t& oid, const string& s) {
@@ -770,6 +871,10 @@ public:
       ::encode(s, tbl);
       ops++;
     }
+    void rmattr(ObjectHandle *o, const string& s) {
+      assert(o->valid);
+      rmattr(o->cid, o->oid, s);
+    }
     /// remove all xattrs from an object
     void rmattrs(coll_t cid, const ghobject_t& oid) {
       __u32 op = OP_RMATTRS;
@@ -778,6 +883,11 @@ public:
       ::encode(oid, tbl);
       ops++;
     }
+    void rmattrs(ObjectHandle *o) {
+      assert(o->valid);
+      rmattrs(o->cid, o->oid);
+    }
+
     /**
      * Clone an object into another object.
      *
@@ -797,6 +907,12 @@ public:
       ::encode(noid, tbl);
       ops++;
     }
+    void clone(ObjectHandle *o, ghobject_t& noid) {
+      assert(o->valid);
+      clone(o->cid, o->oid, noid);
+      assert(object_to_handle.count(noid) == 0);
+    }
+
     /**
      * Clone a byte range from one object to another.
      *
@@ -816,6 +932,13 @@ public:
       ::encode(dstoff, tbl);
       ops++;
     }
+    void clone_range(ObjectHandle *o, ObjectHandle *n,
+		     uint64_t srcoff, uint64_t srclen, uint64_t dstoff) {
+      assert(o->valid);
+      assert(o->cid == n->cid);
+      clone_range(o->cid, o->oid, n->oid, srcoff, srclen, dstoff);
+    }
+
     /// Create the collection
     void create_collection(coll_t cid) {
       __u32 op = OP_MKCOLL;
@@ -823,6 +946,10 @@ public:
       ::encode(cid, tbl);
       ops++;
     }
+    void create_collection(CollectionHandle *c) {
+      create_collection(c->cid);
+    }
+
     /// remove the collection, the collection must be empty
     void remove_collection(coll_t cid) {
       __u32 op = OP_RMCOLL;
@@ -830,6 +957,10 @@ public:
       ::encode(cid, tbl);
       ops++;
     }
+    void remove_collection(CollectionHandle *c) {
+      remove_collection(c->cid);
+    }
+
     void collection_move(coll_t cid, coll_t oldcid, const ghobject_t& oid) {
       // NOTE: we encode this as a fixed combo of ADD + REMOVE.  they
       // always appear together, so this is effectively a single MOVE.
@@ -846,6 +977,12 @@ public:
       ops++;
       return;
     }
+    void collection_move(ObjectHandle *o, CollectionHandle *newc) {
+      assert(o->valid);
+      collection_move(newc->cid, o->cid, o->oid);
+      o->cid = newc->cid;
+    }
+
     void collection_move_rename(coll_t oldcid, const ghobject_t& oldoid,
 				coll_t cid, const ghobject_t& oid) {
       __u32 op = OP_COLL_MOVE_RENAME;
@@ -856,12 +993,26 @@ public:
       ::encode(oid, tbl);
       ops++;
     }
+    void collection_move_rename(ObjectHandle *o, coll_t ncid, ghobject_t noid) {
+      assert(o->valid);
+      collection_move_rename(o->cid, o->oid, ncid, noid);
+      object_to_handle.erase(o->oid);
+      o->oid = noid;
+      o->cid = ncid;
+      if (object_to_handle.count(o->oid))
+	object_to_handle[o->oid]->valid = false;
+      object_to_handle[o->oid] = o;
+    }
 
     /// Set an xattr on a collection
     void collection_setattr(coll_t cid, const char* name, bufferlist& val) {
       string n(name);
       collection_setattr(cid, n, val);
     }
+    void collection_setattr(CollectionHandle *c, const char* name, bufferlist& val) {
+      collection_setattr(c->cid, name, val);
+    }
+
     /// Set an xattr on a collection
     void collection_setattr(coll_t cid, const string& name, bufferlist& val) {
       __u32 op = OP_COLL_SETATTR;
@@ -871,11 +1022,17 @@ public:
       ::encode(val, tbl);
       ops++;
     }
+    void collection_setattr(CollectionHandle *c, const string& name, bufferlist& val) {
+      collection_setattr(c->cid, name, val);
+    }
 
     /// Remove an xattr from a collection
     void collection_rmattr(coll_t cid, const char* name) {
       string n(name);
       collection_rmattr(cid, n);
+    }
+    void collection_rmattr(CollectionHandle *c, const char* name) {
+      collection_rmattr(c->cid, name);
     }
     /// Remove an xattr from a collection
     void collection_rmattr(coll_t cid, const string& name) {
@@ -885,6 +1042,9 @@ public:
       ::encode(name, tbl);
       ops++;
     }
+    void collection_rmattr(CollectionHandle *c, const string& name) {
+      collection_rmattr(c->cid, name);
+    }
     /// Set multiple xattrs on a collection
     void collection_setattrs(coll_t cid, map<string,bufferptr>& aset) {
       __u32 op = OP_COLL_SETATTRS;
@@ -893,6 +1053,9 @@ public:
       ::encode(aset, tbl);
       ops++;
     }
+    void collection_setattrs(CollectionHandle *c, map<string,bufferptr>& aset) {
+      collection_setattrs(c, aset);
+    }
     /// Set multiple xattrs on a collection
     void collection_setattrs(coll_t cid, map<string,bufferlist>& aset) {
       __u32 op = OP_COLL_SETATTRS;
@@ -900,6 +1063,9 @@ public:
       ::encode(cid, tbl);
       ::encode(aset, tbl);
       ops++;
+    }
+    void collection_setattrs(CollectionHandle *c, map<string,bufferlist>& aset) {
+      collection_setattrs(c, aset);
     }
 
     /// Remove omap from oid
@@ -913,6 +1079,13 @@ public:
       ::encode(oid, tbl);
       ops++;
     }
+    void omap_clear(
+      ObjectHandle *o  ///< [in] Object from which to remove omap
+      ) {
+      assert(o->valid);
+      omap_clear(o->cid, o->oid);
+    }
+
     /// Set keys on oid omap.  Replaces duplicate keys.
     void omap_setkeys(
       coll_t cid,                           ///< [in] Collection containing oid
@@ -926,6 +1099,14 @@ public:
       ::encode(attrset, tbl);
       ops++;
     }
+    void omap_setkeys(
+      ObjectHandle *o,                ///< [in] Object to update
+      const map<string, bufferlist> &attrset ///< [in] Replacement keys and values
+      ) {
+      assert(o->valid);
+      omap_setkeys(o->cid, o->oid, attrset);
+    }
+
     /// Remove keys from oid omap
     void omap_rmkeys(
       coll_t cid,             ///< [in] Collection containing oid
@@ -938,6 +1119,13 @@ public:
       ::encode(oid, tbl);
       ::encode(keys, tbl);
       ops++;
+    }
+    void omap_rmkeys(
+      ObjectHandle *o,  ///< [in] Object from which to remove the omap
+      const set<string> &keys ///< [in] Keys to clear
+      ) {
+      assert(o->valid);
+      omap_rmkeys(o->cid, o->oid, keys);
     }
 
     /// Remove key range from oid omap
@@ -955,6 +1143,14 @@ public:
       ::encode(last, tbl);
       ops++;
     }
+    void omap_rmkeyrange(
+      ObjectHandle *o,  ///< [in] Object from which to remove the omap keys
+      const string& first,    ///< [in] first key in range
+      const string& last      ///< [in] first key past range, range is [first,last)
+      ) {
+      assert(o->valid);
+      omap_rmkeyrange(o->cid, o->oid, first, last);
+    }
 
     /// Set omap header
     void omap_setheader(
@@ -968,6 +1164,13 @@ public:
       ::encode(oid, tbl);
       ::encode(bl, tbl);
       ops++;
+    }
+    void omap_setheader(
+      ObjectHandle *o,  ///< [in] Object
+      const bufferlist &bl    ///< [in] Header value
+      ) {
+      assert(o->valid);
+      omap_setheader(o->cid, o->oid, bl);
     }
 
     /// Split collection based on given prefixes, objects matching the specified bits/rem are
@@ -985,6 +1188,13 @@ public:
       ::encode(destination, tbl);
       ++ops;
     }
+    void split_collection(
+      CollectionHandle *c,
+      uint32_t bits,
+      uint32_t rem,
+      CollectionHandle *dest) {
+      split_collection(c->cid, bits, rem, dest->cid);
+    }
 
     void set_alloc_hint(
       coll_t cid,
@@ -1000,19 +1210,29 @@ public:
       ::encode(expected_write_size, tbl);
       ++ops;
     }
+    void set_alloc_hint(
+      ObjectHandle *o,
+      uint64_t expected_object_size,
+      uint64_t expected_write_size
+    ) {
+      assert(o->valid);
+      set_alloc_hint(o->cid, o->oid, expected_object_size, expected_write_size);
+    }
 
     // etc.
     Transaction() :
       ops(0), pad_unused_bytes(0), largest_data_len(0), largest_data_off(0), largest_data_off_in_tbl(0),
       sobject_encoding(false), pool_override(-1), use_pool_override(false),
       replica(false),
-      tolerate_collection_add_enoent(false) {}
+      tolerate_collection_add_enoent(false),
+      next_handle(1) {}
 
     Transaction(bufferlist::iterator &dp) :
       ops(0), pad_unused_bytes(0), largest_data_len(0), largest_data_off(0), largest_data_off_in_tbl(0),
       sobject_encoding(false), pool_override(-1), use_pool_override(false),
       replica(false),
-      tolerate_collection_add_enoent(false) {
+      tolerate_collection_add_enoent(false),
+      next_handle(1) {
       decode(dp);
     }
 
@@ -1020,9 +1240,21 @@ public:
       ops(0), pad_unused_bytes(0), largest_data_len(0), largest_data_off(0), largest_data_off_in_tbl(0),
       sobject_encoding(false), pool_override(-1), use_pool_override(false),
       replica(false),
-      tolerate_collection_add_enoent(false) {
+      tolerate_collection_add_enoent(false),
+      next_handle(1) {
       bufferlist::iterator dp = nbl.begin();
       decode(dp);
+    }
+
+    ~Transaction() {
+      while (!object_to_handle.empty()) {
+	delete object_to_handle.begin()->second;
+	object_to_handle.erase(object_to_handle.begin());
+      }
+      while (!collection_to_handle.empty()) {
+	delete collection_to_handle.begin()->second;
+	collection_to_handle.erase(collection_to_handle.begin());
+      }
     }
 
     void encode(bufferlist& bl) const {
