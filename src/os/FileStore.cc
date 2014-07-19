@@ -2361,16 +2361,23 @@ unsigned FileStore::_do_transaction(
 	coll_t ncid = i.decode_cid();
 	coll_t ocid = i.decode_cid();
 	ghobject_t oid = i.decode_oid();
-	r = _collection_add(ncid, ocid, oid, spos);
-      }
-      break;
 
-    case Transaction::OP_COLL_REMOVE:
-       {
-	coll_t cid = i.decode_cid();
-	ghobject_t oid = i.decode_oid();
-	if (_check_replay_guard(cid, oid, spos) > 0)
-	  r = _remove(cid, oid, spos);
+	// always followed by OP_COLL_REMOVE
+	int op = i.decode_op();
+	coll_t ocid2 = i.decode_cid();
+	ghobject_t oid2 = i.decode_oid();
+	assert(op == Transaction::OP_COLL_REMOVE);
+	assert(ocid2 == ocid);
+	assert(oid2 == oid);
+
+	r = _collection_add(ncid, ocid, oid, spos);
+	if (r == -ENOENT && i.tolerate_collection_add_enoent())
+	  r = 0;
+	spos.op++;
+	if (r < 0)
+	  break;
+	if (_check_replay_guard(ocid, oid, spos) > 0)
+	  r = _remove(ocid, oid, spos);
        }
       break;
 
