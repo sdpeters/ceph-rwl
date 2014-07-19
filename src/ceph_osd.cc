@@ -274,7 +274,14 @@ int main(int argc, const char **argv)
 
 
   if (convertfilestore) {
-    int err = store->upgrade();
+    int err = store->mount();
+    if (err < 0) {
+      derr << TEXT_RED << " ** ERROR: error mounting store " << g_conf->osd_data
+	   << ": " << cpp_strerror(-err) << TEXT_NORMAL << dendl;
+      exit(1);
+    }
+    err = store->upgrade();
+    store->umount();
     if (err < 0) {
       derr << TEXT_RED << " ** ERROR: error converting store " << g_conf->osd_data
 	   << ": " << cpp_strerror(-err) << TEXT_NORMAL << dendl;
@@ -443,7 +450,14 @@ int main(int argc, const char **argv)
   common_init_finish(g_ceph_context);
 
   if (g_conf->filestore_update_to >= (int)store->get_target_version()) {
-    int err = store->upgrade();
+    int err = store->mount();
+    if (err < 0) {
+      derr << TEXT_RED << " ** ERROR: error mounting store " << g_conf->osd_data
+	   << ": " << cpp_strerror(-err) << TEXT_NORMAL << dendl;
+      exit(1);
+    }
+    err = store->upgrade();
+    store->umount();
     if (err < 0) {
       derr << TEXT_RED << " ** ERROR: error converting store " << g_conf->osd_data
 	   << ": " << cpp_strerror(-err) << TEXT_NORMAL << dendl;
