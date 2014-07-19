@@ -39,7 +39,6 @@ class DeterministicOpSequence : public TestObjectStoreState {
     DSOP_CLONE = 2,
     DSOP_CLONE_RANGE = 3,
     DSOP_OBJ_REMOVE = 4,
-    DSOP_COLL_RENAME = 5,
     DSOP_COLL_MOVE = 6,
     DSOP_SET_ATTRS = 7,
 
@@ -63,7 +62,6 @@ class DeterministicOpSequence : public TestObjectStoreState {
   bool do_write(rngen_t& gen);
   bool do_clone(rngen_t& gen);
   bool do_clone_range(rngen_t& gen);
-  bool do_coll_rename(rngen_t& gen);
   bool do_coll_move(rngen_t& gen);
   bool do_set_attrs(rngen_t& gen);
 
@@ -81,7 +79,6 @@ class DeterministicOpSequence : public TestObjectStoreState {
       hobject_t& new_obj, uint64_t srcoff, uint64_t srclen,
       uint64_t dstoff, bufferlist& bl);
   virtual void _do_coll_move(coll_t orig_coll, coll_t new_coll, hobject_t& obj);
-  virtual void _do_coll_rename(coll_t orig_coll, coll_t new_coll);
 
   int _gen_coll_id(rngen_t& gen);
   int _gen_obj_id(rngen_t& gen);
