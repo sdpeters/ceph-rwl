@@ -1187,8 +1187,6 @@ public:
   const ObjectStore& operator=(const ObjectStore& o);
 
   // versioning
-  virtual int version_stamp_is_valid(uint32_t *version) { return 1; }
-  virtual int update_version_stamp() = 0;
   virtual int upgrade() {
     return 0;
   }
@@ -1206,11 +1204,6 @@ public:
   virtual int statfs(struct statfs *buf) = 0;
 
   virtual void collect_metadata(map<string,string> *pm) { }
-
-  /**
-   * get the most recent "on-disk format version" supported
-   */
-  virtual uint32_t get_target_version() = 0;
 
   /**
    * check the journal uuid/fsid, without opening

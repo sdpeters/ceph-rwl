@@ -233,13 +233,6 @@ public:
       finisher(cct) { }
   ~MemStore() { }
 
-  int update_version_stamp() {
-    return 0;
-  }
-  uint32_t get_target_version() {
-    return 1;
-  }
-
   int peek_journal_fsid(uuid_d *fsid);
 
   bool test_mount_in_use() {
