@@ -141,6 +141,7 @@ public:
       block_size(0), //< 0 means default
       bloom_size(0), //< 0 means no bloom filter (default)
       compression_type("none"), //< set to false for no compression
+      compaction_style("level"),
       block_restart_interval(0), //< 0 means default
       error_if_exists(false), //< set to true if you want to check nonexistence
       paranoid_checks(false), //< set to true if you want paranoid checks
