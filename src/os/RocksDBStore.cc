@@ -27,6 +27,7 @@ int RocksDBStore::init()
   options.block_size = g_conf->rocksdb_block_size;
   options.bloom_size = g_conf->rocksdb_bloom_size;
   options.compression_type = g_conf->rocksdb_compression;
+  options.compaction_style = g_conf->rocksdb_compaction_style;
   options.paranoid_checks = g_conf->rocksdb_paranoid;
   options.max_open_files = g_conf->rocksdb_max_open_files;
   options.log_file = g_conf->rocksdb_log;
@@ -81,6 +82,10 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
     ldoptions.compression = rocksdb::kBZip2Compression;
   else
     ldoptions.compression = rocksdb::kNoCompression;
+  if (options.compaction_style == "level")
+    ldoptions.compaction_style = rocksdb::kCompactionStyleLevel;
+  else if (options.compaction_style == "universal")
+    ldoptions.compaction_style = rocksdb::kCompactionStyleUniversal;
   if (options.block_restart_interval)
     ldoptions.block_restart_interval = options.block_restart_interval;
 

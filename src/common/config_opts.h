@@ -589,6 +589,7 @@ OPTION(rocksdb_background_compactions, OPT_INT, 0) // number for background comp
 OPTION(rocksdb_background_flushes, OPT_INT, 0) // number for background flush jobs
 OPTION(rocksdb_max_open_files, OPT_INT, 0) // rocksdb max open files
 OPTION(rocksdb_compression, OPT_STR, "") // rocksdb uses compression : none, snappy, zlib, bzip2
+OPTION(rocksdb_compaction_style, OPT_STR, "") // rocksdb compaction style: level, universal
 OPTION(rocksdb_paranoid, OPT_BOOL, false) // rocksdb paranoid flag
 OPTION(rocksdb_log, OPT_STR, "/dev/null")  // enable rocksdb log file
 OPTION(rocksdb_level0_file_num_compaction_trigger, OPT_U64, 0)

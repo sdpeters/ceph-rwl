@@ -118,6 +118,7 @@ public:
     uint64_t block_size; /// user data per block
     int bloom_size; /// number of bits per entry to put in a bloom filter
     string compression_type; /// whether to use libsnappy compression or not
+    string compaction_style; /// whether to use leveled or universal compaction
 
     // don't change these ones. No, seriously
     int block_restart_interval;
