@@ -420,7 +420,7 @@ int main(int argc, const char *argv[])
       writes_since_compact = 0;
     }
 
-    if (stop_at > 0 && stop_at >= num_ops) {
+    if (stop_at > 0 && stop_at <= num_ops) {
       std::cout << "ran for " << num_ops << " ops; stop." << std::endl;
       break;
     }
