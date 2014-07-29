@@ -13,6 +13,7 @@ leveldb-devel
 libaio-devel
 libatomic_ops-devel
 libblkid-devel
+libbz2-devel
 libcurl-devel
 libedit-devel
 libtool
