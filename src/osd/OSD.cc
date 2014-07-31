@@ -3322,6 +3322,14 @@ void OSD::check_ops_in_flight()
         ++i) {
       clog.warn() << *i;
     }
+    dout(20) << "Dumpling OpWQ information: ";
+    Formatter *f = new_formatter("json");
+    f->open_object_section("q");
+    op_wq.dump(f);
+    f->close_section();
+    f->flush(*_dout);
+    delete f;
+    *_dout << dendl;
   }
   return;
 }
