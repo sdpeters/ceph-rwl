@@ -750,7 +750,8 @@ void PG::generate_past_intervals()
 /*
  * Trim past_intervals.
  *
- * This gets rid of all the past_intervals that happened before last_epoch_clean.
+ * This gets rid of all the past_intervals that happened before
+ * last_epoch_clean AND first_interval_readable
  */
 void PG::trim_past_intervals()
 {
@@ -758,6 +759,8 @@ void PG::trim_past_intervals()
   std::map<epoch_t,pg_interval_t>::iterator end = past_intervals.end();
   while (pif != end) {
     if (pif->second.last >= info.history.last_epoch_clean)
+      return;
+    if (pif->second.last >= info.history.first_interval_readable)
       return;
     dout(10) << __func__ << ": trimming " << pif->second << dendl;
     past_intervals.erase(pif++);
