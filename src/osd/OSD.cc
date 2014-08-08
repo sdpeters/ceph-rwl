@@ -205,6 +205,8 @@ OSDService::OSDService(OSD *osd) :
   peer_map_epoch_lock("OSDService::peer_map_epoch_lock"),
   sched_scrub_lock("OSDService::sched_scrub_lock"), scrubs_pending(0),
   scrubs_active(0),
+  timer_lock("OSDService::timer_lock"),
+  timer(osd->client_messenger->cct, timer_lock, false),
   agent_lock("OSD::agent_lock"),
   agent_valid_iterator(false),
   agent_ops(0),
@@ -448,6 +450,11 @@ void OSDService::start_shutdown()
     agent_timer.cancel_all_events();
     agent_timer.shutdown();
   }
+  {
+    Mutex::Locker l(timer_lock);
+    timer.cancel_all_events();
+    timer.shutdown();
+  }
 }
 
 void OSDService::shutdown()
@@ -477,6 +484,7 @@ void OSDService::init()
   objecter->start();
   watch_timer.init();
   agent_timer.init();
+  timer.init();
 
   agent_thread.create();
 }

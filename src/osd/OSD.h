@@ -550,6 +550,10 @@ public:
   void handle_misdirected_op(PG *pg, OpRequestRef op);
 
 
+  // -- general purpose timer --
+  Mutex timer_lock;
+  SafeTimer timer;
+
   // -- agent shared state --
   Mutex agent_lock;
   Cond agent_cond;
