@@ -2150,17 +2150,18 @@ public:
   bool should_send_notify() const { return send_notify; }
 
   int get_state() const { return state; }
-  bool       is_active() const { return state_test(PG_STATE_ACTIVE); }
-  bool       is_peering() const { return state_test(PG_STATE_PEERING); }
-  bool       is_down() const { return state_test(PG_STATE_DOWN); }
-  bool       is_replay() const { return state_test(PG_STATE_REPLAY); }
-  bool       is_clean() const { return state_test(PG_STATE_CLEAN); }
-  bool       is_degraded() const { return state_test(PG_STATE_DEGRADED); }
-  bool       is_undersized() const { return state_test(PG_STATE_UNDERSIZED); }
+  bool is_active() const { return state_test(PG_STATE_ACTIVE); }
+  bool is_peering() const { return state_test(PG_STATE_PEERING); }
+  bool is_down() const { return state_test(PG_STATE_DOWN); }
+  bool is_replay() const { return state_test(PG_STATE_REPLAY); }
+  bool is_clean() const { return state_test(PG_STATE_CLEAN); }
+  bool is_degraded() const { return state_test(PG_STATE_DEGRADED); }
+  bool is_undersized() const { return state_test(PG_STATE_UNDERSIZED); }
+  bool is_unreadable() const { return state_test(PG_STATE_UNREADABLE); }
+  bool is_scrubbing() const { return state_test(PG_STATE_SCRUBBING); }
 
-  bool       is_scrubbing() const { return state_test(PG_STATE_SCRUBBING); }
+  bool is_empty() const { return info.last_update == eversion_t(0,0); }
 
-  bool  is_empty() const { return info.last_update == eversion_t(0,0); }
 
   void init(
     int role,
