@@ -314,6 +314,26 @@ void PG::init_hb_stamps()
   }
 }
 
+void PG::prune_past_readable_until(utime_t now)
+{
+  // prune pairs in past intervals and in the past.
+  // during peering, we need to remember at least the previous
+  // interval.  otherwise, the current interval is sufficient.
+  epoch_t min;
+  if (is_active())
+    min = info.history.same_interval_since;
+  else
+    min = info.history.first_interval_readable;
+  while (!readable_until.empty() &&
+	 readable_until.begin()->first < min &&
+	 readable_until.begin()->second <= now) {
+    dout(20) << __func__ << " passed "
+	     << readable_until.begin()->first << "="
+	     << readable_until.begin()->second << dendl;
+    readable_until.erase(readable_until.begin());
+  }
+}
+
   
 /********* PG **********/
 
