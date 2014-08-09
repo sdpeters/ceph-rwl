@@ -753,6 +753,4 @@ ln -sf %{_libdir}/librbd.so.1 /usr/lib64/qemu/librbd.so.1
 %{_javadir}/libcephfs.jar
 %{_javadir}/libcephfs-test.jar
 
-%files libs-compat
-
 %changelog
