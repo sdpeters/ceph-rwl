@@ -272,6 +272,7 @@ struct PGPool {
     : id(i), name(_name), auid(au) { }
 
   void update(OSDMapRef map);
+  utime_t get_readable_interval();
 };
 
 /** PG - Replica Placement Group
