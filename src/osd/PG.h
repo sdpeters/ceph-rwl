@@ -610,6 +610,7 @@ public:
   }
 
   bool check_unreadable();
+  void queue_recheck_unreadable();
   void recheck_unreadable(epoch_t e);
 
   // [primary only] content recovery state
