@@ -1359,12 +1359,18 @@ bool ReplicatedPG::check_src_targ(const hobject_t& soid, const hobject_t& toid) 
   return false;
 }
 
+
 /** do_op - do an op
  * pg lock will be held (if multithreaded)
  * osd_lock NOT held.
  */
 void ReplicatedPG::do_op(OpRequestRef& op)
 {
+  if (check_unreadable()) {
+    waiting_for_active.push_back(op);
+    return;
+  }
+
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
   assert(m->get_header().type == CEPH_MSG_OSD_OP);
   if (op->includes_pg_op()) {
@@ -9804,6 +9810,18 @@ void ReplicatedPG::on_activate()
 
   hit_set_setup();
   agent_setup();
+
+  utime_t now = ceph_clock_now(NULL);
+  pair<utime_t,utime_t> rup = get_readable_from_until();
+  if (now <= rup.first) {
+    dout(10) << __func__ << " not readable until " << rup.first << dendl;
+    state_set(PG_STATE_UNREADABLE);
+    publish_stats_to_osd();
+    Mutex::Locker l(osd->timer_lock);
+    osd->timer.add_event_at(
+      rup.first,
+      new C_RecheckReadable(this, get_osdmap()->get_epoch()));
+  }
 }
 
 void ReplicatedPG::on_change(ObjectStore::Transaction *t)
