@@ -830,6 +830,15 @@ public:
     return ret;
   }
 
+  // -- heartbeats --
+  Mutex hb_stamp_lock;
+
+  /// osd -> heartbeat stamps
+  vector<HeartbeatStampsRef> hb_stamps;
+
+  /// get or create a ref for a peer's HeartbeatStamps
+  HeartbeatStampsRef get_hb_stamps(unsigned osd);
+
   // -- stopping --
   Mutex is_stopping_lock;
   Cond is_stopping_cond;
@@ -1328,7 +1337,8 @@ private:
   };
   /// state attached to outgoing heartbeat connections
   struct HeartbeatSession : public RefCountedObject {
-    int peer;
+    int peer;  ///< if >= 0, we are client; otherwise, server.
+    HeartbeatStampsRef stamps;
     HeartbeatSession(int p) : peer(p) {}
   };
   Mutex heartbeat_lock;
