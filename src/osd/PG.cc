@@ -293,6 +293,27 @@ void PG::init_primary_up_acting(
   }
 }
 
+void PG::init_hb_stamps()
+{
+  if (is_primary()) {
+    // we care about all other osds in the acting set
+    hb_stamps.resize(acting.size() - 1);
+    unsigned i = 0;
+    for (vector<int>::iterator p = acting.begin(); p != acting.end(); ++p) {
+      if (*p == CRUSH_ITEM_NONE || *p == get_primary().osd)
+	continue;
+      hb_stamps[i++] = osd->get_hb_stamps(*p);
+    }
+    hb_stamps.resize(i);
+  } else if (is_replica()) {
+    // we care about just the primary
+    hb_stamps.resize(1);
+    hb_stamps[0] = osd->get_hb_stamps(get_primary().osd);
+  } else {
+    hb_stamps.clear();
+  }
+}
+
   
 /********* PG **********/
 
@@ -2142,6 +2163,7 @@ void PG::split_into(pg_t child_pgid, PG *child, unsigned split_bits)
     up_primary,
     primary);
   child->role = OSDMap::calc_pg_role(osd->whoami, child->acting);
+  child->init_hb_stamps();
 
   // this comparison includes primary rank via pg_shard_t
   if (get_primary() != child->get_primary())
@@ -2485,6 +2507,7 @@ void PG::init(
     newacting,
     new_up_primary,
     new_acting_primary);
+  init_hb_stamps();
 
   info.history = history;
   past_intervals.swap(pi);
@@ -4713,6 +4736,8 @@ void PG::start_peering_interval(
     set_role(role);
   else
     set_role(-1);
+
+  init_hb_stamps();
 
   reg_next_scrub();
 
