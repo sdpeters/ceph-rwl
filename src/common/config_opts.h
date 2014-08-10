@@ -536,6 +536,7 @@ OPTION(osd_kill_backfill_at, OPT_INT, 0)
 // Bounds how infrequently a new map epoch will be persisted for a pg
 OPTION(osd_pg_epoch_persisted_max_stale, OPT_U32, 200)
 
+OPTION(osd_max_object_info_reqids, OPT_U32, 4) // number of recent requests to remember per object_info_t
 OPTION(osd_min_pg_log_entries, OPT_U32, 3000)  // number of entries to keep in the pg log when trimming it
 OPTION(osd_max_pg_log_entries, OPT_U32, 10000) // max entries, say when degraded, before we trim
 OPTION(osd_op_complaint_time, OPT_FLOAT, 30) // how many seconds old makes an op complaint-worthy

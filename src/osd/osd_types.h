@@ -2692,6 +2692,16 @@ struct object_info_t {
     recent_reqids.push_back(make_pair(reqid, uv));
     last_reqid = reqid;
   }
+  bool have_reqid(osd_reqid_t reqid, version_t *user_version) {
+    for (deque<pair<osd_reqid_t,version_t> >::const_iterator p =
+	   recent_reqids.begin();
+	 p != recent_reqids.end();
+	 ++p) {
+      *user_version = p->second;
+      return true;
+    }
+    return false;
+  }
 
   void encode(bufferlist& bl) const;
   void decode(bufferlist::iterator& bl);

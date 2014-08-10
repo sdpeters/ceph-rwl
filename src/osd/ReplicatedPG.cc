@@ -5251,7 +5251,9 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
       }
       ctx->snapset_obc->obs.exists = true;
       ctx->snapset_obc->obs.oi.version = ctx->at_version;
-      ctx->snapset_obc->obs.oi.last_reqid = ctx->reqid;
+      ctx->snapset_obc->obs.oi.add_reqid(ctx->reqid,
+					 ctx->new_obs.oi.user_version,
+					 g_conf->osd_max_object_info_reqids);
       ctx->snapset_obc->obs.oi.mtime = ctx->mtime;
       ctx->snapset_obc->obs.oi.local_mtime = now;
 
@@ -5290,7 +5292,8 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     // on the head object
     ctx->new_obs.oi.version = ctx->at_version;
     ctx->new_obs.oi.prior_version = ctx->obs->oi.version;
-    ctx->new_obs.oi.last_reqid = ctx->reqid;
+    ctx->new_obs.oi.add_reqid(ctx->reqid, ctx->new_obs.oi.user_version,
+			      g_conf->osd_max_object_info_reqids);
     if (ctx->mtime != utime_t()) {
       ctx->new_obs.oi.mtime = ctx->mtime;
       dout(10) << " set mtime to " << ctx->new_obs.oi.mtime << dendl;
