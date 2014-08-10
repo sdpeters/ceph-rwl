@@ -3725,7 +3725,7 @@ void object_info_t::encode(bufferlist& bl) const
        ++i) {
     old_watchers.insert(make_pair(i->first.second, i->second));
   }
-  ENCODE_START(14, 8, bl);
+  ENCODE_START(15, 8, bl);
   ::encode(soid, bl);
   ::encode(myoloc, bl);	//Retained for compatibility
   ::encode(category, bl);
@@ -3751,13 +3751,14 @@ void object_info_t::encode(bufferlist& bl) const
   __u32 _flags = flags;
   ::encode(_flags, bl);
   ::encode(local_mtime, bl);
+  ::encode(recent_reqids, bl);
   ENCODE_FINISH(bl);
 }
 
 void object_info_t::decode(bufferlist::iterator& bl)
 {
   object_locator_t myoloc;
-  DECODE_START_LEGACY_COMPAT_LEN(13, 8, 8, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(15, 8, 8, bl);
   map<entity_name_t, watch_info_t> old_watchers;
   if (struct_v >= 2 && struct_v <= 5) {
     sobject_t obj;
@@ -3834,6 +3835,12 @@ void object_info_t::decode(bufferlist::iterator& bl)
   } else {
     local_mtime = utime_t();
   }
+  if (struct_v >= 15) {
+    ::decode(recent_reqids, bl);
+  } else {
+    recent_reqids.clear();
+    recent_reqids.push_back(make_pair(last_reqid, user_version));
+  }
   DECODE_FINISH(bl);
 }
 
@@ -3869,13 +3876,26 @@ void object_info_t::dump(Formatter *f) const
     f->close_section();
   }
   f->close_section();
+  f->open_array_section("recent_reqids");
+  for (deque<pair<osd_reqid_t,version_t> >::const_iterator p =
+	 recent_reqids.begin();
+       p != recent_reqids.end();
+       ++p) {
+    f->open_object_section("entry");
+    f->dump_stream("reqid") << p->first;
+    f->dump_unsigned("user_version", p->second);
+    f->close_section();
+  }
+  f->close_section();
 }
 
 void object_info_t::generate_test_instances(list<object_info_t*>& o)
 {
   o.push_back(new object_info_t());
-  
+  o.push_back(new object_info_t());
   // fixme
+  o.back()->add_reqid(osd_reqid_t(entity_name_t::OSD(1), 0, 33), 12, 10);
+  o.back()->add_reqid(osd_reqid_t(entity_name_t::OSD(1), 0, 34), 13, 10);
 }
 
 

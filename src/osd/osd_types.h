@@ -2613,6 +2613,7 @@ struct object_info_t {
   eversion_t version, prior_version;
   version_t user_version;
   osd_reqid_t last_reqid;
+  deque< pair<osd_reqid_t, version_t> > recent_reqids;
 
   uint64_t size;
   utime_t mtime;
@@ -2683,6 +2684,13 @@ struct object_info_t {
   }
   bool is_omap() const {
     return test_flag(FLAG_OMAP);
+  }
+
+  void add_reqid(osd_reqid_t reqid, version_t uv, unsigned max) {
+    while (recent_reqids.size() >= max)
+      recent_reqids.pop_front();
+    recent_reqids.push_back(make_pair(reqid, uv));
+    last_reqid = reqid;
   }
 
   void encode(bufferlist& bl) const;
