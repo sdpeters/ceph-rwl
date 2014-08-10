@@ -1294,6 +1294,8 @@ void ReplicatedPG::do_op(OpRequestRef& op)
       }
       return;
     }
+
+    // NOTE: we check the object_info_t for dups too below!
   }
 
   ObjectContextRef obc;
@@ -1330,6 +1332,17 @@ void ReplicatedPG::do_op(OpRequestRef& op)
       return;
     }
   } else if (r == 0) {
+    // dup check #2: if it's not in the pg log, check the object_info_t too.
+    version_t user_version;
+    if (obc->obs.oi.have_reqid(m->get_reqid(), &user_version)) {
+      // if it's not in the PG log but it is in the oi, it must be
+      // stable, and we can reply immediately.
+      dout(10) << __func__ << " dup " << m->get_reqid() << " via oi, uv "
+	       << user_version << dendl;
+      osd->reply_op_error(op, 0, obc->obs.oi.version /* fake */, user_version);
+      return;
+    }
+
     if (is_unreadable_object(obc->obs.oi.soid)) {
       dout(10) << __func__ << ": clone " << obc->obs.oi.soid
 	       << " is unreadable, waiting" << dendl;
