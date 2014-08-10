@@ -3731,12 +3731,20 @@ void OSD::handle_osd_ping(MOSDPing *m)
 	}
       }
 
-      set<PGRef> wake_pgs;
-      s->stamps->got_ping(now, m->consumed_epoch, &wake_pgs);
-      while (!wake_pgs.empty()) {
-	(*wake_pgs.begin())->queue_recheck_unreadable();
-	wake_pgs.erase(wake_pgs.begin());
+      dout(30) << " hbstamp before " << *s->stamps << dendl;
+      set<PGRef> wake_pgs_timing;
+      set<PGRef> wake_pgs_consumed;
+      s->stamps->got_ping(now, m->consumed_epoch, &wake_pgs_timing,
+			  &wake_pgs_consumed);
+      while (!wake_pgs_timing.empty()) {
+	(*wake_pgs_timing.begin())->queue_recheck_current_unreadable();
+	wake_pgs_timing.erase(wake_pgs_timing.begin());
       }
+      while (!wake_pgs_consumed.empty()) {
+	(*wake_pgs_consumed.begin())->queue_recheck_prior_unreadable();
+	wake_pgs_consumed.erase(wake_pgs_consumed.begin());
+      }
+      dout(30) << " hbstamp after " << *s->stamps << dendl;
 
       if (!cct->get_heartbeat_map()->is_healthy()) {
 	dout(10) << "internal heartbeat not healthy, dropping ping request" << dendl;
@@ -3811,12 +3819,20 @@ void OSD::handle_osd_ping(MOSDPing *m)
 	}
       }
 
-      set<PGRef> wake_pgs;
-      s->stamps->got_ping_reply(m->stamp, m->consumed_epoch, &wake_pgs);
-      while (!wake_pgs.empty()) {
-	(*wake_pgs.begin())->queue_recheck_unreadable();
-	wake_pgs.erase(wake_pgs.begin());
+      dout(30) << " hbstamp before " << *s->stamps << dendl;
+      set<PGRef> wake_pgs_timing;
+      set<PGRef> wake_pgs_consumed;
+      s->stamps->got_ping_reply(now, m->consumed_epoch, &wake_pgs_timing,
+				&wake_pgs_consumed);
+      while (!wake_pgs_timing.empty()) {
+	(*wake_pgs_timing.begin())->queue_recheck_current_unreadable();
+	wake_pgs_timing.erase(wake_pgs_timing.begin());
       }
+      while (!wake_pgs_consumed.empty()) {
+	(*wake_pgs_consumed.begin())->queue_recheck_prior_unreadable();
+	wake_pgs_consumed.erase(wake_pgs_consumed.begin());
+      }
+      dout(30) << " hbstamp after " << *s->stamps << dendl;
 
       utime_t cutoff = now;
       cutoff -= cct->_conf->osd_heartbeat_grace;
