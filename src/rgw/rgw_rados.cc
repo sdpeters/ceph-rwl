@@ -2625,7 +2625,7 @@ int RGWRados::rewrite_obj(rgw_obj& obj)
 
   attrset.erase(RGW_ATTR_ID_TAG);
 
-  return copy_obj_data((void *)&rctx, &handle, end, obj, obj, NULL, attrset, RGW_OBJ_CATEGORY_MAIN, NULL, NULL);
+  return copy_obj_data((void *)&rctx, &handle, end, obj, obj, NULL, mtime, attrset, RGW_OBJ_CATEGORY_MAIN, NULL, NULL);
 }
 
 /**
@@ -2837,7 +2837,7 @@ set_err_state:
 
     return 0;
   } else if (copy_data) { /* refcounting tail wouldn't work here, just copy the data */
-    return copy_obj_data(ctx, &handle, end, dest_obj, src_obj, mtime, src_attrs, category, ptag, err);
+    return copy_obj_data(ctx, &handle, end, dest_obj, src_obj, mtime, 0, src_attrs, category, ptag, err);
   }
 
   map<uint64_t, RGWObjManifestPart>::iterator miter = astate->manifest.objs.begin();
@@ -2946,6 +2946,7 @@ int RGWRados::copy_obj_data(void *ctx,
                rgw_obj& dest_obj,
                rgw_obj& src_obj,
 	       time_t *mtime,
+	       time_t set_mtime,
                map<string, bufferlist>& attrs,
                RGWObjCategory category,
                string *ptag,
@@ -2995,7 +2996,7 @@ int RGWRados::copy_obj_data(void *ctx,
     etag = string(bl.c_str(), bl.length());
   }
 
-  ret = processor.complete(etag, mtime, 0, attrs);
+  ret = processor.complete(etag, mtime, set_mtime, attrs);
 
   return ret;
 }

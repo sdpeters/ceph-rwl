@@ -1138,6 +1138,7 @@ public:
                rgw_obj& dest_obj,
                rgw_obj& src_obj,
 	       time_t *mtime,
+	       time_t set_mtime,
                map<string, bufferlist>& attrs,
                RGWObjCategory category,
                string *ptag,
