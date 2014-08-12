@@ -121,7 +121,12 @@ void PGPool::update(OSDMapRef map)
   name = map->get_pool_name(id);
   if (pi->get_snap_epoch() == map->get_epoch()) {
     pi->build_removed_snaps(newly_removed_snaps);
-    newly_removed_snaps.subtract(cached_removed_snaps);
+
+    //newly_removed_snaps.subtract(cached_removed_snaps);
+    interval_set<snapid_t> foo;
+    foo.intersection_of(cached_removed_snaps, newly_removed_snaps);
+    newly_removed_snaps.subtract(foo);
+
     cached_removed_snaps.union_of(newly_removed_snaps);
     snapc = pi->get_snap_context();
   } else {
