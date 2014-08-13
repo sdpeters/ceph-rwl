@@ -1143,6 +1143,7 @@ public:
                RGWObjCategory category,
                string *ptag,
                struct rgw_err *err);
+
   /**
    * Delete a bucket.
    * bucket: the name of the bucket to delete
