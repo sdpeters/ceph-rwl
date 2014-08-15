@@ -1543,7 +1543,9 @@ void PG::activate(ObjectStore::Transaction& t,
   // initialize snap_trimq
   if (is_primary()) {
     snap_trimq = pool.cached_removed_snaps;
-    snap_trimq.subtract(info.purged_snaps);
+    interval_set<snapid_t> foo;
+    foo.intersection_of(snap_trimq, info.purged_snaps);
+    snap_trimq.subtract(foo);
     dout(10) << "activate - snap_trimq " << snap_trimq << dendl;
     if (!snap_trimq.empty() && is_clean())
       queue_snap_trim();
