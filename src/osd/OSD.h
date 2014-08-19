@@ -595,7 +595,9 @@ protected:
   PerfCounters      *logger;
   ObjectStore *store;
 
+public:
   LogClient clog;
+protected:
 
   int whoami;
   std::string dev_path, journal_path;

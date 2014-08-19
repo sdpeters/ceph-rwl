@@ -175,7 +175,7 @@ struct PGPool {
       name = _name;
   }
 
-  void update(OSDMapRef map);
+  void update(OSD *osd, OSDMapRef map);
 };
 
 /** PG - Replica Placement Group
