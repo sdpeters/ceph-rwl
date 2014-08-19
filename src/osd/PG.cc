@@ -135,7 +135,19 @@ void PGPool::update(OSDMapRef map)
   name = map->get_pool_name(id);
   if (pi->get_snap_epoch() == map->get_epoch()) {
     pi->build_removed_snaps(newly_removed_snaps);
-    newly_removed_snaps.subtract(cached_removed_snaps);
+
+    if (cached_removed_snaps.subset_of(newly_removed_snaps)) {
+      newly_removed_snaps.subtract(cached_removed_snaps);
+    } else {
+      osd->clog.error() << "pg " << info.pgid << " new removed_snaps "
+			<< newly_removed_snaps << " is missing some snaps"
+			<< " from previous cached_removed_snaps "
+			<< cached_removed_snaps << "\n";
+      interval_set<snapid_t> foo;
+      foo.intersection_of(cached_removed_snaps, newly_removed_snaps);
+      newly_removed_snaps.subtract(foo);
+    }
+
     cached_removed_snaps.union_of(newly_removed_snaps);
     snapc = pi->get_snap_context();
   } else {
@@ -1459,7 +1471,16 @@ void PG::activate(ObjectStore::Transaction& t,
     dout(20) << "activate - purged_snaps " << info.purged_snaps
 	     << " cached_removed_snaps " << pool.cached_removed_snaps << dendl;
     snap_trimq = pool.cached_removed_snaps;
-    snap_trimq.subtract(info.purged_snaps);
+    if (info.purged_snaps.subset_of(snap_trimq)) {
+      snap_trimq.subtract(info.purged_snaps);
+    } else {
+      osd->clog.error() << "pg " << info.pgid << " new removed_snaps "
+			<< snap_trimq << " is missing some snaps from"
+			<< " purged_snaps " << info.purged_snaps << "\n";
+      interval_set<snapid_t> foo;
+      foo.intersection_of(snap_trimq, info.purged_snaps);
+      snap_trimq.subtract(foo);
+    }
     dout(10) << "activate - snap_trimq " << snap_trimq << dendl;
     if (!snap_trimq.empty() && is_clean())
       queue_snap_trim();
