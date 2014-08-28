@@ -35,6 +35,16 @@ MDS *MDSInternalContext::get_mds() {
   return mds;
 }
 
+MDS *MDSInternalContextWrapper::get_mds()
+{
+  return mds;
+}
+
+void MDSInternalContextWrapper::finish(int r)
+{
+  fin->complete(r);
+}
+
 
 void MDSIOContextBase::complete(int r) {
   MDS *mds = get_mds();
