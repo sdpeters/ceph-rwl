@@ -303,8 +303,12 @@ void MDS::command_scrub_path(Formatter *f, const string& path)
     Mutex::Locker l(mds_lock);
     mdcache->scrub_dentry(path, f, &scond);
   }
-  scond.wait();
-  // scrub_dentry() finishers will dump the data for us; we're done!
+  int r = scond.wait();
+  if (r) { // something went wrong
+    f->open_object_section("results");
+    f->dump_int("return_code", r);
+    f->close_section(); // results
+  }
 }
 
 void MDS::set_up_admin_socket()
