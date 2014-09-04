@@ -5067,7 +5067,7 @@ int RGWRados::read(void *ctx, rgw_obj& obj, off_t ofs, size_t size, bufferlist& 
   return ref.ioctx.operate(ref.oid, &op, NULL);
 }
 
-int RGWRados::get_olh(rgw_obj& obj, RGWOLHInfo *olh)
+int RGWRados::obj_operate(rgw_obj& obj, ObjectWriteOperation *op)
 {
   rgw_rados_ref ref;
   rgw_bucket bucket;
@@ -5076,12 +5076,51 @@ int RGWRados::get_olh(rgw_obj& obj, RGWOLHInfo *olh)
     return r;
   }
 
+  return ref.ioctx.operate(ref.oid, op);
+}
+
+int RGWRados::obj_operate(rgw_obj& obj, ObjectReadOperation *op)
+{
+  rgw_rados_ref ref;
+  rgw_bucket bucket;
+  int r = get_obj_ref(obj, &ref, &bucket);
+  if (r < 0) {
+    return r;
+  }
+
+  bufferlist outbl;
+
+  return ref.ioctx.operate(ref.oid, op, &outbl);
+}
+
+int RGWRados::olh_init_modification(rgw_obj& obj, string *tag)
+{
+#define OLH_PENDING_TAG_LEN 32
+  int ret = gen_rand_alphanumeric_lower(cct, tag, OLH_PENDING_TAG_LEN);
+  if (ret < 0) {
+    return ret;
+  }
+
+  string attr_name = RGW_ATTR_OLH_PENDING_PREFIX;
+  attr_name.append(*tag);
+
+  ObjectWriteOperation op;
+  bufferlist bl;
+  bl.append(attr_name.c_str(), attr_name.size() + 1);
+  op.setxattr(tag->c_str(), bl);
+
+  return obj_operate(obj, &op);
+}
+
+int RGWRados::get_olh(rgw_obj& obj, RGWOLHInfo *olh)
+{
   map<string, bufferlist> unfiltered_attrset;
+
   ObjectReadOperation op;
   op.getxattrs(&unfiltered_attrset, NULL);
 
   bufferlist outbl;
-  r = ref.ioctx.operate(ref.oid, &op, &outbl);
+  int r = obj_operate(obj, &op);
 
   if (r < 0) {
     return r;
@@ -5096,7 +5135,7 @@ int RGWRados::get_olh(rgw_obj& obj, RGWOLHInfo *olh)
     attrset[iter->first] = iter->second;
   }
 
-  map<string, bufferlist>::iterator iter = attrset.find(RGW_ATTR_OLH_INFO);
+  iter = attrset.find(RGW_ATTR_OLH_INFO);
   if (iter == attrset.end()) { /* not an olh */
     return -EINVAL;
   }
