@@ -145,6 +145,32 @@ struct rgw_cls_obj_complete_op
 };
 WRITE_CLASS_ENCODER(rgw_cls_obj_complete_op)
 
+struct cls_rgw_link_olh_op {
+  cls_rgw_obj_key olh_key;
+  cls_rgw_obj_key key;
+  bool removed;
+
+  cls_rgw_link_olh_op() : removed(false) {}
+
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    ::encode(olh_key, bl);
+    ::encode(key, bl);
+    ::encode(removed, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::iterator& bl) {
+    DECODE_START(1, bl);
+    ::decode(olh_key, bl);
+    ::decode(removed, bl);
+    DECODE_FINISH(bl);
+  }
+
+  void dump(Formatter *f) const;
+};
+WRITE_CLASS_ENCODER(cls_rgw_link_olh_op)
+
 struct rgw_cls_list_op
 {
   cls_rgw_obj_key start_obj;
