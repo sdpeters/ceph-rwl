@@ -949,10 +949,13 @@ static int rgw_bucket_link_olh(cls_method_context_t hctx, bufferlist *in, buffer
     return -EINVAL;
   }
 
-  if (!op.olh_key.instance.empty()) {
-    CLS_LOG(1, "bad olh key passed in (instance not empty)");
+  if (!op.delete_marker && op.key.instance.empty()) {
+    CLS_LOG(1, "bad key passed in (instance empty)");
     return -EINVAL;
   }
+
+  cls_rgw_obj_key olh_key;
+  olh_key.name = op.key.name;
 
   string instance_key;
   struct rgw_bucket_dir_entry instance_entry;
@@ -972,17 +975,17 @@ static int rgw_bucket_link_olh(cls_method_context_t hctx, bufferlist *in, buffer
 
   struct rgw_bucket_olh_entry olh_data_entry;
   string olh_data_key;
-  encode_olh_data_key(op.olh_key, &olh_data_key);
+  encode_olh_data_key(olh_key, &olh_data_key);
   int ret = read_index_entry(hctx, olh_data_key, &olh_data_entry);
   if (ret < 0 && ret != -ENOENT) {
-    CLS_LOG(0, "ERROR: read_index_entry() olh_key=%s ret=%d", op.olh_key.name.c_str(), ret);
+    CLS_LOG(0, "ERROR: read_index_entry() olh_key=%s ret=%d", olh_key.name.c_str(), ret);
     return ret;
   }
 
   bool need_remove_olh_listing = (ret != -ENOENT && olh_data_entry.exists && op.delete_marker);
 
   string olh_list_key;
-  encode_obj_index_key(op.olh_key, &olh_list_key);
+  encode_obj_index_key(olh_key, &olh_list_key);
   if (need_remove_olh_listing) {
     ret = cls_cxx_map_remove_key(hctx, olh_list_key);
   }

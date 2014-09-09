@@ -146,7 +146,6 @@ struct rgw_cls_obj_complete_op
 WRITE_CLASS_ENCODER(rgw_cls_obj_complete_op)
 
 struct cls_rgw_link_olh_op {
-  cls_rgw_obj_key olh_key;
   cls_rgw_obj_key key;
   bool delete_marker;
   string op_tag;
@@ -155,7 +154,6 @@ struct cls_rgw_link_olh_op {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(olh_key, bl);
     ::encode(key, bl);
     ::encode(delete_marker, bl);
     ::encode(op_tag, bl);
@@ -164,7 +162,6 @@ struct cls_rgw_link_olh_op {
 
   void decode(bufferlist::iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(olh_key, bl);
     ::decode(key, bl);
     ::decode(delete_marker, bl);
     ::decode(op_tag, bl);
