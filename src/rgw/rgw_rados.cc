@@ -5213,19 +5213,11 @@ int RGWRados::apply_olh_log(void *ctx, const string& bucket_owner, rgw_obj& obj,
   *plast_ver = last_ver;
 
   map<uint64_t, rgw_bucket_olh_log_entry>::iterator iter = log.begin();
-  rgw_bucket_olh_log_entry& first_op = iter->second;
 
-  if (first_op.op == CLS_RGW_OLH_OP_INIT_OLH) {
-    op.create(true);
-    op_setxattr(op, RGW_ATTR_ID_TAG, obj_tag);
-    op_setxattr(op, RGW_ATTR_OLH_VER, "0");
-    ++iter;
-  } else {
-    bufferlist bl;
-    bl.append(obj_tag);
-    op.cmpxattr(RGW_ATTR_ID_TAG, CEPH_OSD_CMPXATTR_OP_EQ, bl);
-    op.cmpxattr(RGW_ATTR_OLH_VER, CEPH_OSD_CMPXATTR_OP_LT, last_ver);
-  }
+  bufferlist bl;
+  bl.append(obj_tag);
+  op.cmpxattr(RGW_ATTR_ID_TAG, CEPH_OSD_CMPXATTR_OP_EQ, bl);
+  op.cmpxattr(RGW_ATTR_OLH_VER, CEPH_OSD_CMPXATTR_OP_LT, last_ver);
 
   bool need_to_link = false;
   cls_rgw_obj_key key;
@@ -5243,8 +5235,6 @@ int RGWRados::apply_olh_log(void *ctx, const string& bucket_owner, rgw_obj& obj,
       key = entry.key;
       delete_marker = entry.delete_marker;
       break;
-    case CLS_RGW_OLH_OP_INIT_OLH:
-      assert(0);
     default:
       ldout(cct, 0) << "ERROR: apply_olh_log: invalid op: " << (int)entry.op << dendl;
       return -EIO;
@@ -5299,6 +5289,9 @@ int RGWRados::apply_olh_log(void *ctx, const string& bucket_owner, rgw_obj& obj,
   return r;
 }
 
+/*
+ * read olh log and apply it
+ */
 int RGWRados::update_olh(void *ctx, const string& bucket_owner, rgw_obj& obj, const string& obj_tag)
 {
   map<uint64_t, rgw_bucket_olh_log_entry> log;

@@ -114,9 +114,6 @@ void rgw_bucket_olh_log_entry::dump(Formatter *f) const
   encode_json("epoch", epoch, f);
   const char *op_str;
   switch (op) {
-    case CLS_RGW_OLH_OP_INIT_OLH:
-      op_str = "init_olh";
-      break;
     case CLS_RGW_OLH_OP_LINK_OLH:
       op_str = "link_olh";
       break;

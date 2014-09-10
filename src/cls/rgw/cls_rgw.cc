@@ -993,14 +993,6 @@ static int rgw_bucket_link_olh(cls_method_context_t hctx, bufferlist *in, buffer
   }
 
   if (ret == -ENOENT) {
-    olh_data_entry.epoch = 1;
-    rgw_bucket_olh_log_entry& log_entry = olh_data_entry.pending_log[olh_data_entry.epoch];
-    log_entry.epoch = olh_data_entry.epoch;
-    log_entry.op = CLS_RGW_OLH_OP_INIT_OLH;
-    log_entry.op_tag = op.op_tag;
-    log_entry.key = op.key;
-    log_entry.delete_marker = op.delete_marker;
-
     /* remove original list entry if exists */
 #warning handle overwrite of non-olh object
 
