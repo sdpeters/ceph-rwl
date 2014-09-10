@@ -5157,8 +5157,34 @@ int RGWRados::bucket_index_read_olh_log(rgw_obj& obj_instance, uint64_t ver_mark
     return ret;
   }
 
-  cls_rgw_obj_key key(obj_instance.get_index_key_name(), obj_instance.get_instance());
+  cls_rgw_obj_key key(obj_instance.get_index_key_name(), string());
   ret = cls_rgw_get_olh_log(index_ctx, oid, key, ver_marker, log, is_truncated);
+  if (ret < 0) {
+    return ret;
+  }
+
+  return 0;
+}
+
+int RGWRados::bucket_index_trim_olh_log(rgw_obj& obj_instance, uint64_t ver)
+{
+  rgw_rados_ref ref;
+  rgw_bucket bucket;
+  int r = get_obj_ref(obj_instance, &ref, &bucket);
+  if (r < 0) {
+    return r;
+  }
+
+  librados::IoCtx index_ctx;
+  string oid;
+
+  int ret = open_bucket_index(bucket, index_ctx, oid);
+  if (ret < 0) {
+    return ret;
+  }
+
+  cls_rgw_obj_key key(obj_instance.get_index_key_name(), string());
+  ret = cls_rgw_trim_olh_log(index_ctx, oid, key, ver);
   if (ret < 0) {
     return ret;
   }
@@ -5174,7 +5200,8 @@ static void op_setxattr(librados::ObjectWriteOperation& op, const char *name, co
 }
 
 int RGWRados::apply_olh_log(void *ctx, const string& bucket_owner, rgw_obj& obj,
-                            const string& obj_tag, map<uint64_t, rgw_bucket_olh_log_entry>& log)
+                            const string& obj_tag, map<uint64_t, rgw_bucket_olh_log_entry>& log,
+                            uint64_t *plast_ver)
 {
   if (log.empty()) {
     return 0;
@@ -5183,6 +5210,7 @@ int RGWRados::apply_olh_log(void *ctx, const string& bucket_owner, rgw_obj& obj,
   librados::ObjectWriteOperation op;
 
   uint64_t last_ver = log.rbegin()->first;
+  *plast_ver = last_ver;
 
   map<uint64_t, rgw_bucket_olh_log_entry>::iterator iter = log.begin();
   rgw_bucket_olh_log_entry& first_op = iter->second;
@@ -5259,7 +5287,36 @@ int RGWRados::apply_olh_log(void *ctx, const string& bucket_owner, rgw_obj& obj,
 
   /* update olh object */
   r = ref.ioctx.operate(ref.oid, &op);
+  if (r < 0) {
+    ldout(cct, 0) << "ERROR: could not apply olh update, r=" << r << dendl;
+    return r;
+  }
+
+  r = bucket_index_trim_olh_log(obj, last_ver);
+  if (r < 0) {
+    ldout(cct, 0) << "ERROR: could not trim olh log, r=" << r << dendl;
+  }
   return r;
+}
+
+int RGWRados::update_olh(void *ctx, const string& bucket_owner, rgw_obj& obj, const string& obj_tag)
+{
+  map<uint64_t, rgw_bucket_olh_log_entry> log;
+  bool is_truncated;
+  uint64_t ver_marker = 0;
+
+  do {
+    int ret = bucket_index_read_olh_log(obj, ver_marker, &log, &is_truncated);
+    if (ret < 0) {
+      return ret;
+    }
+    ret = apply_olh_log(ctx, bucket_owner, obj, obj_tag, log, &ver_marker);
+    if (ret < 0) {
+      return ret;
+    }
+  } while (is_truncated);
+
+  return 0;
 }
 
 static void filter_attrset(map<string, bufferlist>& unfiltered_attrset, const string& check_prefix,
