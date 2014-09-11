@@ -5124,26 +5124,31 @@ int RGWRados::obj_operate(rgw_obj& obj, ObjectReadOperation *op)
   return ref.ioctx.operate(ref.oid, op, &outbl);
 }
 
-int RGWRados::olh_init_modification_impl(void *ctx, rgw_obj& obj, string *obj_tag, string *op_tag)
+int RGWRados::olh_init_modification_impl(RGWObjState *state, rgw_obj& olh_obj, string *obj_tag, string *op_tag)
 {
-  RGWRadosCtx *rctx = static_cast<RGWRadosCtx *>(ctx);
-
-  RGWObjState *astate = NULL;
-  int r = get_obj_state(rctx, obj, &astate, NULL, false);
-  if (r < 0)
-    return r;
-
   ObjectWriteOperation op;
 
-  bool curr_olh = is_olh(s->attrset);
+  assert(olh_obj.get_instance().empty());
 
-  if (astate->exists) {
-    op.cmpxattr(RGW_ATTR_ID_TAG, CEPH_OSD_CMPXATTR_OP_EQ, astate->obj_tag);
+  bool curr_olh = is_olh(state->attrset);
+
+  /*
+   * 3 possible cases: olh object doesn't exist, it exists as an olh, it exists as a regular object.
+   * If it exists as a regular object we'll need to transform it into an olh. We'll do it in two
+   * steps, first change its tag and set the olh pending attrs. Once write is done we'll need to
+   * truncate it, remove extra attrs, and send it to the garbage collection. The bucket index olh
+   * log will reflect that.
+   */
+  if (state->exists) {
+    /* guard against racing writes */
+    op.cmpxattr(RGW_ATTR_ID_TAG, CEPH_OSD_CMPXATTR_OP_EQ, state->obj_tag);
   }
 
-  if (!astate->exists || !curr_olh) {
-    /* generate a new object tag */
-    op.create(true);
+  if (!state->exists || !curr_olh) {
+    /* need to generate a new object tag */
+    if (!state->exists) {
+      op.create(true);
+    }
     int ret = gen_rand_alphanumeric_lower(cct, obj_tag, 32);
     if (ret < 0) {
       ldout(cct, 0) << "ERROR: gen_rand_alphanumeric_lower() returned ret=" << ret << dendl;
@@ -5168,16 +5173,16 @@ int RGWRados::olh_init_modification_impl(void *ctx, rgw_obj& obj, string *obj_ta
   bl.append(attr_name.c_str(), attr_name.size() + 1);
   op.setxattr(op_tag->c_str(), bl);
 
-  return obj_operate(obj, &op);
+  return obj_operate(olh_obj, &op);
 }
 
-int RGWRados::olh_init_modification(void *ctx, rgw_obj& obj, string *obj_tag, string *op_tag)
+int RGWRados::olh_init_modification(RGWObjState *state, rgw_obj& obj, string *obj_tag, string *op_tag)
 {
   int ret;
 
   do {
-    ret = olh_init_modification_impl(ctx, obj, obj_tag, op_tag);
-  } while (ret == -EAGAIN);
+    ret = olh_init_modification_impl(state, obj, obj_tag, op_tag);
+  } while (ret == -EAGAIN || ret == -EEXIST);
 
   return 0;
 }
@@ -5379,6 +5384,41 @@ int RGWRados::update_olh(void *ctx, RGWObjState *state, const string& bucket_own
       return ret;
     }
   } while (is_truncated);
+
+  return 0;
+}
+
+int RGWRados::set_olh(void *ctx, const string& bucket_owner, rgw_obj& target_obj, bool delete_marker)
+{
+  string op_tag;
+  string obj_tag;
+
+  RGWObjState *state = NULL;
+  RGWRadosCtx *rctx = static_cast<RGWRadosCtx *>(ctx);
+  int r = get_obj_state(rctx, target_obj, &state, NULL, false); /* don't follow olh */
+  if (r < 0)
+    return r;
+
+  rgw_obj olh_obj = target_obj;
+  olh_obj.clear_instance();
+
+  int ret = olh_init_modification(state, olh_obj, &obj_tag, &op_tag);
+  if (ret < 0) {
+    ldout(cct, 20) << "olh_init_modification() target_obj=" << target_obj << " delete_marker=" << (int)delete_marker << " returned " << ret << dendl;
+    return ret;
+  }
+
+  ret = bucket_index_link_olh(target_obj, delete_marker, op_tag);
+  if (ret < 0) {
+    ldout(cct, 20) << "bucket_index_link_olh() target_obj=" << target_obj << " delete_marker=" << (int)delete_marker << " returned " << ret << dendl;
+    return ret;
+  }
+
+  ret = update_olh(ctx, state, bucket_owner, target_obj);
+  if (ret < 0) {
+    ldout(cct, 20) << "bucket_index_link_olh() target_obj=" << target_obj << " returned " << ret << dendl;
+    return ret;
+  }
 
   return 0;
 }
