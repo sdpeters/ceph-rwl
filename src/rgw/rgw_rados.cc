@@ -5135,7 +5135,13 @@ int RGWRados::olh_init_modification_impl(void *ctx, rgw_obj& obj, string *obj_ta
 
   ObjectWriteOperation op;
 
-  if (!astate->exists) {
+  bool curr_olh = is_olh(s->attrset);
+
+  if (astate->exists) {
+    op.cmpxattr(RGW_ATTR_ID_TAG, CEPH_OSD_CMPXATTR_OP_EQ, astate->obj_tag);
+  }
+
+  if (!astate->exists || !curr_olh) {
     /* generate a new object tag */
     op.create(true);
     int ret = gen_rand_alphanumeric_lower(cct, obj_tag, 32);
@@ -5146,8 +5152,6 @@ int RGWRados::olh_init_modification_impl(void *ctx, rgw_obj& obj, string *obj_ta
     bufferlist bl;
     bl.append(*obj_tag);
     op.setxattr(RGW_ATTR_ID_TAG, bl);
-  } else {
-    op.cmpxattr(RGW_ATTR_ID_TAG, CEPH_OSD_CMPXATTR_OP_EQ, astate->obj_tag);
   }
 
 #define OLH_PENDING_TAG_LEN 32
