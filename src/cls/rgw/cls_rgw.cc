@@ -1133,10 +1133,10 @@ static int rgw_bucket_trim_olh_log(cls_method_context_t hctx, bufferlist *in, bu
 
   /* remove all versions up to and including ver from the pending map */
   map<uint64_t, rgw_bucket_olh_log_entry>& log = olh_data_entry.pending_log;
-  map<uint64_t, rgw_bucket_olh_log_entry>::iterator iter = log.begin();
-  while (iter != log.end() && iter->first <= op.ver) {
-    map<uint64_t, rgw_bucket_olh_log_entry>::iterator rm_iter = iter;
-    ++iter;
+  map<uint64_t, rgw_bucket_olh_log_entry>::iterator liter = log.begin();
+  while (liter != log.end() && liter->first <= op.ver) {
+    map<uint64_t, rgw_bucket_olh_log_entry>::iterator rm_iter = liter;
+    ++liter;
     log.erase(rm_iter);
   }
 
