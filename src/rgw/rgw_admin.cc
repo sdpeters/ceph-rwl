@@ -1923,7 +1923,7 @@ next:
     bool is_truncated;
 
     rgw_obj obj(bucket, object);
-    int ret = store->bucket_index_read_olh_log(obj, 0, &log, &is_truncated);
+    int ret = store->bucket_index_read_olh_log(NULL, obj, 0, &log, &is_truncated);
     if (ret < 0) {
       cerr << "ERROR: failed reading olh: " << cpp_strerror(-ret) << std::endl;
       return -ret;
