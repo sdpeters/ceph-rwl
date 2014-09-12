@@ -8,8 +8,10 @@
 #include <sys/wait.h>
 #include <errno.h>
 #include <unistd.h>
+#include <iostream>
 #include "common/safe_io.h"
 #include "common/errno.h"
+#include "include/assert.h"
 
 /**
  * pre-fork fork/daemonize helper class
@@ -35,7 +37,7 @@ public:
     assert(!forked);
     int r = socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
     if (r < 0) {
-      cerr << "[" << getpid() << "]: unable to create socketpair: " << cpp_strerror(errno) << std::endl;
+      std::cerr << "[" << getpid() << "]: unable to create socketpair: " << cpp_strerror(errno) << std::endl;
       exit(errno);
     }
 
@@ -69,7 +71,7 @@ public:
       ::close(2);
       r = 0;
     } else if (err) {
-      cerr << "[" << getpid() << "]: " << cpp_strerror(err) << std::endl;
+      std::cerr << "[" << getpid() << "]: " << cpp_strerror(err) << std::endl;
     } else {
       // wait for child to exit
       waitpid(childpid, NULL, 0);
