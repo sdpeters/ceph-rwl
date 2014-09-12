@@ -27,6 +27,8 @@
 // ceph
 #include "common/errno.h"
 #include "common/safe_io.h"
+#include "common/Preforker.h"
+#include "global/global_init.h"
 #include "include/types.h"
 #include "Client.h"
 #include "Fh.h"
@@ -63,7 +65,7 @@ static dev_t new_decode_dev(uint32_t dev)
 
 class CephFuse::Handle {
 public:
-  Handle(Client *c, int fd);
+  Handle(Client *c, Preforker *pf);
 
   int init(int argc, const char *argv[]);
   int loop();
@@ -75,7 +77,7 @@ public:
   Inode * iget(inodeno_t fino);
   void iput(Inode *in);
 
-  int fd_on_success;
+  Preforker *preforker;
   Client *client;
 
   struct fuse_chan *ch;
@@ -692,21 +694,10 @@ static void dentry_invalidate_cb(void *handle, vinodeno_t dirino,
 static void do_init(void *data, fuse_conn_info *bar)
 {
   CephFuse::Handle *cfuse = (CephFuse::Handle *)data;
-  if (cfuse->fd_on_success) {
-    //cout << "fuse init signaling on fd " << fd_on_success << std::endl;
-    uint32_t r = 0;
-    int err = safe_write(cfuse->fd_on_success, &r, sizeof(r));
-    if (err) {
-      derr << "fuse_ll: do_init: safe_write failed with error "
-	   << cpp_strerror(err) << dendl;
-      ceph_abort();
-    }
-    //cout << "fuse init done signaling on fd " << fd_on_success << std::endl;
-
-    // close stdout, etc.
-    ::close(0);
-    ::close(1);
-    ::close(2);
+  if (cfuse->preforker) {
+    global_init_postfork_finish(g_ceph_context, 0);
+    if (cfuse->preforker->is_forked())
+      cfuse->preforker->daemonize();
   }
 }
 
@@ -763,8 +754,8 @@ const static struct fuse_lowlevel_ops fuse_ll_oper = {
 };
 
 
-CephFuse::Handle::Handle(Client *c, int fd) :
-  fd_on_success(fd),
+CephFuse::Handle::Handle(Client *c, Preforker *pf) :
+  preforker(pf),
   client(c),
   ch(NULL),
   se(NULL),
@@ -937,7 +928,7 @@ uint64_t CephFuse::Handle::make_fake_ino(inodeno_t ino, snapid_t snapid)
   return fino;
 }
 
-CephFuse::CephFuse(Client *c, int fd) : _handle(new CephFuse::Handle(c, fd))
+CephFuse::CephFuse(Client *c, Preforker *fk) : _handle(new CephFuse::Handle(c, fk))
 {
 }
 
