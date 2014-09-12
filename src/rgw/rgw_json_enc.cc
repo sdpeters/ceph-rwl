@@ -555,7 +555,7 @@ void RGWBucketInfo::decode_json(JSONObj *obj) {
   JSONDecoder::decode_json("placement_rule", placement_rule, obj);
   JSONDecoder::decode_json("has_instance_obj", has_instance_obj, obj);
   JSONDecoder::decode_json("quota", quota, obj);
-  JSONDecoder::decode_json("versioning_enabled", quota, obj);
+  JSONDecoder::decode_json("versioning_enabled", versioning_enabled, obj);
 }
 
 void RGWObjEnt::dump(Formatter *f) const
