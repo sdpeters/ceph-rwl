@@ -32,9 +32,6 @@ enum common_init_flags_t {
   // By default, don't read a configuration file
   CINIT_FLAG_NO_DEFAULT_CONFIG_FILE = 0x2,
 
-  // Don't close stderr (in daemonize)
-  CINIT_FLAG_NO_CLOSE_STDERR = 0x4,
-
   // don't do anything daemonish, like create /var/run/ceph, or print a banner
   CINIT_FLAG_NO_DAEMON_ACTIONS = 0x8,
 };
