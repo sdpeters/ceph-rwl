@@ -5190,7 +5190,7 @@ int RGWRados::olh_init_modification(RGWObjState *state, rgw_obj& obj, string *ob
 
   do {
     ret = olh_init_modification_impl(state, obj, obj_tag, op_tag);
-  } while (ret == -EAGAIN || ret == -EEXIST);
+  } while (ret == -ECANCELED || ret == -EEXIST);
 
   return 0;
 }
@@ -5401,14 +5401,14 @@ int RGWRados::set_olh(void *ctx, const string& bucket_owner, rgw_obj& target_obj
   string op_tag;
   string obj_tag;
 
-  RGWObjState *state = NULL;
-  RGWRadosCtx *rctx = static_cast<RGWRadosCtx *>(ctx);
-  int r = get_obj_state(rctx, target_obj, &state, NULL, false); /* don't follow olh */
-  if (r < 0)
-    return r;
-
   rgw_obj olh_obj = target_obj;
   olh_obj.clear_instance();
+
+  RGWObjState *state = NULL;
+  RGWRadosCtx *rctx = static_cast<RGWRadosCtx *>(ctx);
+  int r = get_obj_state(rctx, olh_obj, &state, NULL, false); /* don't follow olh */
+  if (r < 0)
+    return r;
 
   int ret = olh_init_modification(state, olh_obj, &obj_tag, &op_tag);
   if (ret < 0) {
@@ -5422,9 +5422,9 @@ int RGWRados::set_olh(void *ctx, const string& bucket_owner, rgw_obj& target_obj
     return ret;
   }
 
-  ret = update_olh(ctx, state, bucket_owner, target_obj);
+  ret = update_olh(ctx, state, bucket_owner, olh_obj);
   if (ret < 0) {
-    ldout(cct, 20) << "bucket_index_link_olh() target_obj=" << target_obj << " returned " << ret << dendl;
+    ldout(cct, 20) << "update_olh() target_obj=" << target_obj << " returned " << ret << dendl;
     return ret;
   }
 
