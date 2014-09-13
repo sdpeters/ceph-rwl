@@ -12,11 +12,9 @@
  * 
  */
 
-class Preforker;
-
 class CephFuse {
 public:
-  CephFuse(Client *c, Preforker *fk);
+  CephFuse(Client *c, int fd);
   ~CephFuse();
   int init(int argc, const char *argv[]);
   int loop();

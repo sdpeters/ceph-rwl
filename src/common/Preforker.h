@@ -33,10 +33,6 @@ public:
       forked(false)
   {}
 
-  bool is_forked() {
-    return forked;
-  }
-
   void prefork() {
     assert(!forked);
     int r = socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
