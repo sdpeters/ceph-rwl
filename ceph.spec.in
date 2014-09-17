@@ -462,7 +462,10 @@ fi
 %{_sbindir}/ceph-disk
 %{_sbindir}/ceph-disk-activate
 %{_sbindir}/ceph-disk-prepare
+# el6 needs ugly udev hack
+%if ((0%{?rhel} && 0%{?rhel} <= 6) || (0%{?centos} && 0%{?centos} <= 6))
 %{_sbindir}/ceph-disk-udev
+%endif
 %{_sbindir}/ceph-create-keys
 %{_sbindir}/rcceph
 %if 0%{?rhel} >= 7 || 0%{?fedora}
