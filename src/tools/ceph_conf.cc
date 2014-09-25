@@ -16,7 +16,7 @@
 
 #include "common/ceph_argparse.h"
 #include "global/global_init.h"
-#include "mon/AuthMonitor.h"
+#include "mon/MonMap.h"
 
 using std::deque;
 using std::string;
