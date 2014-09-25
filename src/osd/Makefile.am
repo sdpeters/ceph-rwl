@@ -5,6 +5,8 @@ libosd_types_la_SOURCES = \
 libosd_types_la_CXXFLAGS = ${AM_CXXFLAGS}
 noinst_LTLIBRARIES += libosd_types.la
 
+if ENABLE_SERVER
+
 libosd_la_SOURCES = \
 	osd/PG.cc \
 	osd/ReplicatedPG.cc \
@@ -31,6 +33,12 @@ libosd_la_LIBADD += $(LIBOSD_TP)
 endif
 noinst_LTLIBRARIES += libosd.la
 
+if WITH_KINETIC
+libosd_la_CXXFLAGS += -std=gnu++11
+endif
+
+endif # ENABLE_SERVER
+
 noinst_HEADERS += \
 	osd/Ager.h \
 	osd/ClassHandler.h \
@@ -54,6 +62,3 @@ noinst_HEADERS += \
 	osd/Watch.h \
 	osd/osd_types.h
 
-if WITH_KINETIC
-libosd_la_CXXFLAGS += -std=gnu++11
-endif

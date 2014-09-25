@@ -11,6 +11,8 @@ ceph_kvstore_tool_LDADD = $(LIBOS) $(CEPH_GLOBAL)
 ceph_kvstore_tool_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 bin_DEBUGPROGRAMS += ceph-kvstore-tool
 
+if ENABLE_SERVER
+
 ceph_objectstore_tool_SOURCES = tools/ceph_objectstore_tool.cc
 ceph_objectstore_tool_LDADD = $(LIBOSD) $(LIBOS) $(CEPH_GLOBAL) $(BOOST_PROGRAM_OPTIONS_LIBS) $(LIBRADOS)
 if LINUX
@@ -29,6 +31,8 @@ bin_PROGRAMS += crushtool
 osdmaptool_SOURCES = tools/osdmaptool.cc
 osdmaptool_LDADD = $(CEPH_GLOBAL)
 bin_PROGRAMS += osdmaptool
+
+endif # ENABLE_SERVER
 
 ceph_scratchtool_SOURCES = tools/scratchtool.c
 ceph_scratchtool_LDADD = $(LIBRADOS) $(CEPH_GLOBAL)
@@ -98,9 +102,13 @@ ceph_authtool_SOURCES = tools/ceph_authtool.cc
 ceph_authtool_LDADD = $(CEPH_GLOBAL) $(LIBCOMMON)
 bin_PROGRAMS += ceph-authtool
 
+if ENABLE_SERVER
+
 ceph_mon_store_converter_SOURCES = tools/mon_store_converter.cc
 ceph_mon_store_converter_LDADD = $(LIBMON) $(LIBOS) $(CEPH_GLOBAL)
 bin_PROGRAMS += ceph_mon_store_converter
+
+endif # ENABLE_SERVER
 
 noinst_HEADERS += \
 	tools/cephfs/JournalTool.h \

@@ -17,6 +17,8 @@ ceph_erasure_code_LDADD += -ldl
 endif
 bin_DEBUGPROGRAMS += ceph_erasure_code
 
+if ENABLE_SERVER
+
 libec_example_la_SOURCES = test/erasure-code/ErasureCodePluginExample.cc
 test/erasure-code/ErasureCodePluginExample.cc: ./ceph_ver.h
 libec_example_la_CFLAGS = ${AM_CFLAGS}
@@ -170,6 +172,8 @@ noinst_HEADERS += test/erasure-code/ErasureCodeExample.h
 unittest_erasure_code_example_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 unittest_erasure_code_example_LDADD = $(LIBOSD) $(LIBCOMMON) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 check_PROGRAMS += unittest_erasure_code_example
+
+endif # ENABLE_SERVER
 
 noinst_HEADERS += \
 	test/erasure-code/ceph_erasure_code_benchmark.h

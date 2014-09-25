@@ -12,6 +12,7 @@ noinst_HEADERS += \
   erasure-code/jerasure/gf-complete/include/gf_general.h \
   erasure-code/jerasure/ErasureCodeJerasure.h
 
+if ENABLE_SERVER
 jerasure_sources = \
   erasure-code/ErasureCode.cc \
   erasure-code/jerasure/jerasure/src/cauchy.c \
@@ -113,3 +114,5 @@ endif
 erasure-code/jerasure/ErasureCodePluginSelectJerasure.cc: ./ceph_ver.h
 
 erasure_codelib_LTLIBRARIES += libec_jerasure.la
+
+endif # ENABLE_SERVER
