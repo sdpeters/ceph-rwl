@@ -99,6 +99,7 @@ int cls_rgw_bucket_link_olh(librados::IoCtx& io_ctx, const string& oid, const cl
   struct rgw_cls_link_olh_op call;
   call.key = key;
   call.op_tag = op_tag;
+  call.delete_marker = delete_marker;
   ::encode(call, in);
   int r = io_ctx.exec(oid, "rgw", "bucket_link_olh", in, out);
   if (r < 0)
