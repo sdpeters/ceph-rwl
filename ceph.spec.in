@@ -25,6 +25,9 @@ Requires:	librados2 = %{epoch}:%{version}-%{release}
 Requires:	libcephfs1 = %{epoch}:%{version}-%{release}
 Requires:	ceph-common = %{epoch}:%{version}-%{release}
 Requires:	python-ceph = %{epoch}:%{version}-%{release}
+Requires:	python-rbd = %{epoch}:%{version}-%{release}
+Requires:	python-cephfs = %{epoch}:%{version}-%{release}
+Requires:	python-rados = %{epoch}:%{version}-%{release}
 Requires:	python
 Requires:	python-argparse
 Requires:	python-requests
