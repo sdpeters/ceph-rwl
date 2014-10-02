@@ -3823,8 +3823,6 @@ int RGWRados::delete_obj_impl(void *ctx, const string& bucket_owner, rgw_obj& ob
   }
   RGWRadosCtx *rctx = static_cast<RGWRadosCtx *>(ctx);
 
-  bool need_to_rm = !use_versioning || !obj.get_instance().empty();
-
   ObjectWriteOperation op;
 
   RGWObjState *state;
