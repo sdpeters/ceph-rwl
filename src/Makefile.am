@@ -720,6 +720,11 @@ clean-local:
 	rm -f ceph java/java/com/ceph/crush/Bucket.class
 
 
+# deprecated pybind modules
+
+python_PYTHON = pybind/ceph_argparse.py \
+               pybind/ceph_rest_api.py
+
 # everything else we want to include in a 'make dist'
 
 noinst_HEADERS += \
