@@ -1580,13 +1580,18 @@ int main(int argc, char **argv)
       map<string, bool> common_prefixes;
       string ns;
 
-      rgw_obj_key marker_key(marker);
+      RGWRados::Bucket target(store, bucket);
+      RGWRados::Bucket::List list_op(&target);
+
+      list_op.params.prefix = prefix;
+      list_op.params.delim = delim;
+      list_op.params.marker = rgw_obj_key(marker);
+      list_op.params.ns = ns;
+      list_op.params.enforce_ns = false;
+      list_op.params.list_versions = true;
       
       do {
-        list<rgw_bi_log_entry> entries;
-        ret = store->list_objects(bucket, max_entries - count, prefix, delim,
-                                  marker_key, NULL, result, common_prefixes, true,
-                                  ns, false, true, &truncated, NULL);
+        ret = list_op.list_objects(max_entries - count, &result, &common_prefixes, &truncated);
         if (ret < 0) {
           cerr << "ERROR: store->list_objects(): " << cpp_strerror(-ret) << std::endl;
           return -ret;
@@ -1597,8 +1602,6 @@ int main(int argc, char **argv)
         for (vector<RGWObjEnt>::iterator iter = result.begin(); iter != result.end(); ++iter) {
           RGWObjEnt& entry = *iter;
           encode_json("entry", entry, formatter);
-
-          marker_key = entry.key;
         }
         formatter->flush(cout);
       } while (truncated && count < max_entries);

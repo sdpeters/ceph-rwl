@@ -1284,25 +1284,6 @@ public:
                  bool *is_truncated, RGWUsageIter& read_iter, map<rgw_user_bucket, rgw_usage_log_entry>& usage);
   int trim_usage(string& user, uint64_t start_epoch, uint64_t end_epoch);
 
-  /**
-   * get listing of the objects in a bucket.
-   * bucket: bucket to list contents of
-   * max: maximum number of results to return
-   * prefix: only return results that match this prefix
-   * delim: do not include results that match this string.
-   *     Any skipped results will have the matching portion of their name
-   *     inserted in common_prefixes with a "true" mark.
-   * marker: if filled in, begin the listing with this object.
-   * result: the objects are put in here.
-   * common_prefixes: if delim is filled in, any matching prefixes are placed
-   *     here.
-   */
-  virtual int list_objects(rgw_bucket& bucket, int max, std::string& prefix, std::string& delim,
-                   const rgw_obj_key& marker, rgw_obj_key *next_marker, std::vector<RGWObjEnt>& result,
-                   map<string, bool>& common_prefixes, bool get_content_type, string& ns, bool enforce_ns,
-                   bool list_versions,
-                   bool *is_truncated, RGWAccessListFilter *filter);
-
   virtual int create_pool(rgw_bucket& bucket);
 
   /**
@@ -1501,6 +1482,31 @@ public:
 		   list<rgw_obj_key> *remove_objs);
       int complete_del(int64_t poolid, uint64_t epoch);
       int cancel();
+    };
+
+    struct List {
+      RGWRados::Bucket *target;
+      rgw_obj_key next_marker;
+
+      struct Params {
+        string prefix;
+        string delim;
+        rgw_obj_key marker;
+        string ns;
+        bool enforce_ns;
+        RGWAccessListFilter *filter;
+        bool list_versions;
+
+        Params() : enforce_ns(true), filter(NULL), list_versions(false) {}
+      } params;
+
+    public:
+      List(RGWRados::Bucket *_target) : target(_target) {}
+
+      int list_objects(int max, vector<RGWObjEnt> *result, map<string, bool> *common_prefixes, bool *is_truncated);
+      rgw_obj_key& get_next_marker() {
+        return next_marker;
+      }
     };
   };
 
