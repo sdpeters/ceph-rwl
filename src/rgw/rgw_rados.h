@@ -1406,9 +1406,6 @@ public:
 
       struct GetObjState {
         librados::IoCtx io_ctx;
-        bool sent_data;
-
-        GetObjState() : sent_data(false) {}
       } state;
       
       struct ConditionParams {
