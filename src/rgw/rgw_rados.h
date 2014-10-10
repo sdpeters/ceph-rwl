@@ -1706,14 +1706,6 @@ public:
   virtual int watch_cb(int opcode, uint64_t ver, bufferlist& bl) { return 0; }
   void pick_control_oid(const string& key, string& notify_oid);
 
-  void *create_context(void *user_ctx) {
-    RGWObjectCtx *rctx = new RGWObjectCtx(this);
-    rctx->user_ctx = user_ctx;
-    return rctx;
-  }
-  void destroy_context(void *ctx) {
-    delete static_cast<RGWObjectCtx *>(ctx);
-  }
   void set_atomic(void *ctx, rgw_obj& obj) {
     RGWObjectCtx *rctx = static_cast<RGWObjectCtx *>(ctx);
     rctx->set_atomic(obj);
@@ -1784,9 +1776,6 @@ public:
                     const string& from_marker, const string& to_marker);
   int lock_exclusive(rgw_bucket& pool, const string& oid, utime_t& duration, string& zone_id, string& owner_id);
   int unlock(rgw_bucket& pool, const string& oid, string& zone_id, string& owner_id);
-
-  /// clean up/process any temporary objects older than given date[/time]
-  int remove_temp_objects(string date, string time);
 
   int gc_operate(string& oid, librados::ObjectWriteOperation *op);
   int gc_aio_operate(string& oid, librados::ObjectWriteOperation *op);

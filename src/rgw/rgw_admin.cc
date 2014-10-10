@@ -217,7 +217,6 @@ enum {
   OPT_LOG_RM,
   OPT_USAGE_SHOW,
   OPT_USAGE_TRIM,
-  OPT_TEMP_REMOVE,
   OPT_OBJECT_RM,
   OPT_OBJECT_UNLINK,
   OPT_OBJECT_STAT,
@@ -358,9 +357,6 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       return OPT_USAGE_SHOW;
     if (strcmp(cmd, "trim") == 0)
       return OPT_USAGE_TRIM;
-  } else if (strcmp(prev_cmd, "temp") == 0) {
-    if (strcmp(cmd, "remove") == 0)
-      return OPT_TEMP_REMOVE;
   } else if (strcmp(prev_cmd, "caps") == 0) {
     if (strcmp(cmd, "add") == 0)
       return OPT_CAPS_ADD;
@@ -1633,24 +1629,6 @@ int main(int argc, char **argv)
     if (r < 0) {
       cerr << "failure: " << cpp_strerror(-r) << std::endl;
       return -r;
-    }
-  }
-
-  if (opt_cmd == OPT_TEMP_REMOVE) {
-    if (date.empty()) {
-      cerr << "date wasn't specified" << std::endl;
-      return usage();
-    }
-    string parsed_date, parsed_time;
-    int r = utime_t::parse_date(date, NULL, NULL, &parsed_date, &parsed_time);
-    if (r < 0) {
-      cerr << "failure parsing date: " << cpp_strerror(r) << std::endl;
-      return 1;
-    }
-    r = store->remove_temp_objects(parsed_date, parsed_time);
-    if (r < 0) {
-      cerr << "failure removing temp objects: " << cpp_strerror(r) << std::endl;
-      return 1;
     }
   }
 
