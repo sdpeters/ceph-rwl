@@ -901,6 +901,12 @@ void Paxos::commit_finish()
   if (do_refresh()) {
     commit_proposal();
 
+    if (mon->get_quorum().size() == 0) {
+      dout(10) << __func__ << " an election must have been called and we"
+               << " lost quorum -- return" << dendl;
+      return;
+    }
+
     finish_contexts(g_ceph_context, waiting_for_commit);
 
     if (mon->get_quorum().size() > 1) {
