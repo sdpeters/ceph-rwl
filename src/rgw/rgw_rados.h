@@ -1666,7 +1666,6 @@ public:
   /**
    * a simple object read without keeping state
    */
-  virtual int read(void *ctx, rgw_obj& obj, off_t ofs, size_t size, bufferlist& bl);
 
   virtual int raw_obj_stat(rgw_obj& obj, uint64_t *psize, time_t *pmtime, uint64_t *epoch,
                        map<string, bufferlist> *attrs, bufferlist *first_chunk,

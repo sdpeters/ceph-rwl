@@ -5226,29 +5226,6 @@ done_err:
   return r;
 }
 
-/* a simple object read */
-int RGWRados::read(void *ctx, rgw_obj& obj, off_t ofs, size_t size, bufferlist& bl)
-{
-  rgw_rados_ref ref;
-  rgw_bucket bucket;
-  int r = get_obj_ref(obj, &ref, &bucket);
-  if (r < 0) {
-    return r;
-  }
-  RGWObjectCtx *rctx = static_cast<RGWObjectCtx *>(ctx);
-  RGWObjState *astate = NULL;
-
-  ObjectReadOperation op;
-
-  r = append_atomic_test(rctx, obj, op, &astate);
-  if (r < 0)
-    return r;
-
-  op.read(ofs, size, &bl, NULL);
-
-  return ref.ioctx.operate(ref.oid, &op, NULL);
-}
-
 int RGWRados::obj_operate(rgw_obj& obj, ObjectWriteOperation *op)
 {
   rgw_rados_ref ref;
