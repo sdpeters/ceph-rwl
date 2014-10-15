@@ -357,6 +357,9 @@ struct inode_t {
   version_t file_data_version; // auth only
   version_t xattr_version;
 
+  utime_t last_scrub_stamp;    // start time of last complete scrub
+  version_t last_scrub_version;// (parent) start version of last complete scrub
+
   version_t backtrace_version;
 
   inode_t() : ino(0), rdev(0),
@@ -366,7 +369,8 @@ struct inode_t {
 	      truncate_pending(0),
 	      time_warp_seq(0),
 	      inline_version(1),
-	      version(0), file_data_version(0), xattr_version(0), backtrace_version(0) {
+	      version(0), file_data_version(0), xattr_version(0),
+	      last_scrub_version(0), backtrace_version(0) {
     clear_layout();
     memset(&dir_layout, 0, sizeof(dir_layout));
   }
