@@ -906,6 +906,7 @@ void CInode::mark_dirty_scrub_stamps()
   if (!scrub_info_p->last_scrub_dirty) {
     parent->dir->mark_inode_scrub_dirty(this);
     scrub_info_p->last_scrub_dirty = true;
+    get(PIN_DIRTYSCRUBSTAMP);
   }
 }
 
@@ -915,6 +916,7 @@ void CInode::mark_clean_scrub_stamps()
     parent->dir->mark_inode_scrub_clean(this);
     delete scrub_info_p;
     scrub_info_p = NULL;
+    put(PIN_DIRTYSCRUBSTAMP);
   }
 }
 

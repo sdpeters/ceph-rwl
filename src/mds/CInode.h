@@ -142,6 +142,7 @@ public:
   static const int PIN_EXPORTINGCAPS =    22;
   static const int PIN_DIRTYPARENT =      23;
   static const int PIN_DIRWAITER =        24;
+  static const int PIN_DIRTYSCRUBSTAMP =  25;
 
   const char *pin_name(int p) {
     switch (p) {
@@ -166,6 +167,7 @@ public:
     case PIN_DIRTYRSTAT: return "dirtyrstat";
     case PIN_DIRTYPARENT: return "dirtyparent";
     case PIN_DIRWAITER: return "dirwaiter";
+    case PIN_DIRTYSCRUBSTAMP: return "dirtyscrubstamp";
     default: return generic_pin_name(p);
     }
   }
