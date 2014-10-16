@@ -292,6 +292,12 @@ public:
     else
       return projected_nodes.back()->inode;
   }
+  const inode_t *get_projected_inode() const {
+    if (projected_nodes.empty())
+      return &inode;
+    else
+      return projected_nodes.back()->inode;
+  }
   inode_t *get_previous_projected_inode() {
     assert(!projected_nodes.empty());
     std::list<projected_inode_t*>::reverse_iterator p = projected_nodes.rbegin();
