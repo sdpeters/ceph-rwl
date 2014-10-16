@@ -79,11 +79,14 @@ public:
   static const int PIN_INODEPIN =     1;  // linked inode is pinned
   static const int PIN_FRAGMENTING = -2;  // containing dir is refragmenting
   static const int PIN_PURGING =      3;
+  static const int PIN_SCRUBQUEUE  =  4; // TODO: what's the meaning of negative values?
+
   const char *pin_name(int p) {
     switch (p) {
     case PIN_INODEPIN: return "inodepin";
     case PIN_FRAGMENTING: return "fragmenting";
     case PIN_PURGING: return "purging";
+    case PIN_SCRUBQUEUE: return "scrub_enqueued";
     default: return generic_pin_name(p);
     }
   }
@@ -133,6 +136,16 @@ public:
     }
     void link_remote(CInode *in);
   };
+  struct scrub_info_t {
+    /// The parent CDir we're a recursive scrub member of
+    CDir *scrub_parent;
+    /// we want to scrub all descendants of this dentry
+    bool scrub_recursive;
+    /// we want to scrub direct children of this dentry, even if !recursive
+    bool scrub_children;
+    scrub_info_t() : scrub_parent(NULL), scrub_recursive(false),
+        scrub_children(false) {}
+  };
   
 protected:
   CDir *dir;     // containing dirfrag
@@ -141,10 +154,19 @@ protected:
   
   version_t version;  // dir version when last touched.
   version_t projected_version;  // what it will be when i unlock/commit.
+  scrub_info_t *scrub_info_p;
 
 public:
   elist<CDentry*>::item item_dirty;
   elist<CDentry*>::item item_stray;
+
+  scrub_info_t *scrub_info() {
+    if (!scrub_info_p) {
+      scrub_info_p = new scrub_info_t();
+      assert(projected.empty()); // TODO: this is hardly safe
+    }
+    return scrub_info_p;
+  }
 
 protected:
   int auth_pins, nested_auth_pins;
@@ -174,6 +196,7 @@ public:
     first(f), last(l),
     dir(0),
     version(0), projected_version(0),
+    scrub_info_p(NULL),
     item_dirty(this),
     auth_pins(0), nested_auth_pins(0),
     lock(this, &lock_type),
@@ -187,6 +210,7 @@ public:
     first(f), last(l),
     dir(0),
     version(0), projected_version(0),
+    scrub_info_p(NULL),
     item_dirty(this),
     auth_pins(0), nested_auth_pins(0),
     lock(this, &lock_type),
@@ -211,6 +235,7 @@ public:
   linkage_t *get_linkage() { return &linkage; }
 
   linkage_t *_project_linkage() {
+    assert(!scrub_info_p); // TODO: this is hardly safe
     projected.push_back(linkage_t());
     return &projected.back();
   }
