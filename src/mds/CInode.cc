@@ -329,6 +329,13 @@ inode_t *CInode::project_inode(map<string,bufferptr> *px)
       *px = *get_projected_xattrs();
   }
   projected_nodes.back()->xattrs = px;
+  if (scrub_info_p && scrub_info_p->last_scrub_dirty) {
+    projected_nodes.back()->inode->last_scrub_stamp =
+        get_completed_scrub_stamp();
+    projected_nodes.back()->inode->last_scrub_version =
+        get_completed_scrub_version();
+    mark_clean_scrub_stamps();
+  }
   dout(15) << "project_inode " << projected_nodes.back()->inode << dendl;
   return projected_nodes.back()->inode;
 }
@@ -893,6 +900,23 @@ void CInode::mark_clean()
     item_dirty.remove_myself();
   }
 }    
+
+void CInode::mark_dirty_scrub_stamps()
+{
+  if (!scrub_info_p->last_scrub_dirty) {
+    parent->dir->mark_inode_scrub_dirty(this);
+    scrub_info_p->last_scrub_dirty = true;
+  }
+}
+
+void CInode::mark_clean_scrub_stamps()
+{
+  if (scrub_info_p && scrub_info_p->last_scrub_dirty) {
+    parent->dir->mark_inode_scrub_clean(this);
+    delete scrub_info_p;
+    scrub_info_p = NULL;
+  }
+}
 
 
 // --------------

@@ -609,6 +609,20 @@ void CDir::unlink_inode_work( CDentry *dn )
   }
 }
 
+void CDir::mark_inode_scrub_dirty(CInode *in)
+{
+  dentry_key_t key = in->parent->key();
+  assert(items.count(key));
+  dirty_scrub_stamps[key] = in;
+}
+
+void CDir::mark_inode_scrub_clean(CInode *in)
+{
+  dentry_key_t key = in->parent->key();
+  assert(items.count(key));
+  dirty_scrub_stamps.erase(key);
+}
+
 void CDir::add_to_bloom(CDentry *dn)
 {
   if (!bloom) {

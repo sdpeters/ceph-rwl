@@ -226,6 +226,7 @@ protected:
 
   // contents of this directory
   map_t items;       // non-null AND null
+  std::map<dentry_key_t, CInode*> dirty_scrub_stamps;
   unsigned num_head_items;
   unsigned num_head_null;
   unsigned num_snap_items;
@@ -348,6 +349,9 @@ protected:
   void link_primary_inode( CDentry *dn, CInode *in );
   void unlink_inode( CDentry *dn );
   void try_remove_unlinked_dn(CDentry *dn);
+
+  void mark_inode_scrub_dirty(CInode *in);
+  void mark_inode_scrub_clean(CInode *in);
 
   void add_to_bloom(CDentry *dn);
   bool is_in_bloom(const std::string& name);

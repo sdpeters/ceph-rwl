@@ -396,6 +396,17 @@ public:
 
   pair<int,int> inode_auth;
 
+  struct scrub_info_t {
+    utime_t scrub_start_stamp;   // time we started latest scrub (ephemeral)
+    version_t scrub_start_version;// (parent) version we started latest scrub
+    utime_t last_scrub_stamp;    // start time of complete scrub
+    version_t last_scrub_version;// (parent) start version of last complete scrub
+    bool last_scrub_dirty;       // the last scrub stamp and/or version are dirty
+    scrub_info_t() : scrub_start_version(0), last_scrub_version(0),
+        last_scrub_dirty(false) {}
+  };
+  scrub_info_t *scrub_info_p;
+
   // -- distributed state --
 protected:
   // file capabilities
@@ -460,6 +471,7 @@ public:
     stickydir_ref(0),
     parent(0),
     inode_auth(CDIR_AUTH_DEFAULT),
+    scrub_info_p(NULL),
     replica_caps_wanted(0),
     item_dirty(this), item_caps(this), item_open_file(this), item_dirty_parent(this),
     item_dirty_dirfrag_dir(this), 
@@ -490,6 +502,7 @@ public:
     g_num_inos++;
     close_dirfrags();
     close_snaprealm();
+    assert(!scrub_info_p); // can't kick out inodes with dirty scrub state!
   }
   
 
@@ -544,6 +557,64 @@ public:
   void _mark_dirty(LogSegment *ls);
   void mark_dirty(version_t projected_dirv, LogSegment *ls);
   void mark_clean();
+
+private:
+  scrub_info_t *scrub_info() {
+    if (!scrub_info_p) {
+      scrub_info_p = new scrub_info_t();
+      scrub_info_p->last_scrub_stamp = get_projected_inode()->last_scrub_stamp;
+      scrub_info_p->last_scrub_version = get_projected_inode()->last_scrub_version;
+    }
+    return scrub_info_p;
+  }
+  void mark_dirty_scrub_stamps();
+  // called if we project a new inode and the CDir doesn't need to flush it
+  void mark_clean_scrub_stamps();
+  void reset_scrub_stamps() {
+    scrub_info()->last_scrub_stamp.set_from_double(0.0);
+    scrub_info()->last_scrub_version = 0;
+    scrub_info()->scrub_start_stamp.set_from_double(0.0);
+    scrub_info()->scrub_start_version = 0;
+    mark_dirty_scrub_stamps();
+  }
+public:
+  utime_t get_scrub_start_stamp() const {
+  if (scrub_info_p)
+    return scrub_info_p->scrub_start_stamp;
+  return utime_t();
+  }
+  version_t get_scrub_start_version() const {
+    if (scrub_info_p)
+      return scrub_info_p->scrub_start_version;
+    return 0;
+  }
+  const utime_t& get_completed_scrub_stamp() const {
+    if (scrub_info_p)
+      return scrub_info_p->last_scrub_stamp;
+    return get_projected_inode()->last_scrub_stamp;
+  }
+  version_t get_completed_scrub_version() const {
+    if (scrub_info_p)
+      return scrub_info_p->last_scrub_version;
+    return get_projected_inode()->last_scrub_version;
+  }
+
+  //TODO: probably these will be removed and scrub stamps only updated by scrub function
+  void set_scrub_start_stamp(const utime_t& s) {
+    scrub_info()->scrub_start_stamp = s;
+  }
+  void set_scrub_start_version(version_t v) {
+    scrub_info()->scrub_start_version = v;
+  }
+  void set_completed_scrub_stamp(const utime_t& s) {
+    scrub_info()->last_scrub_stamp = s;
+    mark_dirty_scrub_stamps();
+  }
+  void set_completed_scrub_version(version_t v) {
+    scrub_info()->last_scrub_version = v;
+    mark_dirty_scrub_stamps();
+  }
+
 
   void store(MDSInternalContextBase *fin);
   void _stored(version_t cv, Context *fin);
@@ -866,8 +937,10 @@ public:
   }
   void pop_projected_parent() {
     assert(projected_parent.size());
+    mark_clean_scrub_stamps();
     parent = projected_parent.front();
     projected_parent.pop_front();
+    reset_scrub_stamps();
   }
 
   void print(ostream& out);
