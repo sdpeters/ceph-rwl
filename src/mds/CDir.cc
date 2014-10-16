@@ -182,6 +182,7 @@ CDir::CDir(CInode *in, frag_t fg, MDCache *mdcache, bool auth) :
   first(2),
   dirty_rstat_inodes(member_offset(CInode, dirty_rstat_item)),
   projected_version(0),  item_dirty(this), item_new(this),
+  scrub_data_p(NULL),
   num_head_items(0), num_head_null(0),
   num_snap_items(0), num_snap_null(0),
   num_dirty(0), committing_version(0), committed_version(0),
@@ -613,14 +614,18 @@ void CDir::mark_inode_scrub_dirty(CInode *in)
 {
   dentry_key_t key = in->parent->key();
   assert(items.count(key));
-  dirty_scrub_stamps[key] = in;
+  scrub_data()->dirty_scrub_stamps[key] = in;
 }
 
 void CDir::mark_inode_scrub_clean(CInode *in)
 {
   dentry_key_t key = in->parent->key();
   assert(items.count(key));
-  dirty_scrub_stamps.erase(key);
+  scrub_data()->dirty_scrub_stamps.erase(key);
+  if (scrub_data()->dirty_scrub_stamps.empty()) {
+    delete scrub_data_p;
+    scrub_data_p = NULL;
+  }
 }
 
 void CDir::add_to_bloom(CDentry *dn)

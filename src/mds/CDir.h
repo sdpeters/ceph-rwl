@@ -226,7 +226,16 @@ protected:
 
   // contents of this directory
   map_t items;       // non-null AND null
-  std::map<dentry_key_t, CInode*> dirty_scrub_stamps;
+  struct scrub_data_t {
+    std::map<dentry_key_t, CInode*> dirty_scrub_stamps;
+    map_t directories;
+  };
+  scrub_data_t *scrub_data_p;
+  scrub_data_t *scrub_data() {
+    if (!scrub_data_p)
+      scrub_data_p = new scrub_data_t();
+    return scrub_data_p;
+  }
   unsigned num_head_items;
   unsigned num_head_null;
   unsigned num_snap_items;
@@ -290,6 +299,7 @@ protected:
     remove_bloom();
     g_num_dir--;
     g_num_dirs++;
+    assert(!scrub_data_p); // can't evict with dirty data!
   }
 
 
