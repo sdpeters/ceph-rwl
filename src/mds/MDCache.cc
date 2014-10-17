@@ -11528,7 +11528,9 @@ void MDCache::scrub_dentry(const string& path, Formatter *f, Context *fin)
   MDRequestRef mdr = request_start_internal(CEPH_MDS_OP_VALIDATE);
   filepath fp(path.c_str());
   mdr->set_filepath(fp);
-  mdr->internal_op_finish = new C_scrub_dentry_finish(this, mdr, fin, f);
+  C_scrub_dentry_finish *csd = new C_scrub_dentry_finish(this, mdr, fin, f);
+  mdr->internal_op_finish = csd;
+  mdr->internal_op_private = &csd->results;
   scrub_dentry_work(mdr);
 }
 
@@ -11545,10 +11547,11 @@ void MDCache::scrub_dentry_work(MDRequestRef& mdr)
   bool locked = mds->locker->acquire_locks(mdr, rdlocks, wrlocks, xlocks);
   if (!locked)
     return;
-  C_scrub_dentry_finish *finisher =
-    static_cast<C_scrub_dentry_finish*>(mdr->internal_op_finish);
 
-  in->validate_disk_state(&finisher->results, finisher);
+  CInode::validated_data *vr =
+      static_cast<CInode::validated_data*>(mdr->internal_op_private);
+
+  in->validate_disk_state(vr, mdr->internal_op_finish);
   return;
 }
 

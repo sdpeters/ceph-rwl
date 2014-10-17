@@ -1033,6 +1033,8 @@ public:
     return p->second;
   }
   void scrub_dentry(const string& path, Formatter *f, Context *fin);
+  void scrub_dentry(const string& path, CInode::validated_data *r,
+                    Context *fin);
   void scrub_dentry_work(MDRequestRef& mdr);
   void flush_dentry(const string& path, Context *fin);
   void flush_dentry_work(MDRequestRef& mdr);
