@@ -11505,32 +11505,50 @@ void C_MDS_RetryRequest::finish(int r)
 
 class C_scrub_dentry_finish : public Context {
 public:
-  CInode::validated_data results;
   MDCache *mdcache;
   MDRequestRef mdr;
   Context *on_finish;
-  Formatter *formatter;
   C_scrub_dentry_finish(MDCache *mdc, MDRequestRef& mdr,
-                        Context *fin, Formatter *f) :
-    mdcache(mdc), mdr(mdr), on_finish(fin), formatter(f) {}
+                        Context *fin) :
+    mdcache(mdc), mdr(mdr), on_finish(fin) {}
+
+  void finish(int r) {
+    mdcache->request_finish(mdr);
+    on_finish->complete(r);
+  }
+};
+
+class C_scrub_dentry_dumper : public Context {
+public:
+  CInode::validated_data results;
+  Formatter *formatter;
+  Context *on_finish;
+  C_scrub_dentry_dumper(Formatter *f, Context *c) :
+    formatter(f), on_finish(c) {}
 
   void finish(int r) {
     if (r >= 0)
       CInode::dump_validation_results(results, formatter);
-    mdcache->request_finish(mdr);
     on_finish->complete(r);
   }
 };
 
 void MDCache::scrub_dentry(const string& path, Formatter *f, Context *fin)
 {
+  C_scrub_dentry_dumper *csdd = new C_scrub_dentry_dumper(f, fin);
+  scrub_dentry(path, &csdd->results, csdd);
+}
+
+void MDCache::scrub_dentry(const string& path, CInode::validated_data *r,
+                           Context *fin)
+{
   dout(10) << "scrub_dentry " << path << dendl;
   MDRequestRef mdr = request_start_internal(CEPH_MDS_OP_VALIDATE);
   filepath fp(path.c_str());
   mdr->set_filepath(fp);
-  C_scrub_dentry_finish *csd = new C_scrub_dentry_finish(this, mdr, fin, f);
-  mdr->internal_op_finish = csd;
-  mdr->internal_op_private = &csd->results;
+  C_scrub_dentry_finish *csdf = new C_scrub_dentry_finish(this, mdr, fin);
+  mdr->internal_op_finish = csdf;
+  mdr->internal_op_private = r;
   scrub_dentry_work(mdr);
 }
 
