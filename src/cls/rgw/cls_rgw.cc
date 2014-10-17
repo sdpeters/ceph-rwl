@@ -1095,12 +1095,12 @@ public:
     map<string, bufferlist> keys;
     string filter = key.name; /* list key starts with key name, filter it to avoid a case where we cross to
                                  different namespace */
-    int ret = cls_cxx_map_get_vals(hctx, list_idx, filter, 2, &keys);
+    int ret = cls_cxx_map_get_vals(hctx, list_idx, filter, 1, &keys);
     if (ret < 0) {
       return ret;
     }
 
-    if (keys.size() < 2) {
+    if (keys.size() < 1) {
       *found = false;
       return 0;
     }
