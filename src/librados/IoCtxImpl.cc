@@ -1065,8 +1065,9 @@ int librados::IoCtxImpl::watch(const object_t& oid,
   bufferlist bl;
   wc->linger_id = objecter->linger_mutate(oid, oloc, wr,
 					  snapc, ceph_clock_now(NULL), bl,
-					  0,
-					  NULL, onfinish, &objver);
+					  *cookie, 0,
+					  NULL, onfinish, &wc->on_error,
+					  &objver);
   lock->Unlock();
 
   mylock.Lock();
@@ -1227,6 +1228,7 @@ void librados::IoCtxImpl::set_notify_timeout(uint32_t timeout)
 {
   notify_timeout = timeout;
 }
+
 
 ///////////////////////////// C_aio_Ack ////////////////////////////////
 
