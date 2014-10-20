@@ -4685,7 +4685,10 @@ bool PG::old_peering_msg(epoch_t reply_epoch, epoch_t query_epoch)
 void PG::set_last_peering_reset()
 {
   dout(20) << "set_last_peering_reset " << get_osdmap()->get_epoch() << dendl;
-  last_peering_reset = get_osdmap()->get_epoch();
+  if (last_peering_reset != get_osdmap()->get_epoch()) {
+    last_peering_reset = get_osdmap()->get_epoch();
+    reset_interval_flush();
+  }
 }
 
 struct FlushState {
@@ -4739,7 +4742,6 @@ void PG::start_peering_interval(
   const OSDMapRef osdmap = get_osdmap();
 
   set_last_peering_reset();
-  reset_interval_flush();
 
   vector<int> oldacting, oldup;
   int oldrole = get_role();
