@@ -647,27 +647,48 @@ void CDir::setup_scrubbing()
   }
 }
 
-bool CDir::mark_and_get_next_scrub_dentry(CDentry *done_dn,
-                                          dentry_key_t *next_dn)
+void CDir::mark_dentry_scrubbed(CDentry *done_dn)
 {
+  std::set<dentry_key_t>::iterator i;
   if (done_dn->get_projected_inode()->is_dir()) {
-    scrub_info()->directories_scrubbed.insert(done_dn->key());
-    if (!scrub_info()->directories_to_scrub.empty()) {
-      *next_dn = *scrub_info()->directories_to_scrub.begin();
-      scrub_info()->directories_to_scrub.erase(*next_dn);
-      return true;
-    }
+    i = scrub_info_p->directories_scrubbing.find(done_dn->key());
+    assert(i != scrub_info_p->directories_scrubbing.end());
+    scrub_info_p->directories_scrubbing.erase(i);
+    scrub_info_p->directories_scrubbed.insert(done_dn->key());
   }
-  if (!done_dn->get_projected_inode()->is_dir()) {
-    scrub_info()->others_scrubbed.insert(done_dn->key());
-    assert(scrub_info()->directories_to_scrub.empty());
+  else {
+    i = scrub_info_p->others_scrubbing.find(done_dn->key());
+    assert(i != scrub_info_p->others_scrubbing.end());
+    scrub_info_p->others_scrubbing.erase(i);
+    scrub_info_p->others_scrubbed.insert(done_dn->key());
   }
-  if (!scrub_info()->others_to_scrub.empty()) {
-    *next_dn = *scrub_info()->directories_to_scrub.begin();
-    scrub_info()->directories_to_scrub.erase(*next_dn);
+}
+
+bool CDir::get_next_scrub_dentry(dentry_key_t *next_dn)
+{
+  std::set<dentry_key_t>::iterator i;
+  if (!scrub_info_p->directories_to_scrub.empty()) {
+     i = scrub_info_p->directories_to_scrub.begin();
+    *next_dn = *i;
+    scrub_info_p->directories_to_scrub.erase(i);
+    scrub_info_p->directories_scrubbing.insert(*next_dn);
+    return true;
+  } else if (!scrub_info_p->others_to_scrub.empty()) {
+    i = scrub_info_p->others_to_scrub.begin();
+    *next_dn = *i;
+    scrub_info_p->others_to_scrub.erase(i);
+    scrub_info_p->others_scrubbing.insert(*next_dn);
     return true;
   }
   return false;
+}
+
+bool CDir::child_scrubs_remaining()
+{
+  return !(scrub_info_p->directories_to_scrub.empty() &&
+      scrub_info_p->directories_scrubbing.empty() &&
+      scrub_info_p->others_to_scrub.empty() &&
+      scrub_info_p->others_scrubbing.empty());
 }
 
 void CDir::add_to_bloom(CDentry *dn)

@@ -233,8 +233,10 @@ protected:
 
     bool directory_scrubbing;
     set<dentry_key_t> directories_to_scrub;
+    set<dentry_key_t> directories_scrubbing;
     set<dentry_key_t> directories_scrubbed;
     set<dentry_key_t> others_to_scrub;
+    set<dentry_key_t> others_scrubbing;
     set<dentry_key_t> others_scrubbed;
     scrub_info_t() : scrub_start_version(0), directory_scrubbing(false) {}
   };
@@ -377,12 +379,26 @@ protected:
    */
   void setup_scrubbing();
   /**
-   * Mark done_dn as completed scrubbing, and get the next dentry to scrub.
-   * Note that the next dentry might not be in cache any more, so you are
-   * responsible for fetching it!
-   * @return true if there is another dentry in this CDir to scrub.
+   * Mark done_dn as completed scrubbing. This will move it from a "scrubbing"
+   * to a "scrubbed" list.
+   * param done_dn The dentry to mark as scrubbed
    */
-  bool mark_and_get_next_scrub_dentry(CDentry *done_dn, dentry_key_t *next_dn);
+  void mark_dentry_scrubbed(CDentry *done_dn);
+  /**
+   * Get the next dentry to scrub. Note that the next dentry might not be in
+   * cache any more, so you are responsible for fetching it!
+   * This function will move the returned dn into a "scrubbing" list,
+   * so you cannot lose it.
+   * @param dn Pointer to fill in with the next dentry to scrub
+   * @return true if we provided a dentry to scrub
+   */
+  bool get_next_scrub_dentry(dentry_key_t *dn);
+  /**
+   * Find out if there are any remaining outstanding child dentry scrubs.
+   * @return true if there are dentries remaining to scrub, or
+   * currently scrubbing
+   */
+  bool child_scrubs_remaining();
 
   void add_to_bloom(CDentry *dn);
   bool is_in_bloom(const std::string& name);
