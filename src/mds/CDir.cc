@@ -628,6 +628,48 @@ void CDir::mark_inode_scrub_clean(CInode *in)
   }
 }
 
+bool CDir::setup_scrubbing()
+{
+  assert(is_complete());
+  assert(!scrub_data()->directory_scrubbing);
+  scrub_data()->directory_scrubbing = true;
+  scrub_data()->scrub_start_version = inode->get_version();
+  scrub_data()->scrub_start_time = ceph_clock_now(g_ceph_context);
+  scrub_data()->directories_scrubbed.clear();
+  scrub_data()->others_scrubbed.clear();
+  for (map_t::iterator i = begin();
+      i != end();
+      ++i) {
+    if (i->second->get_projected_inode()->is_dir())
+      scrub_data()->directories_to_scrub.insert(i->first);
+    else
+      scrub_data()->others_to_scrub.insert(i->first);
+  }
+}
+
+bool CDir::mark_and_get_next_scrub_dentry(CDentry *done_dn,
+                                          dentry_key_t *next_dn)
+{
+  if (done_dn->get_projected_inode()->is_dir()) {
+    scrub_data()->directories_scrubbed.insert(done_dn->key());
+    if (!scrub_data()->directories_to_scrub.empty()) {
+      *next_dn = scrub_data()->directories_to_scrub.begin();
+      scrub_data()->directories_to_scrub.erase(*next_dn);
+      return true;
+    }
+  }
+  if (!done_dn->get_projected_inode()->is_dir()) {
+    scrub_data()->others_scrubbed.insert(done_dn->key());
+    assert(scrub_data()->directories_to_scrub.empty());
+  }
+  if (!scrub_data()->others_to_scrub.empty()) {
+    *next_dn = scrub_data()->directories_to_scrub.begin();
+    scrub_data()->directories_to_scrub.erase(*next_dn);
+    return true;
+  }
+  return false;
+}
+
 void CDir::add_to_bloom(CDentry *dn)
 {
   if (!bloom) {

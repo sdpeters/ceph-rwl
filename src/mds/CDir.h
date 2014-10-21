@@ -228,7 +228,15 @@ protected:
   map_t items;       // non-null AND null
   struct scrub_data_t {
     std::map<dentry_key_t, CInode*> dirty_scrub_stamps;
-    map_t directories;
+    version_t scrub_start_version; // parent version we started at
+    utime_t scrub_start_time; // time we started scrub at
+
+    bool directory_scrubbing;
+    set<dentry_key_t> directories_to_scrub;
+    set<dentry_key_t> directories_scrubbed;
+    set<dentry_key_t> others_to_scrub;
+    set<dentry_key_t> others_scrubbed;
+    scrub_data_t() : scrub_start_version(0), directory_scrubbing(false) {}
   };
   scrub_data_t *scrub_data_p;
   scrub_data_t *scrub_data() {
@@ -362,6 +370,19 @@ protected:
 
   void mark_inode_scrub_dirty(CInode *in);
   void mark_inode_scrub_clean(CInode *in);
+
+  /**
+   * Prepare this CDir for scrubbing, by setting up the neccessary
+   * dentry information.
+   */
+  void setup_scrubbing();
+  /**
+   * Mark done_dn as completed scrubbing, and get the next dentry to scrub.
+   * Note that the next dentry might not be in cache any more, so you are
+   * responsible for fetching it!
+   * @return true if there is another dentry in this CDir to scrub.
+   */
+  bool mark_and_get_next_scrub_dentry(CDentry *done_dn, dentry_key_t *next_dn);
 
   void add_to_bloom(CDentry *dn);
   bool is_in_bloom(const std::string& name);
