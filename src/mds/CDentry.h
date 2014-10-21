@@ -143,8 +143,10 @@ public:
     bool scrub_recursive;
     /// we want to scrub direct children of this dentry, even if !recursive
     bool scrub_children;
+    /// are we already queued up for scrubbing?
+    bool queued_for_scrub;
     scrub_info_t() : scrub_parent(NULL), scrub_recursive(false),
-        scrub_children(false) {}
+        scrub_children(false), queued_for_scrub(false) {}
   };
   
 protected:
