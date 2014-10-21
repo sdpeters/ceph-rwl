@@ -25,11 +25,12 @@ class MDCache;
 class ScrubStack {
   elist<CDentry*> dentry_stack;
   int scrubs_in_progress;
+  ScrubStack *scrubstack; // hack for dout
 public:
   MDCache *mdcache;
   ScrubStack(MDCache *mdc) :
     dentry_stack(member_offset(CDentry, item_scrubqueue)),
-    scrubs_in_progress(0), mdcache(mdc) {}
+    scrubs_in_progress(0), scrubstack(this), mdcache(mdc) {}
   /**
    * Put a dentry on the top of the scrub stack, so it is the highest priority.
    * If there are other scrubs in progress, they will not continue scrubbing new
@@ -50,6 +51,7 @@ public:
   void enqueue_dentry_bottom(CDentry *dn, bool recursive, bool children) {
     enqueue_dentry(dn, recursive, children, false);
   }
+  void scrub_entry();
 private:
   /**
    * Put the dentry at either the top or bottom of the stack, with

@@ -16,39 +16,42 @@
 
 #include "ScrubStack.h"
 #include "mds/MDS.h"
+#include "mds/MDCache.h"
 #include "common/Formatter.h"
 #include "common/Continuation.h"
 
 #define dout_subsys ceph_subsys_mds
 #undef dout_prefix
-#define dout_prefix _prefix(_dout, mds)
+#define dout_prefix _prefix(_dout, scrubstack->mdcache->mds)
 static ostream& _prefix(std::ostream *_dout, MDS *mds) {
-  return *_dout << "mds." << mdcache->mds->get_nodeid() << ".scrubstack ";
+  return *_dout << "mds." << mds->get_nodeid() << ".scrubstack ";
 }
 
 void ScrubStack::push_dentry(CDentry *dentry)
 {
   assert(!dentry->item_scrubqueue.is_on_list());
   dentry->get(CDentry::PIN_SCRUBQUEUE);
-  dentry_stack.push_front(dentry->item_scrubqueue);
+  dentry_stack.push_front(&dentry->item_scrubqueue);
 }
 
 void ScrubStack::push_dentry_bottom(CDentry *dentry)
 {
   assert(!dentry->item_scrubqueue.is_on_list());
   dentry->get(CDentry::PIN_SCRUBQUEUE);
-  dentry_stack.push_back(dentry->item_scrubqueue);
+  dentry_stack.push_back(&dentry->item_scrubqueue);
 }
 
 CDentry *ScrubStack::pop_dentry()
 {
-  CDentry *dentry = *(dentry_stack.pop_front());
+  CDentry *dentry = dentry_stack.front();
+  dentry_stack.pop_front();
   dentry->put(CDentry::PIN_SCRUBQUEUE);
   return dentry;
 }
 
 void ScrubStack::scrub_entry()
 {
+  dout(0) << "scrub_entry" << dendl;
   class ScrubContinuation : public Continuation {
   public:
     ScrubStack *scrubstack;
@@ -63,6 +66,7 @@ void ScrubStack::scrub_entry()
     };
 
     ScrubContinuation(CDentry *dn, ScrubStack *ss) :
+      Continuation(NULL),
       scrubstack(ss), dentry(dn) {
       set_callback(START, static_cast<Continuation::stagePtr>(
           &ScrubContinuation::_start));
@@ -82,7 +86,8 @@ void ScrubStack::scrub_entry()
       in->set_scrub_start_stamp(now);
       version_t v = dentry->scrub_info()->scrub_parent->get_version();
       in->set_scrub_start_version(v);
-      mdcache->scrub_dentry(path, &validation, get_callback(CLEANUP));
+      scrubstack->mdcache->scrub_dentry(path, &validation,
+                                        get_callback(CHECK_VALIDATION));
       return false;
     }
 
@@ -113,7 +118,7 @@ void ScrubStack::scrub_entry()
         }
 
         if (!okay) {
-          Formatter f;
+          JSONFormatter f;
           CInode::dump_validation_results(validation, &f);
           stringstream ss;
           f.flush(ss);
@@ -121,15 +126,19 @@ void ScrubStack::scrub_entry()
           assert(0 == "failed scrub check");
         }
       }
-      return immediate(ADD_DENTRY, rval);
+      return immediate(LOOKUP_NEXT_DENTRY, rval);
     }
 
     bool _lookup_next_dentry(int rval) {
-      if (dentry_stack.top() == dentry->dir) {
-        // we should scrub the next dentry in this dir
-        CDir& dir = *dentry->dir;
+      CDentry *next = scrubstack->dentry_stack.front();
 
+      if (next->get_projected_inode()->is_dir() &&
+          next->get_projected_inode() ==
+          dentry->scrub_info()->scrub_parent->get_inode()) {
+        // we should scrub the next dentry in this dir
+        ;
       }
+      return true;
     }
   };
 
