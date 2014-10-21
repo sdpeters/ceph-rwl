@@ -49,6 +49,53 @@ CDentry *ScrubStack::pop_dentry()
   return dentry;
 }
 
+void ScrubStack::enqueue_dentry(CDentry *dn, bool recursive, bool children,
+                                bool front)
+{
+  CDentry::scrub_info_t *scrub_info = dn->scrub_info();
+  assert(!scrub_info->queued_for_scrub);
+  scrub_info->queued_for_scrub = true;
+  scrub_info->scrub_recursive = recursive;
+  scrub_info->scrub_children = children;
+
+  if (front)
+    push_dentry(dn);
+  else
+    push_dentry_bottom(dn);
+
+  kick_off_scrubs();
+}
+
+void ScrubStack::kick_off_scrubs()
+{
+  bool started_scrub = true;
+  while (scrubs_in_progress < max_scrubs_in_progress &&
+      started_scrub)
+    started_scrub = scrub_an_entry();
+}
+
+bool ScrubStack::scrub_an_entry()
+{
+  CDentry *front_dn = dentry_stack.front();
+  CDentry::linkage_t *linkage = front_dn->get_projected_linkage();
+  if (linkage->is_null()) {
+    dentry_stack.pop_front();
+    return scrub_an_entry();
+  }
+  assert(linkage->is_primary()); // TODO: FIXME
+  if (linkage->inode->is_dir()) {
+    // do clever things to grab the next one
+  } else {
+    // just scrub this node!
+
+  }
+}
+
+void ScrubStack::scrub_inode(CInode *in)
+{
+  // do stuff
+}
+
 void ScrubStack::scrub_entry()
 {
   dout(0) << "scrub_entry" << dendl;

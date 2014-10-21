@@ -620,6 +620,11 @@ public:
     mark_dirty_scrub_stamps();
   }
 
+  /**
+   *
+   */
+  void get_next_scrub_frag(frag_t *next_frag);
+
 
   void store(MDSInternalContextBase *fin);
   void _stored(version_t cv, Context *fin);

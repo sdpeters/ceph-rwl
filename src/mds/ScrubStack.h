@@ -22,15 +22,25 @@
 
 class MDCache;
 
+// TODO: make this a config option
+#define MAX_SCRUBS 5
+
 class ScrubStack {
+  /// The stack of dentries we want to scrub
   elist<CDentry*> dentry_stack;
+  /** The largest number of dentries we will try and scrub at once.
+   * This is not a guarantee that we will scrub that many; in particular
+   * we presently will not scrub more than one directory at a time. */
+  int max_scrubs_in_progress;
+  /// current number of dentries we're actually scrubbing
   int scrubs_in_progress;
   ScrubStack *scrubstack; // hack for dout
 public:
   MDCache *mdcache;
   ScrubStack(MDCache *mdc) :
     dentry_stack(member_offset(CDentry, item_scrubqueue)),
-    scrubs_in_progress(0), scrubstack(this), mdcache(mdc) {}
+    max_scrubs_in_progress(MAX_SCRUBS), scrubs_in_progress(0),
+    scrubstack(this), mdcache(mdc) {}
   /**
    * Put a dentry on the top of the scrub stack, so it is the highest priority.
    * If there are other scrubs in progress, they will not continue scrubbing new
@@ -52,6 +62,11 @@ public:
     enqueue_dentry(dn, recursive, children, false);
   }
   void scrub_entry();
+  /**
+   * Kick off as many scrubs as are appropriate, baed on the current
+   * state of the stack.
+   */
+  void kick_off_scrubs();
 private:
   /**
    * Put the dentry at either the top or bottom of the stack, with
@@ -70,6 +85,14 @@ private:
    * Pop the top dentry off the stack.
    */
   CDentry *pop_dentry();
+  /**
+   * Kick off the scrub of a single dentry, based on the state of
+   * the scrub stack.
+   * @returns True if we successfully selected a dentry to scrub;
+   * false otherwise (ie, don't call this again until something changes).
+   */
+  bool scrub_an_entry();
+
 };
 
 #endif /* SCRUBSTACK_H_ */
