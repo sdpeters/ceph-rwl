@@ -628,7 +628,7 @@ void CDir::mark_inode_scrub_clean(CInode *in)
   }
 }
 
-bool CDir::setup_scrubbing()
+void CDir::setup_scrubbing()
 {
   assert(is_complete());
   assert(!scrub_info()->directory_scrubbing);
