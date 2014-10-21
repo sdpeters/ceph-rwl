@@ -117,8 +117,10 @@ private:
 
     assert (!done || stages_in_flight.empty());
     if (done) {
-      on_finish->complete(rval);
-      on_finish = NULL;
+      if (on_finish) {
+        on_finish->complete(rval);
+        on_finish = NULL;
+      }
       delete this;
       return;
     }
