@@ -182,7 +182,7 @@ CDir::CDir(CInode *in, frag_t fg, MDCache *mdcache, bool auth) :
   first(2),
   dirty_rstat_inodes(member_offset(CInode, dirty_rstat_item)),
   projected_version(0),  item_dirty(this), item_new(this),
-  scrub_data_p(NULL),
+  scrub_info_p(NULL),
   num_head_items(0), num_head_null(0),
   num_snap_items(0), num_snap_null(0),
   num_dirty(0), committing_version(0), committed_version(0),
@@ -614,36 +614,36 @@ void CDir::mark_inode_scrub_dirty(CInode *in)
 {
   dentry_key_t key = in->parent->key();
   assert(items.count(key));
-  scrub_data()->dirty_scrub_stamps[key] = in;
+  scrub_info()->dirty_scrub_stamps[key] = in;
 }
 
 void CDir::mark_inode_scrub_clean(CInode *in)
 {
   dentry_key_t key = in->parent->key();
   assert(items.count(key));
-  scrub_data()->dirty_scrub_stamps.erase(key);
-  if (scrub_data()->dirty_scrub_stamps.empty()) {
-    delete scrub_data_p;
-    scrub_data_p = NULL;
+  scrub_info()->dirty_scrub_stamps.erase(key);
+  if (scrub_info()->dirty_scrub_stamps.empty()) {
+    delete scrub_info_p;
+    scrub_info_p = NULL;
   }
 }
 
 bool CDir::setup_scrubbing()
 {
   assert(is_complete());
-  assert(!scrub_data()->directory_scrubbing);
-  scrub_data()->directory_scrubbing = true;
-  scrub_data()->scrub_start_version = inode->get_version();
-  scrub_data()->scrub_start_time = ceph_clock_now(g_ceph_context);
-  scrub_data()->directories_scrubbed.clear();
-  scrub_data()->others_scrubbed.clear();
+  assert(!scrub_info()->directory_scrubbing);
+  scrub_info()->directory_scrubbing = true;
+  scrub_info()->scrub_start_version = inode->get_version();
+  scrub_info()->scrub_start_time = ceph_clock_now(g_ceph_context);
+  scrub_info()->directories_scrubbed.clear();
+  scrub_info()->others_scrubbed.clear();
   for (map_t::iterator i = begin();
       i != end();
       ++i) {
     if (i->second->get_projected_inode()->is_dir())
-      scrub_data()->directories_to_scrub.insert(i->first);
+      scrub_info()->directories_to_scrub.insert(i->first);
     else
-      scrub_data()->others_to_scrub.insert(i->first);
+      scrub_info()->others_to_scrub.insert(i->first);
   }
 }
 
@@ -651,20 +651,20 @@ bool CDir::mark_and_get_next_scrub_dentry(CDentry *done_dn,
                                           dentry_key_t *next_dn)
 {
   if (done_dn->get_projected_inode()->is_dir()) {
-    scrub_data()->directories_scrubbed.insert(done_dn->key());
-    if (!scrub_data()->directories_to_scrub.empty()) {
-      *next_dn = scrub_data()->directories_to_scrub.begin();
-      scrub_data()->directories_to_scrub.erase(*next_dn);
+    scrub_info()->directories_scrubbed.insert(done_dn->key());
+    if (!scrub_info()->directories_to_scrub.empty()) {
+      *next_dn = scrub_info()->directories_to_scrub.begin();
+      scrub_info()->directories_to_scrub.erase(*next_dn);
       return true;
     }
   }
   if (!done_dn->get_projected_inode()->is_dir()) {
-    scrub_data()->others_scrubbed.insert(done_dn->key());
-    assert(scrub_data()->directories_to_scrub.empty());
+    scrub_info()->others_scrubbed.insert(done_dn->key());
+    assert(scrub_info()->directories_to_scrub.empty());
   }
-  if (!scrub_data()->others_to_scrub.empty()) {
-    *next_dn = scrub_data()->directories_to_scrub.begin();
-    scrub_data()->directories_to_scrub.erase(*next_dn);
+  if (!scrub_info()->others_to_scrub.empty()) {
+    *next_dn = scrub_info()->directories_to_scrub.begin();
+    scrub_info()->directories_to_scrub.erase(*next_dn);
     return true;
   }
   return false;

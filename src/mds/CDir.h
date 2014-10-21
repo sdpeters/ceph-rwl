@@ -226,7 +226,7 @@ protected:
 
   // contents of this directory
   map_t items;       // non-null AND null
-  struct scrub_data_t {
+  struct scrub_info_t {
     std::map<dentry_key_t, CInode*> dirty_scrub_stamps;
     version_t scrub_start_version; // parent version we started at
     utime_t scrub_start_time; // time we started scrub at
@@ -236,13 +236,13 @@ protected:
     set<dentry_key_t> directories_scrubbed;
     set<dentry_key_t> others_to_scrub;
     set<dentry_key_t> others_scrubbed;
-    scrub_data_t() : scrub_start_version(0), directory_scrubbing(false) {}
+    scrub_info_t() : scrub_start_version(0), directory_scrubbing(false) {}
   };
-  scrub_data_t *scrub_data_p;
-  scrub_data_t *scrub_data() {
-    if (!scrub_data_p)
-      scrub_data_p = new scrub_data_t();
-    return scrub_data_p;
+  scrub_info_t *scrub_info_p;
+  scrub_info_t *scrub_info() {
+    if (!scrub_info_p)
+      scrub_info_p = new scrub_info_t();
+    return scrub_info_p;
   }
   unsigned num_head_items;
   unsigned num_head_null;
@@ -307,7 +307,7 @@ protected:
     remove_bloom();
     g_num_dir--;
     g_num_dirs++;
-    assert(!scrub_data_p); // can't evict with dirty data!
+    assert(!scrub_info_p); // can't evict with dirty data!
   }
 
 
