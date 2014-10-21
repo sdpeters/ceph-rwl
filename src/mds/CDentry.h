@@ -159,6 +159,7 @@ protected:
 public:
   elist<CDentry*>::item item_dirty;
   elist<CDentry*>::item item_stray;
+  elist<CDentry*>::item item_scrubqueue;
 
   scrub_info_t *scrub_info() {
     if (!scrub_info_p) {
@@ -221,6 +222,7 @@ public:
     linkage.remote_d_type = dt;
   }
   ~CDentry() {
+    assert(!item_scrubqueue.is_on_list());
     g_num_dn--;
     g_num_dns++;
   }
