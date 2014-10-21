@@ -27,6 +27,7 @@ libmds_la_SOURCES = \
 	mds/SessionMap.cc \
 	mds/MDSContext.cc \
 	mds/MDLog.cc \
+	mds/ScrubStack.cc \
 	common/TrackedOp.cc
 libmds_la_LIBADD = $(LIBOSDC)
 noinst_LTLIBRARIES += libmds.la
@@ -62,6 +63,7 @@ noinst_HEADERS += \
 	mds/ScatterLock.h \
 	mds/Server.h \
 	mds/SessionMap.h \
+	mds/ScrubStack.h \
 	mds/SimpleLock.h \
 	mds/SnapClient.h \
 	mds/SnapRealm.h \

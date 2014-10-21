@@ -120,6 +120,7 @@ class MDCache;
 class MDLog;
 class MDBalancer;
 class MDSInternalContextBase;
+class ScrubStack;
 
 class CInode;
 class CDir;
@@ -194,6 +195,8 @@ class MDS : public Dispatcher, public md_config_obs_t {
   OpTracker    op_tracker;
 
   Finisher finisher;
+
+  ScrubStack *scrubstack;
 
   int orig_argc;
   const char **orig_argv;

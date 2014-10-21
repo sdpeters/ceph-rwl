@@ -39,6 +39,7 @@
 #include "MDLog.h"
 #include "MDBalancer.h"
 #include "Migrator.h"
+#include "ScrubStack.h"
 
 #include "SnapServer.h"
 #include "SnapClient.h"
@@ -138,6 +139,7 @@ MDS::MDS(const std::string &n, Messenger *m, MonClient *mc) :
 
   server = new Server(this);
   locker = new Locker(this, mdcache);
+  scrubstack = new ScrubStack(mdcache);
 
   dispatch_depth = 0;
 
