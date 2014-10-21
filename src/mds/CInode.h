@@ -398,14 +398,17 @@ public:
 
   pair<int,int> inode_auth;
 
-  struct scrub_info_t {
+  struct scrub_stamp_info_t {
     utime_t scrub_start_stamp;   // time we started latest scrub (ephemeral)
     version_t scrub_start_version;// (parent) version we started latest scrub
     utime_t last_scrub_stamp;    // start time of complete scrub
     version_t last_scrub_version;// (parent) start version of last complete scrub
+    scrub_stamp_info_t() : scrub_start_version(0), last_scrub_version(0) {}
+  };
+  struct scrub_info_t : public scrub_stamp_info_t {
     bool last_scrub_dirty;       // the last scrub stamp and/or version are dirty
-    scrub_info_t() : scrub_start_version(0), last_scrub_version(0),
-        last_scrub_dirty(false) {}
+    map<frag_t, scrub_stamp_info_t> dirfrag_stamps;
+    scrub_info_t() : scrub_stamp_info_t(), last_scrub_dirty(false) {}
   };
   scrub_info_t *scrub_info_p;
 
