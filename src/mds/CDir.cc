@@ -653,7 +653,7 @@ bool CDir::mark_and_get_next_scrub_dentry(CDentry *done_dn,
   if (done_dn->get_projected_inode()->is_dir()) {
     scrub_info()->directories_scrubbed.insert(done_dn->key());
     if (!scrub_info()->directories_to_scrub.empty()) {
-      *next_dn = scrub_info()->directories_to_scrub.begin();
+      *next_dn = *scrub_info()->directories_to_scrub.begin();
       scrub_info()->directories_to_scrub.erase(*next_dn);
       return true;
     }
@@ -663,7 +663,7 @@ bool CDir::mark_and_get_next_scrub_dentry(CDentry *done_dn,
     assert(scrub_info()->directories_to_scrub.empty());
   }
   if (!scrub_info()->others_to_scrub.empty()) {
-    *next_dn = scrub_info()->directories_to_scrub.begin();
+    *next_dn = *scrub_info()->directories_to_scrub.begin();
     scrub_info()->directories_to_scrub.erase(*next_dn);
     return true;
   }
