@@ -1633,21 +1633,24 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
       promote_object(obc, missing_oid, oloc, op);
       return true;
     }
+
+    // always forward; it's faster (for this op)
+    do_cache_redirect(op, obc);
+
+    // promote too?
     switch (pool.info.min_read_recency_for_promote) {
     case 0:
-      promote_object(obc, missing_oid, oloc, op);
+      promote_object(obc, missing_oid, oloc, OpRequestRef());
       break;
     case 1:
       // Check if in the current hit set
       if (in_hit_set) {
-	promote_object(obc, missing_oid, oloc, op);
-      } else {
-	do_cache_redirect(op, obc);
+	promote_object(obc, missing_oid, oloc, OpRequestRef());
       }
       break;
     default:
       if (in_hit_set) {
-	promote_object(obc, missing_oid, oloc, op);
+	promote_object(obc, missing_oid, oloc, OpRequestRef());
       } else {
 	// Check if in other hit sets
 	map<time_t,HitSetRef>::iterator itor;
@@ -1659,9 +1662,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
 	  }
 	}
 	if (in_other_hit_sets) {
-	  promote_object(obc, missing_oid, oloc, op);
-	} else {
-	  do_cache_redirect(op, obc);
+	  promote_object(obc, missing_oid, oloc, OpRequestRef());
 	}
       }
       break;
