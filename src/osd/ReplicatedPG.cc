@@ -5668,7 +5668,7 @@ bool ReplicatedPG::handle_pull_response(
 	   << dendl;
   if (pop.version == eversion_t()) {
     // replica doesn't have it!
-    _failed_push(from, pop.soid);
+    _failed_push(from, pop.soid, pop.recovery_info.version);
     return false;
   }
 
@@ -6412,7 +6412,8 @@ void ReplicatedPG::sub_op_push(OpRequestRef op)
   return;
 }
 
-void ReplicatedPG::_failed_push(int from, const hobject_t &soid)
+void ReplicatedPG::_failed_push(
+  int from, const hobject_t &soid, eversion_t version)
 {
   map<hobject_t,set<int> >::iterator p = missing_loc.find(soid);
   if (p != missing_loc.end()) {
@@ -6427,6 +6428,10 @@ void ReplicatedPG::_failed_push(int from, const hobject_t &soid)
 	    << " but not in missing_loc ???" << dendl;
   }
 
+  peer_missing[from].add(
+    soid,
+    version,
+    eversion_t());
   finish_recovery_op(soid);  // close out this attempt,
   pull_from_peer[from].erase(soid);
   pulling.erase(soid);
