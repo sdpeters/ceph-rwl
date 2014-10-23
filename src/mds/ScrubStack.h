@@ -92,6 +92,10 @@ private:
    * false otherwise (ie, don't call this again until something changes).
    */
   bool scrub_an_entry();
+  /**
+   * Do the actual scrub of an inode.
+   */
+  void scrub_inode(CInode *in);
 
 };
 

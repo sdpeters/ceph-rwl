@@ -145,8 +145,11 @@ public:
     bool scrub_children;
     /// are we already queued up for scrubbing?
     bool queued_for_scrub;
+    /// Context* to activate when scrubbing finishes
+    Context *on_finish;
     scrub_info_t() : scrub_parent(NULL), scrub_recursive(false),
-        scrub_children(false), queued_for_scrub(false) {}
+        scrub_children(false), queued_for_scrub(false),
+        on_finish(NULL) {}
   };
   
 protected:
