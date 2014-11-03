@@ -24,6 +24,7 @@
 #include <sstream>
 #include <stdlib.h>
 #include <fstream>
+#include "json_spirit/json_spirit_reader.h"
 
 #include "common/Formatter.h"
 
@@ -1075,7 +1076,7 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
 
 int main(int argc, char **argv)
 {
-  string fspath, jpath, pgidstr, type, file;
+  string fspath, jpath, pgidstr, type, file, objectstr, really_remove;
   Formatter *formatter = new JSONFormatter(true);
 
   po::options_description desc("Allowed options");
@@ -1087,10 +1088,14 @@ int main(int argc, char **argv)
      "path to journal, mandatory")
     ("pgid", po::value<string>(&pgidstr),
      "PG id, mandatory except for import")
+    ("object", po::value<string>(&objectstr),
+     "object, mandatory for remove_object")
     ("type", po::value<string>(&type),
      "Arg is one of [info, log, remove, export, or import], mandatory")
     ("file", po::value<string>(&file),
      "path of file to export or import")
+    ("really-remove", po::value<string>(&really_remove),
+     "non-empty if you really want to remove")
     ("debug", "Enable diagnostic output to stderr")
     ;
 
@@ -1130,7 +1135,12 @@ int main(int argc, char **argv)
     cout << "Must provide pgid" << std::endl
 	 << desc << std::endl;
     return 1;
-  } 
+  }
+  if (type == "remove_object" && !vm.count("object")) {
+    cout << "Must provide object json" << std::endl
+	 << desc << std::endl;
+    return 1;
+  }
 
   file_fd = fd_none;
   if (type == "export") {
@@ -1159,7 +1169,7 @@ int main(int argc, char **argv)
   
   if ((fspath.length() == 0 || jpath.length() == 0) ||
       (type != "info" && type != "log" && type != "remove" && type != "export"
-        && type != "import") ||
+        && type != "import" && type != "remove_object") ||
       (type != "import" && pgidstr.length() == 0)) {
     cerr << "Invalid params" << std::endl;
     exit(1);
@@ -1312,6 +1322,46 @@ int main(int argc, char **argv)
     }
     if (ret == 0)
       cout << "Import successful" << std::endl;
+    goto out;
+  }
+
+  if (type == "remove_object") {
+    json_spirit::Value v;
+    hobject_t _to_remove;
+    try {
+      if (!json_spirit::read(objectstr, v))
+        throw std::runtime_error("bad json");
+      _to_remove.decode(v);
+    } catch (std::runtime_error& e) {
+      cout << "error parsing offset: " << e.what() << std::endl;
+      exit(1);
+    }
+    ghobject_t to_remove(_to_remove);
+    if (!vm.count("really-remove")) {
+      cout << "dry_run: would remove " << to_remove
+	   << " from collection " << pgid << std::endl;
+    } else {
+      cout << "removing " << to_remove
+	   << " from collection " << pgid << std::endl;
+
+      OSDriver driver(
+	fs,
+	coll_t(),
+	OSD::make_snapmapper_oid());
+      SnapMapper mapper(&driver, 0, 0, 0, pgid.shard);
+
+      ObjectStore::Transaction t;
+      OSDriver::OSTransaction _t(driver.get_transaction(&t));
+      int r = mapper.remove_oid(to_remove.hobj, &_t);
+      if (r != 0 && r != -ENOENT) {
+        assert(0);
+      }
+
+      t.remove(coll_t(pgid), to_remove);
+      fs->apply_transaction(t);
+      cout << "removed " << to_remove
+	   << " from collection " << pgid << std::endl;
+    }
     goto out;
   }
 
