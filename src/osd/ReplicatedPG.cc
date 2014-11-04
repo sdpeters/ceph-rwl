@@ -11706,7 +11706,9 @@ void ReplicatedPG::_scrub(ScrubMap& scrubmap)
     dout(20) << mode << "  " << soid << " " << oi << dendl;
 
     if (soid.is_snap()) {
-      stat.num_bytes += snapset.get_clone_bytes(soid.snap);
+      if (snapset.clone_size.count(soid.snap))
+	stat.num_bytes += snapset.get_clone_bytes(soid.snap);
+      // else, we'll complain below
     } else {
       stat.num_bytes += oi.size;
     }
