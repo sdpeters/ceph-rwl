@@ -2349,43 +2349,48 @@ ReplicatedPG::RepGather *ReplicatedPG::trim_object(const hobject_t &coid)
     for (p = snapset.clones.begin(); p != snapset.clones.end(); ++p)
       if (*p == last)
 	break;
-    assert(p != snapset.clones.end());
-    object_stat_sum_t delta;
-    delta.num_bytes -= snapset.get_clone_bytes(last);
+    if (p != snapset.clones.end()) {
+      object_stat_sum_t delta;
+      delta.num_bytes -= snapset.get_clone_bytes(last);
 
-    if (p != snapset.clones.begin()) {
-      // not the oldest... merge overlap into next older clone
-      vector<snapid_t>::iterator n = p - 1;
-      hobject_t prev_coid = coid;
-      prev_coid.snap = *n;
-      bool adjust_prev_bytes = is_present_clone(prev_coid);
+      if (p != snapset.clones.begin()) {
+	// not the oldest... merge overlap into next older clone
+	vector<snapid_t>::iterator n = p - 1;
+	hobject_t prev_coid = coid;
+	prev_coid.snap = *n;
+	bool adjust_prev_bytes = is_present_clone(prev_coid);
 
-      if (adjust_prev_bytes)
-	delta.num_bytes -= snapset.get_clone_bytes(*n);
+	if (adjust_prev_bytes)
+	  delta.num_bytes -= snapset.get_clone_bytes(*n);
 
-      snapset.clone_overlap[*n].intersection_of(
-	snapset.clone_overlap[*p]);
+	snapset.clone_overlap[*n].intersection_of(
+	  snapset.clone_overlap[*p]);
 
-      if (adjust_prev_bytes)
-	delta.num_bytes += snapset.get_clone_bytes(*n);
+	if (adjust_prev_bytes)
+	  delta.num_bytes += snapset.get_clone_bytes(*n);
+      }
+      delta.num_objects--;
+      if (coi.is_dirty())
+	delta.num_objects_dirty--;
+      if (coi.is_omap())
+	delta.num_objects_omap--;
+      if (coi.is_whiteout()) {
+	dout(20) << __func__ << " trimming whiteout on " << coid << dendl;
+	delta.num_whiteouts--;
+      }
+      delta.num_object_clones--;
+      info.stats.stats.add(delta, obc->obs.oi.category);
+
+      snapset.clones.erase(p);
+      snapset.clone_overlap.erase(last);
+      snapset.clone_size.erase(last);
+    } else {
+      osd->clog.error() << "osd." << osd->whoami << ": coid " << coid
+			<< " on pg " << info.pgid
+			<< "not found in head snapset, deleting";
     }
-    delta.num_objects--;
-    if (coi.is_dirty())
-      delta.num_objects_dirty--;
-    if (coi.is_omap())
-      delta.num_objects_omap--;
-    if (coi.is_whiteout()) {
-      dout(20) << __func__ << " trimming whiteout on " << coid << dendl;
-      delta.num_whiteouts--;
-    }
-    delta.num_object_clones--;
-    info.stats.stats.add(delta, obc->obs.oi.category);
     obc->obs.exists = false;
 
-    snapset.clones.erase(p);
-    snapset.clone_overlap.erase(last);
-    snapset.clone_size.erase(last);
-	
     ctx->log.push_back(
       pg_log_entry_t(
 	pg_log_entry_t::DELETE,
