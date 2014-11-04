@@ -11714,8 +11714,6 @@ void ReplicatedPG::_scrub(ScrubMap& scrubmap)
 		 << " snapset: " << snapset
 		 << " head: " << head
 		 << dendl;
-	assert(!snapset.clone_size.count(soid.snap) &&
-	       !snapset.clone_overlap.count(soid.snap));
       } else {
 	stat.num_bytes += snapset.get_clone_bytes(soid.snap);
       }
