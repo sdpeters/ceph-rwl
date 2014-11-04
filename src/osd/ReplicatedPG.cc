@@ -11749,7 +11749,9 @@ void ReplicatedPG::_scrub(ScrubMap& scrubmap)
     }
     if (!next_clone.is_min() && next_clone != soid) {
       osd->clog.error() << mode << " " << info.pgid << " " << soid
-			<< " expected clone " << next_clone;
+			<< " expected clone " << next_clone
+			<< " snapset " << snapset
+			<< " for head " << head;
       ++scrubber.shallow_errors;
     }
 
