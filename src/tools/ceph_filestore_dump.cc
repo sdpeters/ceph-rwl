@@ -1416,6 +1416,8 @@ int main(int argc, char **argv)
     SnapSet orig_ss = ss;
 
     cout << "original snapset: " << ss << std::endl;
+    cout << "original clone_overlap: " << ss.clone_overlap << std::endl;
+    cout << "original clone_size: " << ss.clone_size << std::endl;
 
     set<snapid_t> found_clones;
     for (vector<ghobject_t>::const_iterator i = objects.begin();
@@ -1484,6 +1486,12 @@ int main(int argc, char **argv)
 
     cout << "replacing " << orig_ss << " with "
 	 << ss << std::endl;
+    cout << "original clone_overlap: " << orig_ss.clone_overlap << std::endl;
+    cout << "original clone_size: " << orig_ss.clone_size << std::endl;
+    cout << "new clone_overlap: " << ss.clone_overlap << std::endl;
+    cout << "new clone_size: " << ss.clone_size << std::endl;
+
+
     ::encode(ss, ss_buf);
     t.setattr(
       coll_t(pgid),
@@ -1491,7 +1499,7 @@ int main(int argc, char **argv)
       SS_ATTR,
       ss_buf);
 
-    cout << "dry_run: would purge clones " << objects_to_purge
+    cout << "would purge clones " << objects_to_purge
 	 << std::endl;
     for (set<hobject_t>::const_iterator i = objects_to_purge.begin();
 	 i != objects_to_purge.end();
