@@ -1076,7 +1076,7 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
 
 int main(int argc, char **argv)
 {
-  string fspath, jpath, pgidstr, type, file, objectstr, really_remove;
+  string fspath, jpath, pgidstr, type, file, objectstr, really_do_it;
   Formatter *formatter = new JSONFormatter(true);
 
   po::options_description desc("Allowed options");
@@ -1094,8 +1094,8 @@ int main(int argc, char **argv)
      "Arg is one of [info, log, remove, export, or import], mandatory")
     ("file", po::value<string>(&file),
      "path of file to export or import")
-    ("really-remove", po::value<string>(&really_remove),
-     "non-empty if you really want to remove")
+    ("not-dry-run", po::value<string>(&really_do_it),
+     "dry run if not set")
     ("debug", "Enable diagnostic output to stderr")
     ;
 
@@ -1136,7 +1136,8 @@ int main(int argc, char **argv)
 	 << desc << std::endl;
     return 1;
   }
-  if (type == "remove_object" && !vm.count("object")) {
+  if ((type == "remove_object" || type == "fix_snapset") &&
+      !vm.count("object")) {
     cout << "Must provide object json" << std::endl
 	 << desc << std::endl;
     return 1;
@@ -1169,7 +1170,7 @@ int main(int argc, char **argv)
   
   if ((fspath.length() == 0 || jpath.length() == 0) ||
       (type != "info" && type != "log" && type != "remove" && type != "export"
-        && type != "import" && type != "remove_object") ||
+        && type != "import" && type != "remove_object" && type != "fix_snapset") ||
       (type != "import" && pgidstr.length() == 0)) {
     cerr << "Invalid params" << std::endl;
     exit(1);
@@ -1337,7 +1338,7 @@ int main(int argc, char **argv)
       exit(1);
     }
     ghobject_t to_remove(_to_remove);
-    if (!vm.count("really-remove")) {
+    if (!vm.count("not-dry-run")) {
       cout << "dry_run: would remove " << to_remove
 	   << " from collection " << pgid << std::endl;
     } else {
@@ -1361,6 +1362,161 @@ int main(int argc, char **argv)
       fs->apply_transaction(t);
       cout << "removed " << to_remove
 	   << " from collection " << pgid << std::endl;
+    }
+    goto out;
+  }
+
+  if (type == "fix_snapset") {
+    json_spirit::Value v;
+    hobject_t _to_fix;
+    try {
+      if (!json_spirit::read(objectstr, v))
+        throw std::runtime_error("bad json");
+      _to_fix.decode(v);
+    } catch (std::runtime_error& e) {
+      cout << "error parsing offset: " << e.what() << std::endl;
+      exit(1);
+    }
+    _to_fix.snap = CEPH_NOSNAP;
+    ghobject_t to_fix(_to_fix);
+
+    cout << "Attempting to fix attrs on " << to_fix << std::endl;
+
+    vector<ghobject_t> objects;
+    ghobject_t min = to_fix;
+    min.hobj.snap = 0;
+    ret = fs->collection_list_range(
+      coll_t(pgid),
+      min,
+      to_fix,
+      0,
+      &objects);
+    if (ret < 0) {
+      cout << "Error listing objects" << std::endl;
+      goto out;
+    }
+    ret = 0;
+    cout << "Found objects: " << objects << std::endl;
+
+    bufferlist ss_buf;
+    SnapSet ss;
+    ret = fs->getattr(
+      coll_t(pgid),
+      to_fix,
+      SS_ATTR,
+      ss_buf);
+    if (ret < 0) {
+      cout << "Error getting SS_ATTR" << std::endl;
+      goto out;
+    }
+    ret = 0;
+    bufferlist::iterator iter = ss_buf.begin();
+    ::decode(ss, iter);
+    ss_buf.clear();
+    SnapSet orig_ss = ss;
+
+    cout << "original snapset: " << ss << std::endl;
+
+    set<snapid_t> found_clones;
+    for (vector<ghobject_t>::const_iterator i = objects.begin();
+	 i != objects.end();
+	 ++i) {
+      assert(i->hobj.is_snap());
+      found_clones.insert(i->hobj.snap);
+    }
+
+    set<snapid_t> clones_to_purge;
+
+    vector<snapid_t> new_clones;
+    for (vector<snapid_t>::const_iterator i = ss.clones.begin();
+	 i != ss.clones.end();
+	 ++i) {
+      if (!found_clones.count(*i)) {
+	clones_to_purge.insert(*i);
+      } else {
+	new_clones.push_back(*i);
+      }
+    }
+    ss.clones.swap(new_clones);
+
+    for (map<snapid_t, interval_set<uint64_t> >::iterator i =
+	   ss.clone_overlap.begin();
+	 i != ss.clone_overlap.end();
+	 ) {
+      if (found_clones.count(i->first)) {
+	++i;
+      } else {
+	clones_to_purge.insert(i->first);
+	ss.clone_overlap.erase(i++);
+      }
+    }
+
+    for (map<snapid_t, uint64_t>::iterator i =
+	   ss.clone_size.begin();
+	 i != ss.clone_size.end();
+         ) {
+      if (found_clones.count(i->first)) {
+	++i;
+      } else {
+	clones_to_purge.insert(i->first);
+	ss.clone_size.erase(i++);
+      }
+    }
+
+    set<hobject_t> objects_to_purge;
+    for (set<snapid_t>::const_iterator i = clones_to_purge.begin();
+	 i != clones_to_purge.end();
+	 ++i) {
+      hobject_t obj = to_fix.hobj;
+      obj.snap = *i;
+      objects_to_purge.insert(obj);
+    }
+
+    OSDriver driver(
+      fs,
+      coll_t(),
+      OSD::make_snapmapper_oid());
+    SnapMapper mapper(&driver, 0, 0, 0, pgid.shard);
+    ObjectStore::Transaction t;
+    OSDriver::OSTransaction _t(driver.get_transaction(&t));
+
+    cout << "fixing: oid " << to_fix << std::endl;
+
+    cout << "replacing " << orig_ss << " with "
+	 << ss << std::endl;
+    ::encode(ss, ss_buf);
+    t.setattr(
+      coll_t(pgid),
+      to_fix,
+      SS_ATTR,
+      ss_buf);
+
+    cout << "dry_run: would purge clones " << objects_to_purge
+	 << std::endl;
+    for (set<hobject_t>::const_iterator i = objects_to_purge.begin();
+	 i != objects_to_purge.end();
+	 ++i) {
+      cout << "removing " << *i
+	   << " from collection " << pgid << std::endl;
+      int r = mapper.remove_oid(*i, &_t);
+      if (r != 0 && r != -ENOENT) {
+        assert(0);
+      }
+      t.remove(coll_t(pgid), *i);
+    }
+
+    if (!vm.count("not-dry-run")) {
+      JSONFormatter f(true);
+      t.dump(&f);
+      stringstream dstr;
+      f.flush(dstr);
+      cout << "Dry run, would apply transaction: "
+	   << dstr.str()
+	   << std::endl;
+    } else {
+      cout << "about to apply transaction" << std::endl;
+      fs->apply_transaction(t);
+      cout << "transaction applied" << std::endl;
     }
     goto out;
   }
