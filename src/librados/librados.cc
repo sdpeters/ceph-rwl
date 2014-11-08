@@ -3790,7 +3790,8 @@ struct C_WatchCB2 : public librados::WatchCtx2 {
     wcb(arg, notify_id, cookie, notifier_gid, bl.c_str(), bl.length());
   }
   void handle_error(uint64_t cookie, int err) {
-    errcb(arg, cookie, err);
+    if (errcb)
+      errcb(arg, cookie, err);
   }
 };
 
