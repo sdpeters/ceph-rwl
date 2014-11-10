@@ -1267,8 +1267,16 @@ int OSDMap::apply_incremental(const Incremental &inc)
       osd_xinfo[i->first].down_stamp = modified;
     }
     if ((osd_state[i->first] & CEPH_OSD_EXISTS) &&
-	(s & CEPH_OSD_EXISTS))
+	(s & CEPH_OSD_EXISTS)) {
+      // zero osd data in the map
       (*osd_uuid)[i->first] = uuid_d();
+      osd_info[i->first] = osd_info_t();
+      osd_xinfo[i->first] = osd_xinfo_t();
+      osd_addrs->client_addr[i->first].reset();
+      osd_addrs->cluster_addr[i->first].reset();
+      osd_addrs->hb_back_addr[i->first].reset();
+      osd_addrs->hb_front_addr[i->first].reset();
+    }
     osd_state[i->first] ^= s;
   }
   for (map<int32_t,entity_addr_t>::const_iterator i = inc.new_up_client.begin();

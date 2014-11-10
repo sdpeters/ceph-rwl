@@ -4902,6 +4902,7 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
 	} else {
 	  pending_inc.new_state[osd] = osdmap.get_state(osd);
           pending_inc.new_uuid[osd] = uuid_d();
+          pending_inc.new_weight[osd] = CEPH_OSD_OUT;
 	  pending_metadata_rm.insert(osd);
 	  if (any) {
 	    ss << ", osd." << osd;
