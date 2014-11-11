@@ -661,21 +661,15 @@ static bool dump_string(const char *field_name, bufferlist& bl, Formatter *f)
   return true;
 }
 
-static int object_scrub(string& bucket_name, string& object, Formatter *f)
+static int object_scrub(rgw_bucket& bucket, string& object, Formatter *f)
 {
-  rgw_bucket bucket;
-  int ret = init_bucket(bucket_name, bucket);
-  if (ret < 0) {
-    cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
-    return -ret;
-  }
   rgw_obj obj(bucket, object);
 
   void *handle;
   uint64_t obj_size;
   map<string, bufferlist> attrs;
   void *obj_ctx = store->create_context(NULL);
-  ret = store->prepare_get_obj(obj_ctx, obj, NULL, NULL, &attrs, NULL,
+  int ret = store->prepare_get_obj(obj_ctx, obj, NULL, NULL, &attrs, NULL,
                                NULL, NULL, NULL, NULL, NULL, &obj_size, NULL, &handle, NULL);
   store->finish_get_obj(&handle);
   store->destroy_context(obj_ctx);
@@ -698,7 +692,8 @@ static int object_scrub(string& bucket_name, string& object, Formatter *f)
 
     try {
       ::decode(manifest, biter);
-      int r = store->scrub_manifest(bucket, manifest, obj_size, 8, &reason);
+#define SCRUB_CONCURRENT_IO 8
+      int r = store->scrub_manifest(bucket, manifest, obj_size, SCRUB_CONCURRENT_IO, &reason);
       if (r < 0) {
         dout(0) << "failed to validate manifest: obj=" << obj << dendl;
         ::encode_json("success", false, f);
@@ -715,6 +710,66 @@ static int object_scrub(string& bucket_name, string& object, Formatter *f)
   }
 
 done:
+  f->close_section();
+  f->flush(cout);
+
+  return 0;
+}
+
+static int object_scrub(string& bucket_name, string& object, Formatter *f)
+{
+  rgw_bucket bucket;
+  int ret = init_bucket(bucket_name, bucket);
+  if (ret < 0) {
+    cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
+    return -ret;
+  }
+  return object_scrub(bucket, object, f);
+}
+
+static int bucket_scrub(string& bucket_name, Formatter *f)
+{
+  rgw_bucket bucket;
+  int ret = init_bucket(bucket_name, bucket);
+  if (ret < 0) {
+    cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
+    return -ret;
+  }
+  f->open_array_section("entries");
+  bool truncated;
+  int count = 0;
+  int max_entries = 1000;
+
+  string prefix;
+  string delim;
+  vector<RGWObjEnt> result;
+  map<string, bool> common_prefixes;
+  string ns;
+
+  string marker;
+
+  do {
+    list<rgw_bi_log_entry> entries;
+    ret = store->list_objects(bucket, max_entries, prefix, delim,
+                              marker, NULL, result, common_prefixes, true,
+                              ns, false, &truncated, NULL);
+    if (ret < 0) {
+      cerr << "ERROR: store->list_objects(): " << cpp_strerror(-ret) << std::endl;
+      return ret;
+    }
+
+    count += result.size();
+
+    for (vector<RGWObjEnt>::iterator iter = result.begin(); iter != result.end(); ++iter) {
+      RGWObjEnt& entry = *iter;
+
+      ret = object_scrub(bucket, entry.name, f);
+
+      marker = entry.name;
+    }
+    f->flush(cout);
+  } while (truncated);
+
   f->close_section();
   f->flush(cout);
 
@@ -1849,7 +1904,16 @@ next:
   }
 
   if (opt_cmd == OPT_OBJECT_SCRUB) {
-    int ret = object_scrub(bucket_name, object, formatter);
+    if (bucket_name.empty()) {
+      cerr << "ERROR: bucket not specified" << std::endl;
+      return -EINVAL;
+    }
+    int ret;
+    if (!object.empty()) {
+      ret = object_scrub(bucket_name, object, formatter);
+    } else {
+      ret = bucket_scrub(bucket_name, formatter);
+    }
     if (ret < 0) {
       cerr << "ERROR: object scrub failed" << std::endl;
       return 1;
