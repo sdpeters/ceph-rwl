@@ -2525,6 +2525,97 @@ bool RGWRados::aio_completed(void *handle)
   return c->is_complete();
 }
 
+int RGWRados::scrub_manifest(rgw_bucket& bucket, RGWObjManifest& manifest, uint64_t reported_size, int max_io, string *reason)
+{
+  if (manifest.obj_size != reported_size) {
+    ldout(cct, 0) << __func__ << "(): manifest.size (" << manifest.obj_size << ") != reported_size (" << reported_size << ")" << dendl;
+    return -EIO;
+  }
+
+
+  map<uint64_t, RGWObjManifestPart>::iterator iter = manifest.objs.begin();
+  int i;
+
+  int total_ios = manifest.objs.size();
+
+  AioCompletion *completions[total_ios];
+  uint64_t expected_sizes[total_ios];
+  uint64_t sizes[total_ios];
+  int rets[total_ios];
+
+  librados::IoCtx io_ctx;
+  int ret = open_bucket_data_ctx(bucket, io_ctx);
+  if (ret < 0)
+    return ret;
+
+  int ci = 0;
+
+  ret = 0;
+  stringstream ss;
+
+  for (i = 0; iter != manifest.objs.end(); i++, iter++) {
+    RGWObjManifestPart& part = iter->second;
+    expected_sizes[i] = part.size;
+    rgw_obj& read_obj = part.loc;
+    std::string oid, key;
+    get_obj_bucket_and_oid_key(read_obj, bucket, oid, key);
+
+    io_ctx.locator_set_key(key);
+
+    ObjectReadOperation op;
+    op.stat(&sizes[i], NULL, NULL);
+
+    AioCompletion *c = librados::Rados::aio_create_completion(NULL, NULL, NULL);
+    int r = io_ctx.aio_operate(oid, c, &op, NULL);
+    if (r < 0) {
+      ss << "io_ctx.operate(oid=" << oid << ") returned r=" << r;
+      ret = r;
+      break;
+    }
+    completions[i] = c;
+
+    if (i > max_io) {
+      c = completions[ci];
+      c->wait_for_complete();
+      rets[ci] = c->get_return_value();
+      c->release();
+      ci++;
+    }
+  }
+
+  for (; ci < i; ci++) {
+    AioCompletion *c = completions[ci];
+    c->wait_for_complete();
+    c->wait_for_complete();
+    rets[ci] = c->get_return_value();
+    c->release();
+  }
+
+  if (ret < 0) {
+    goto done_err;
+  }
+
+  for (i = 0, iter = manifest.objs.begin(); iter != manifest.objs.end(); i++, iter++) {
+    ret = rets[i];
+    if (ret < 0) {
+      ss << "failed reading loc=" << iter->second.loc << " ret=" << rets[i];
+      goto done_err;
+    }
+    if (sizes[i] < expected_sizes[i]) {
+      ret = -EIO;
+      ss << "expected size mismatch for part loc=" << iter->second.loc << " expected_size=" << expected_sizes[0] << " actual_size=" << sizes[i];
+      goto done_err;
+    }
+  }
+
+  return 0;
+
+done_err:
+  *reason = ss.str();
+  ldout(cct, 0) << "ERROR: " << __func__ << "(): " << *reason << dendl;
+  return ret;
+}
+
 class RGWRadosPutObj : public RGWGetDataCB
 {
   rgw_obj obj;

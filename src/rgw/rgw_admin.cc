@@ -201,6 +201,7 @@ enum {
   OPT_OBJECT_RM,
   OPT_OBJECT_UNLINK,
   OPT_OBJECT_STAT,
+  OPT_OBJECT_SCRUB,
   OPT_GC_LIST,
   OPT_GC_PROCESS,
   OPT_REGION_GET,
@@ -351,6 +352,8 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       return OPT_OBJECT_UNLINK;
     if (strcmp(cmd, "stat") == 0)
       return OPT_OBJECT_STAT;
+    if (strcmp(cmd, "scrub") == 0)
+      return OPT_OBJECT_SCRUB;
   } else if (strcmp(prev_cmd, "region") == 0) {
     if (strcmp(cmd, "get") == 0)
       return OPT_REGION_GET;
@@ -658,6 +661,65 @@ static bool dump_string(const char *field_name, bufferlist& bl, Formatter *f)
   return true;
 }
 
+static int object_scrub(string& bucket_name, string& object, Formatter *f)
+{
+  rgw_bucket bucket;
+  int ret = init_bucket(bucket_name, bucket);
+  if (ret < 0) {
+    cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
+    return -ret;
+  }
+  rgw_obj obj(bucket, object);
+
+  void *handle;
+  uint64_t obj_size;
+  map<string, bufferlist> attrs;
+  void *obj_ctx = store->create_context(NULL);
+  ret = store->prepare_get_obj(obj_ctx, obj, NULL, NULL, &attrs, NULL,
+                               NULL, NULL, NULL, NULL, NULL, &obj_size, NULL, &handle, NULL);
+  store->finish_get_obj(&handle);
+  store->destroy_context(obj_ctx);
+  if (ret < 0) {
+    cerr << "ERROR: failed to stat object, returned error: " << cpp_strerror(-ret) << std::endl;
+    return 1;
+  }
+  f->open_object_section("object");
+  ::encode_json("name", object, f);
+  ::encode_json("size", obj_size, f);
+
+  map<string, bufferlist>::iterator iter = attrs.find(RGW_ATTR_MANIFEST);
+  bool manifest_exists = (iter != attrs.end());
+
+  if (manifest_exists) {
+    bufferlist& bl = iter->second;
+    bufferlist::iterator biter = bl.begin();
+    RGWObjManifest manifest;
+    string reason;
+
+    try {
+      ::decode(manifest, biter);
+      int r = store->scrub_manifest(bucket, manifest, obj_size, 8, &reason);
+      if (r < 0) {
+        dout(0) << "failed to validate manifest: obj=" << obj << dendl;
+        ::encode_json("success", false, f);
+        ::encode_json("failure_reason", reason, f);
+        goto done;
+      }
+    } catch (buffer::error& err) {
+      dout(0) << "ERROR: failed to decode manifest" << dendl;
+      ::encode_json("success", false, f);
+      ::encode_json("failure_reason", reason, f);
+      goto done;
+    }
+    ::encode_json("success", true, f);
+  }
+
+done:
+  f->close_section();
+  f->flush(cout);
+
+  return 0;
+}
 
 int main(int argc, char **argv) 
 {
@@ -1784,6 +1846,14 @@ next:
     } while (truncated);
     formatter->close_section();
     formatter->flush(cout);
+  }
+
+  if (opt_cmd == OPT_OBJECT_SCRUB) {
+    int ret = object_scrub(bucket_name, object, formatter);
+    if (ret < 0) {
+      cerr << "ERROR: object scrub failed" << std::endl;
+      return 1;
+    }
   }
 
   if (opt_cmd == OPT_GC_PROCESS) {

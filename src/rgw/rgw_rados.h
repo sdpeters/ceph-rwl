@@ -1044,6 +1044,9 @@ public:
               off_t ofs, size_t len, bool exclusive);
   virtual int aio_put_obj_data(void *ctx, rgw_obj& obj, bufferlist& bl,
                                off_t ofs, bool exclusive, void **handle);
+
+  int scrub_manifest(rgw_bucket& bucket, RGWObjManifest& manifest, uint64_t reported_size, int max_io, string *reason);
+
   /* note that put_obj doesn't set category on an object, only use it for none user objects */
   int put_system_obj(void *ctx, rgw_obj& obj, const char *data, size_t len, bool exclusive,
               time_t *mtime, map<std::string, bufferlist>& attrs, RGWObjVersionTracker *objv_tracker,
