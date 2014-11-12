@@ -519,8 +519,16 @@ void PGMap::stat_osd_sub(const osd_stat_t &s)
 
 epoch_t PGMap::calc_min_last_epoch_clean() const
 {
-  if (pg_stat.empty())
-    return 0;
+  if (pg_stat.empty()) {
+    // we are interested in this info if we're running monitors and
+    // need to debug them.  We are not interested in this if we are
+    // being used from a test instance and we don't have a context.
+    if (g_ceph_context) {
+      dout(15) << __func__ << " empty pg_stat, clean at "
+               << last_osdmap_epoch << dendl;
+    }
+    return last_osdmap_epoch;
+  }
   ceph::unordered_map<pg_t,pg_stat_t>::const_iterator p = pg_stat.begin();
   epoch_t min = p->second.get_effective_last_epoch_clean();
   for (++p; p != pg_stat.end(); ++p) {
