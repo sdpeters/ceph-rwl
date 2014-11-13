@@ -974,7 +974,8 @@ int rados_ioctx_snap_rollback(rados_ioctx_t io, const char *oid,
  * @warning Deprecated: Use rados_ioctx_snap_rollback() instead
  */
 int rados_rollback(rados_ioctx_t io, const char *oid,
-		   const char *snapname);
+		   const char *snapname)
+  __attribute__((deprecated));
 
 /**
  * Set the snapshot from which reads are performed.
