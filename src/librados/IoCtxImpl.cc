@@ -1103,7 +1103,7 @@ int librados::IoCtxImpl::notify_ack(
 
 int librados::IoCtxImpl::watch_check(uint64_t cookie)
 {
-  Mutex::Locker(*lock);
+  Mutex::Locker l(*lock);
   return client->watch_check(cookie);
 }
 
