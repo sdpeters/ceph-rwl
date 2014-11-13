@@ -81,8 +81,6 @@ run()
     m_watch_sem->post();
   }
 
-#pragma GCC diagnostic pop
-
   m_notify_sem->wait();
   m_notify_sem->post();
 
@@ -96,6 +94,8 @@ run()
   rados_unwatch(io_ctx, m_obj_name.c_str(), handle);
   rados_ioctx_destroy(io_ctx);
   rados_shutdown(cl);
+
+#pragma GCC diagnostic pop
 
   return r;
 }

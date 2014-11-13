@@ -1079,7 +1079,7 @@ int librados::IoCtxImpl::watch(const object_t& oid,
 
   if (r < 0) {
     lock->Lock();
-    client->unregister_watch_notify_callback(*cookie); // destroys wc
+    client->unregister_watch_notify_callback(*cookie, NULL); // destroys wc
     lock->Unlock();
   }
 
@@ -1101,7 +1101,13 @@ int librados::IoCtxImpl::notify_ack(
   return 0;
 }
 
-int librados::IoCtxImpl::unwatch(const object_t& oid, uint64_t cookie)
+int librados::IoCtxImpl::watch_check(uint64_t cookie)
+{
+  Mutex::Locker(*lock);
+  return client->watch_check(cookie);
+}
+
+int librados::IoCtxImpl::unwatch(uint64_t cookie)
 {
   bufferlist inbl, outbl;
 
@@ -1113,7 +1119,12 @@ int librados::IoCtxImpl::unwatch(const object_t& oid, uint64_t cookie)
   version_t ver;
   lock->Lock();
 
-  client->unregister_watch_notify_callback(cookie);
+  object_t oid;
+  r = client->unregister_watch_notify_callback(cookie, &oid);
+  if (r < 0) {
+    lock->Unlock();
+    return r;
+  }
 
   ::ObjectOperation wr;
   prepare_assert_ops(&wr);
@@ -1191,7 +1202,7 @@ int librados::IoCtxImpl::notify(const object_t& oid, bufferlist& bl,
   ldout(client->cct, 10) << __func__ << " completed notify (linger op " << wc->linger_id << "), unregistering" << dendl;
 
   lock->Lock();
-  client->unregister_watch_notify_callback(cookie);   // destroys wc
+  client->unregister_watch_notify_callback(cookie, NULL);   // destroys wc
   lock->Unlock();
 
   set_sync_op_version(objver);

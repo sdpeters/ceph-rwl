@@ -1920,11 +1920,24 @@ int rados_watch2(rados_ioctx_t io, const char *o, uint64_t *handle,
  * watch. This should be called to clean up unneeded watchers.
  *
  * @param io the pool the object is in
- * @param o the name of the watched object
+ * @param o the name of the watched object (ignored)
  * @param handle which watch to unregister
  * @returns 0 on success, negative error code on failure
  */
-int rados_unwatch(rados_ioctx_t io, const char *o, uint64_t handle);
+int rados_unwatch(rados_ioctx_t io, const char *o, uint64_t handle)
+  __attribute__((deprecated));
+
+/**
+ * Unregister an interest in an object
+ *
+ * Once this completes, no more notifies will be sent to us for this
+ * watch. This should be called to clean up unneeded watchers.
+ *
+ * @param io the pool the object is in
+ * @param handle which watch to unregister
+ * @returns 0 on success, negative error code on failure
+ */
+int rados_unwatch2(rados_ioctx_t io, uint64_t handle);
 
 /**
  * Sychronously notify watchers of an object
