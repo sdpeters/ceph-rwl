@@ -201,7 +201,7 @@ class RGWCache  : public T
   }
 
   int distribute_cache(const string& normal_name, rgw_obj& obj, ObjectCacheInfo& obj_info, int op);
-  int watch_cb(int opcode, uint64_t ver, bufferlist& bl);
+  int watch_cb(bufferlist& bl);
 public:
   RGWCache() {}
 
@@ -348,9 +348,9 @@ int RGWCache<T>::set_attr(void *ctx, rgw_obj& obj, const char *attr_name, buffer
       cache.put(name, info, NULL);
       int r = distribute_cache(name, obj, info, UPDATE_OBJ);
       if (r < 0)
-        mydout(0) << "ERROR: failed to distribute cache for " << obj << dendl;
+        mydout(0) << "WARNING: failed to distribute cache for " << obj << dendl;
     } else {
-     cache.remove(name);
+      cache.remove(name);
     }
   }
 
@@ -387,9 +387,9 @@ int RGWCache<T>::set_attrs(void *ctx, rgw_obj& obj,
       cache.put(name, info, NULL);
       int r = distribute_cache(name, obj, info, UPDATE_OBJ);
       if (r < 0)
-        mydout(0) << "ERROR: failed to distribute cache for " << obj << dendl;
+        mydout(0) << "WARNING: failed to distribute cache for " << obj << dendl;
     } else {
-     cache.remove(name);
+      cache.remove(name);
     }
   }
 
@@ -431,9 +431,9 @@ int RGWCache<T>::put_obj_meta_impl(void *ctx, rgw_obj& obj, uint64_t size, time_
       cache.put(name, info, NULL);
       int r = distribute_cache(name, obj, info, UPDATE_OBJ);
       if (r < 0)
-        mydout(0) << "ERROR: failed to distribute cache for " << obj << dendl;
+        mydout(0) << "WARNING: failed to distribute cache for " << obj << dendl;
     } else {
-     cache.remove(name);
+      cache.remove(name);
     }
   }
 
@@ -466,9 +466,9 @@ int RGWCache<T>::put_obj_data(void *ctx, rgw_obj& obj, const char *data,
       cache.put(name, info, NULL);
       int r = distribute_cache(name, obj, info, UPDATE_OBJ);
       if (r < 0)
-        mydout(0) << "ERROR: failed to distribute cache for " << obj << dendl;
+        mydout(0) << "WARNING: failed to distribute cache for " << obj << dendl;
     } else {
-     cache.remove(name);
+      cache.remove(name);
     }
   }
 
@@ -554,7 +554,7 @@ int RGWCache<T>::distribute_cache(const string& normal_name, rgw_obj& obj, Objec
 }
 
 template <class T>
-int RGWCache<T>::watch_cb(int opcode, uint64_t ver, bufferlist& bl)
+int RGWCache<T>::watch_cb(bufferlist& bl)
 {
   RGWCacheNotifyInfo info;
 

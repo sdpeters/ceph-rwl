@@ -1766,7 +1766,7 @@ public:
   virtual int init_watch();
   virtual void finalize_watch();
   virtual int distribute(const string& key, bufferlist& bl);
-  virtual int watch_cb(int opcode, uint64_t ver, bufferlist& bl) { return 0; }
+  virtual int watch_cb(bufferlist& bl) { return 0; }
   void pick_control_oid(const string& key, string& notify_oid);
 
   void *create_context(void *user_ctx) {
