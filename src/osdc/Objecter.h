@@ -44,6 +44,7 @@ class MPoolOpReply;
 class MGetPoolStatsReply;
 class MStatfsReply;
 class MCommandReply;
+class MWatchNotify;
 
 class PerfCounters;
 
@@ -1456,6 +1457,19 @@ public:
 
   // -- lingering ops --
 
+  struct WatchContext {
+    // this simply mirrors librados WatchCtx2
+    virtual void handle_notify(uint64_t notify_id,
+			       uint64_t cookie,
+			       uint64_t notifier_id,
+			       bufferlist& bl) = 0;
+    virtual void handle_failed_notify(uint64_t notify_id,
+				      uint64_t cookie,
+				      uint64_t notifier_id) = 0;
+    virtual void handle_error(uint64_t cookie, int err) = 0;
+    virtual ~WatchContext() {}
+  };
+
   struct LingerOp : public RefCountedObject {
     uint64_t linger_id;
 
@@ -1470,7 +1484,7 @@ public:
     bufferlist *poutbl;
     version_t *pobjver;
 
-    uint64_t cookie;   ///< non-zero if this is a watch
+    bool is_watch;
     utime_t watch_valid_thru; ///< send time for last acked ping
     int last_error;  ///< error from last failed ping|reconnect, if any
     Mutex watch_lock;
@@ -1478,7 +1492,13 @@ public:
 
     bool registered;
     bool canceled;
-    Context *on_reg_ack, *on_reg_commit, *on_error;
+    Context *on_reg_ack, *on_reg_commit;
+
+    // we trigger these from an async finisher
+    Context *on_notify_finish;
+    bufferlist *notify_result_bl;
+
+    WatchContext *watch_context;
 
     OSDSession *session;
 
@@ -1490,13 +1510,15 @@ public:
 		 target(object_t(), object_locator_t(), 0),
 		 snap(CEPH_NOSNAP),
 		 poutbl(NULL), pobjver(NULL),
-		 cookie(0),
+		 is_watch(false),
 		 last_error(0),
 		 watch_lock("Objecter::LingerOp::watch_lock"),
 		 registered(false),
 		 canceled(false),
 		 on_reg_ack(NULL), on_reg_commit(NULL),
-		 on_error(NULL),
+		 on_notify_finish(NULL),
+		 notify_result_bl(NULL),
+		 watch_context(NULL),
 		 session(NULL),
 		 register_tid(0),
 		 ping_tid(0),
@@ -1813,6 +1835,7 @@ public:
   bool ms_can_fast_dispatch(Message *m) const {
     switch (m->get_type()) {
     case CEPH_MSG_OSD_OPREPLY:
+    case CEPH_MSG_WATCH_NOTIFY:
       return true;
     default:
       return false;
@@ -1823,6 +1846,7 @@ public:
   }
 
   void handle_osd_op_reply(class MOSDOpReply *m);
+  void handle_watch_notify(class MWatchNotify *m);
   void handle_osd_map(class MOSDMap *m);
   void wait_for_osd_map();
 
@@ -1978,12 +2002,12 @@ public:
 
   // caller owns a ref
   LingerOp *linger_register(const object_t& oid, const object_locator_t& oloc,
-			    int flags, uint64_t *pcookie);
+			    int flags);
   ceph_tid_t linger_watch(LingerOp *info,
 			  ObjectOperation& op,
 			  const SnapContext& snapc, utime_t mtime,
-			  bufferlist& inbl, uint64_t cookie,
-			  Context *onack, Context *onfinish, Context *onerror,
+			  bufferlist& inbl,
+			  Context *onack, Context *onfinish,
 			  version_t *objver);
   ceph_tid_t linger_notify(LingerOp *info,
 			   ObjectOperation& op,
@@ -1994,6 +2018,8 @@ public:
   int linger_check(LingerOp *info);
   void linger_cancel(LingerOp *info);  // releases a reference
   void _linger_cancel(LingerOp *info);
+
+  void _do_watch_notify(LingerOp *info, MWatchNotify *m);
 
   /**
    * set up initial ops in the op vector, and allocate a final op slot.
