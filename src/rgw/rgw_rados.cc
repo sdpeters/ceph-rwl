@@ -4084,7 +4084,7 @@ int RGWRados::get_olh_target_state(RGWObjectCtx& obj_ctx, rgw_obj& obj, RGWObjSt
 
 int RGWRados::get_obj_state_impl(RGWObjectCtx *rctx, rgw_obj& obj, RGWObjState **state, RGWObjVersionTracker *objv_tracker, bool follow_olh)
 {
-  bool need_follow_olh = follow_olh & !obj.have_instance();
+  bool need_follow_olh = follow_olh && !obj.have_instance();
 
   RGWObjState *s = rctx->get_state(obj);
   ldout(cct, 20) << "get_obj_state: rctx=" << (void *)rctx << " obj=" << obj << " state=" << (void *)s << " s->prefetch_data=" << s->prefetch_data << dendl;
