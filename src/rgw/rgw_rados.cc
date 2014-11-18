@@ -1223,17 +1223,6 @@ public:
     rados->watch_cb(bl);
   }
 
-  void handle_failed_notify(uint64_t notify_id,
-			    uint64_t cookie,
-			    uint64_t notifier_id) {
-    ldout(rados->ctx(), 10) << "RGWWatcher::handle_failed_notify()"
-			    << " cookie " << cookie
-			    << " notify_id " << notify_id
-			    << " from client." << notifier_id
-			    << dendl;
-    // do nothing
-  }
-
   void handle_error(uint64_t cookie, int err) {
     ldout(rados->ctx(), 10) << "RGWWatcher::handle_error()"
 			    << " cookie " << cookie
