@@ -2648,6 +2648,12 @@ int main(int argc, char **argv)
         } else {
           int fd;
           if (vm.count("arg1") == 0 || arg1 == "-") {
+            // Since read_fd() doesn't handle ^D from a tty stdin, don't allow it.
+            if (isatty(STDIN_FILENO)) {
+                cerr << "stdin is a tty and no file specified" << std::endl;
+                ret = 1;
+                goto out;
+            }
             fd = STDIN_FILENO;
 	  } else {
             fd = open(arg1.c_str(), O_RDONLY|O_LARGEFILE, 0666);
@@ -2677,6 +2683,12 @@ int main(int argc, char **argv)
 
 	int fd;
 	if (vm.count("arg2") == 0 || arg2 == "-") {
+          // Since read_fd() doesn't handle ^D from a tty stdin, don't allow it.
+          if (isatty(STDIN_FILENO)) {
+            cerr << "stdin is a tty and no file specified" << std::endl;
+            ret = 1;
+            goto out;
+          }
 	  fd = STDIN_FILENO;
 	} else {
 	  fd = open(arg2.c_str(), O_RDONLY|O_LARGEFILE, 0666);
@@ -2712,6 +2724,12 @@ int main(int argc, char **argv)
 
 	int fd;
 	if (vm.count("arg2") == 0 || arg2 == "-") {
+          // Since read_fd() doesn't handle ^D from a tty stdin, don't allow it.
+          if (isatty(STDIN_FILENO)) {
+            cerr << "stdin is a tty and no file specified" << std::endl;
+            ret = 1;
+            goto out;
+          }
 	  fd = STDIN_FILENO;
 	} else {
 	  fd = open(arg2.c_str(), O_RDONLY|O_LARGEFILE, 0666);
@@ -2747,6 +2765,12 @@ int main(int argc, char **argv)
 	  usage(desc);
 	int fd;
 	if (vm.count("arg1") == 0 || arg1 == "-") {
+          // Since read_fd() doesn't handle ^D from a tty stdin, don't allow it.
+          if (isatty(STDIN_FILENO)) {
+            cerr << "stdin is a tty and no file specified" << std::endl;
+            ret = 1;
+            goto out;
+          }
 	  fd = STDIN_FILENO;
 	} else {
 	  fd = open(arg1.c_str(), O_RDONLY|O_LARGEFILE, 0666);
