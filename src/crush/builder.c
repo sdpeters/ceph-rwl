@@ -433,21 +433,12 @@ int crush_calc_straw(struct crush_bucket_straw *bucket)
 		       items[reverse[i]],
 		       reverse[i], weights[reverse[i]], bucket->straws[reverse[i]], straw);*/
 		i++;
-		if (i == size) break;
-
-		/* same weight as previous? */
-		if (weights[reverse[i]] == weights[reverse[i-1]]) {
-			/*printf("same as previous\n");*/
-			continue;
-		}
+		if (i == size)
+			break;
 
 		/* adjust straw for next guy */
 		wbelow += ((double)weights[reverse[i-1]] - lastw) * numleft;
-		for (j=i; j<size; j++)
-			if (weights[reverse[j]] == weights[reverse[i]])
-				numleft--;
-			else
-				break;
+		numleft--;
 		wnext = numleft * (weights[reverse[i]] - weights[reverse[i-1]]);
 		pbelow = wbelow / (wbelow + wnext);
 		/*printf("wbelow %lf  wnext %lf  pbelow %lf\n", wbelow, wnext, pbelow);*/
