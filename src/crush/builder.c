@@ -423,6 +423,7 @@ int crush_calc_straw(struct crush_bucket_straw *bucket)
 		if (weights[reverse[i]] == 0) {
 			bucket->straws[reverse[i]] = 0;
 			i++;
+			numleft--;
 			continue;
 		}
 
