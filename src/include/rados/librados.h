@@ -276,7 +276,7 @@ typedef void *rados_read_op_t;
  * The version number is major.minor.extra. Note that this is
  * unrelated to the Ceph version number.
  *
- * TODO: define version semantics, i.e.:
+ * @note TODO: define version semantics, i.e.:
  * - incrementing major is for backwards-incompatible changes
  * - incrementing minor is for backwards-compatible changes
  * - incrementing extra is for bug fixes
@@ -678,7 +678,7 @@ int rados_pool_create(rados_t cluster, const char *pool_name);
  * Create a pool owned by a specific auid
  *
  * The auid is the authenticated user id to give ownership of the pool.
- * TODO: document auid and the rest of the auth system
+ * @note TODO: document auid and the rest of the auth system
  *
  * @param cluster the cluster in which the pool will be created
  * @param pool_name the name of the new pool
@@ -717,11 +717,11 @@ int rados_pool_create_with_all(rados_t cluster, const char *pool_name, uint64_t 
  * Returns the pool that is the base tier for this pool.
  *
  * The return value is the ID of the pool that should be used to read from/write to.
- * If tiering is not set up for the pool, returns \c pool.
+ * If tiering is not set up for the pool, returns "pool".
  *
  * @param cluster the cluster the pool is in
  * @param pool ID of the pool to query
- * @param[out] base_tier base tier, or \c pool if tiering is not configured
+ * @param[out] base_tier base tier, or "pool" if tiering is not configured
  * @returns 0 on success, negative error code on failure
  */
 int rados_pool_get_base_tier(rados_t cluster, int64_t pool, int64_t* base_tier);
@@ -1117,7 +1117,6 @@ uint64_t rados_get_last_version(rados_ioctx_t io);
  * Write *len* bytes from *buf* into the *oid* object, starting at
  * offset *off*. The value of *len* must be <= UINT_MAX/2.
  *
- * @note This will never return a positive value not equal to len.
  * @param io the io context in which the write will occur
  * @param oid name of the object
  * @param buf data to write
@@ -1334,7 +1333,7 @@ void rados_omap_get_end(rados_omap_iter_t iter);
 /**
  * Get object stats (size/mtime)
  *
- * TODO: when are these set, and by whom? can they be out of date?
+ * @note TODO: when are these set, and by whom? can they be out of date?
  *
  * @param io ioctx
  * @param o object name
@@ -1491,7 +1490,7 @@ typedef void (*rados_callback_t)(rados_completion_t cb, void *arg);
  * complete callback, and vice versa. This is affected by journalling
  * on the OSDs.
  *
- * TODO: more complete documentation of this elsewhere (in the RADOS docs?)
+ * @cond TODO: more complete documentation of this elsewhere (in the RADOS docs?) @endcond
  *
  * @note Read operations only get a complete callback.
  * @note BUG: this should check for ENOMEM instead of throwing an exception
