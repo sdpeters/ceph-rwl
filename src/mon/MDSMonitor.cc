@@ -577,8 +577,8 @@ void MDSMonitor::get_health(list<pair<health_status_t, string> >& summary,
   mdsmap.get_health(summary, detail);
 
   // For each MDS GID...
-  for (std::map<mds_gid_t, MDSMap::mds_info_t>::const_iterator i = pending_mdsmap.mds_info.begin();
-      i != pending_mdsmap.mds_info.end(); ++i) {
+  for (std::map<mds_gid_t, MDSMap::mds_info_t>::const_iterator i = mdsmap.mds_info.begin();
+      i != mdsmap.mds_info.end(); ++i) {
     // Decode MDSHealth
     bufferlist bl;
     mon->store->get(MDS_HEALTH_PREFIX, stringify(i->first), bl);
@@ -1508,7 +1508,6 @@ int MDSMonitor::filesystem_command(
     }
 
     if (poolid >= 0) {
-      cmd_getval(g_ceph_context, cmdmap, "poolid", poolid);
       r = pending_mdsmap.remove_data_pool(poolid);
       if (r == -ENOENT)
 	r = 0;
@@ -1657,6 +1656,7 @@ void MDSMonitor::tick()
 	case MDSMap::STATE_CLIENTREPLAY:
 	case MDSMap::STATE_ACTIVE:
 	case MDSMap::STATE_STOPPING:
+	case MDSMap::STATE_DNE:
 	  si.state = MDSMap::STATE_REPLAY;
 	  break;
 	default:

@@ -1447,7 +1447,7 @@ unsigned KeyValueStore::_do_transaction(Transaction& transaction,
       {
         coll_t cid(i.decode_cid());
         coll_t ncid(i.decode_cid());
-        r = _collection_rename(cid, ncid, t);
+        r = -EOPNOTSUPP;
       }
       break;
 
@@ -2268,12 +2268,16 @@ int KeyValueStore::collection_getattr(coll_t c, const char *name,
     r = -EINVAL;
   }
 
-  assert(out.size());
-  bl.swap(out.begin()->second);
+  if (out.size()) {
+    bl.swap(out.begin()->second);
+    r = bl.length();
+  } else {
+    r = -ENODATA;
+  }
 
   dout(10) << __func__ << " " << c.to_str() << " '" << name << "' len "
            << bl.length() << " = " << r << dendl;
-  return bl.length();
+  return r;
 }
 
 int KeyValueStore::collection_getattrs(coll_t cid,
@@ -2282,25 +2286,11 @@ int KeyValueStore::collection_getattrs(coll_t cid,
   dout(10) << __func__ << " " << cid.to_str() << dendl;
 
   map<string, bufferlist> out;
-  set<string> keys;
-  StripObjectMap::StripObjectHeaderRef header;
 
-  for (map<string, bufferptr>::iterator it = aset.begin();
-       it != aset.end(); ++it) {
-      keys.insert(it->first);
-  }
-
-  int r = backend->lookup_strip_header(get_coll_for_coll(),
-                                       make_ghobject_for_coll(cid), &header);
-  if (r < 0) {
-    dout(10) << __func__ << " lookup_strip_header failed: r =" << r << dendl;
-    return r;
-  }
-
-  r = backend->get_values_with_header(header, COLLECTION_ATTR, keys, &out);
+  int r = backend->get(get_coll_for_coll(), make_ghobject_for_coll(cid),
+                       COLLECTION_ATTR, &out);
   if (r < 0) {
     dout(10) << __func__ << " could not get keys" << dendl;
-    r = -EINVAL;
     goto out;
   }
 
@@ -2579,61 +2569,6 @@ int KeyValueStore::_collection_remove_recursive(const coll_t &cid,
   r = t.clear_buffer(header);
 
   dout(10) << __func__ << " " << cid  << " r = " << r << dendl;
-  return 0;
-}
-
-int KeyValueStore::_collection_rename(const coll_t &cid, const coll_t &ncid,
-                                      BufferTransaction &t)
-{
-  dout(10) << __func__ << " origin cid " << cid << " new cid " << ncid
-           << dendl;
-
-  StripObjectMap::StripObjectHeaderRef header;
-
-  int r = t.lookup_cached_header(get_coll_for_coll(),
-                                 make_ghobject_for_coll(ncid),
-                                 &header, false);
-  if (r == 0) {
-    dout(2) << __func__ << ": " << ncid << " DNE" << dendl;
-    return -EEXIST;
-  }
-
-  r = t.lookup_cached_header(get_coll_for_coll(), make_ghobject_for_coll(cid),
-                             &header, false);
-  if (r < 0) {
-    dout(2) << __func__ << ": " << cid << " DNE" << dendl;
-    return 0;
-  }
-
-  vector<ghobject_t> objects;
-  ghobject_t next, current;
-  int move_size = 0;
-  while (1) {
-    collection_list_partial(cid, current, get_ideal_list_min(),
-                            get_ideal_list_max(), 0, &objects, &next);
-
-    dout(20) << __func__ << cid << "objects size: " << objects.size()
-             << dendl;
-
-    if (objects.empty())
-      break;
-
-    for (vector<ghobject_t>::iterator i = objects.begin();
-        i != objects.end(); ++i) {
-      if (_collection_move_rename(cid, *i, ncid, *i, t) < 0) {
-        return -1;
-      }
-      move_size++;
-    }
-
-    objects.clear();
-    current = next;
-  }
-
-  t.rename_buffer(header, get_coll_for_coll(), make_ghobject_for_coll(ncid));
-
-  dout(10) << __func__ << " origin cid " << cid << " new cid " << ncid
-           << dendl;
   return 0;
 }
 

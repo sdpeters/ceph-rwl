@@ -56,9 +56,15 @@
 # include <assert.h>
 #endif
 
+#if __GNUC__ >= 4
+  #define CEPH_BUFFER_API  __attribute__ ((visibility ("default")))
+#else
+  #define CEPH_BUFFER_API
+#endif
+
 namespace ceph {
 
-class buffer {
+class CEPH_BUFFER_API buffer {
   /*
    * exceptions
    */
@@ -151,7 +157,7 @@ public:
   /*
    * a buffer pointer.  references (a subsequence of) a raw buffer.
    */
-  class ptr {
+  class CEPH_BUFFER_API ptr {
     raw *_raw;
     unsigned _off, _len;
 
@@ -168,7 +174,7 @@ public:
     ~ptr() {
       release();
     }
-    
+
     bool have_raw() const { return _raw ? true:false; }
 
     raw *clone();
@@ -184,7 +190,7 @@ public:
     bool is_page_aligned() const { return is_aligned(CEPH_PAGE_SIZE); }
     bool is_n_align_sized(unsigned align) const
     {
-      return (length() & (align-1)) == 0;
+      return (length() % align) == 0;
     }
     bool is_n_page_sized() const { return is_n_align_sized(CEPH_PAGE_SIZE); }
 
@@ -237,7 +243,7 @@ public:
    * list - the useful bit!
    */
 
-  class list {
+  class CEPH_BUFFER_API list {
     // my private bits
     std::list<ptr> _buffers;
     unsigned _len;
@@ -245,7 +251,7 @@ public:
     ptr append_buffer;  // where i put small appends.
 
   public:
-    class iterator {
+    class CEPH_BUFFER_API iterator {
       list *bl;
       std::list<ptr> *ls; // meh.. just here to avoid an extra pointer dereference..
       unsigned off;  // in bl
@@ -394,6 +400,8 @@ public:
     void rebuild();
     void rebuild(ptr& nb);
     void rebuild_aligned(unsigned align);
+    void rebuild_aligned_size_and_memory(unsigned align_size,
+					 unsigned align_memory);
     void rebuild_page_aligned();
 
     // sort-of-like-assignment-op

@@ -271,17 +271,15 @@ struct pg_t {
   int32_t m_preferred;
 
   pg_t() : m_pool(0), m_seed(0), m_preferred(-1) {}
-  pg_t(ps_t seed, uint64_t pool, int pref=-1) {
-    m_seed = seed;
-    m_pool = pool;
-    m_preferred = pref;
+  pg_t(ps_t seed, uint64_t pool, int pref=-1) :
+    m_pool(pool), m_seed(seed), m_preferred(pref) {}
+  pg_t(const ceph_pg& cpg) :
+    m_pool(cpg.pool), m_seed(cpg.ps), m_preferred((__s16)cpg.preferred) {}
+
+  pg_t(const old_pg_t& opg) {
+    *this = opg.v;
   }
 
-  pg_t(const ceph_pg& cpg) {
-    m_pool = cpg.pool;
-    m_seed = cpg.ps;
-    m_preferred = (__s16)cpg.preferred;
-  }
   old_pg_t get_old_pg() const {
     old_pg_t o;
     assert(m_pool < 0xffffffffull);
@@ -289,9 +287,6 @@ struct pg_t {
     o.v.ps = m_seed;
     o.v.preferred = (__s16)m_preferred;
     return o;
-  }
-  pg_t(const old_pg_t& opg) {
-    *this = opg.v;
   }
 
   ps_t ps() const {
@@ -1298,12 +1293,9 @@ WRITE_CLASS_ENCODER(object_stat_sum_t)
  */
 struct object_stat_collection_t {
   object_stat_sum_t sum;
-  map<string,object_stat_sum_t> cat_sum;
 
   void calc_copies(int nrep) {
     sum.calc_copies(nrep);
-    for (map<string,object_stat_sum_t>::iterator p = cat_sum.begin(); p != cat_sum.end(); ++p)
-      p->second.calc_copies(nrep);
   }
 
   void dump(Formatter *f) const;
@@ -1312,43 +1304,26 @@ struct object_stat_collection_t {
   static void generate_test_instances(list<object_stat_collection_t*>& o);
 
   bool is_zero() const {
-    return (cat_sum.empty() && sum.is_zero());
+    return sum.is_zero();
   }
 
   void clear() {
     sum.clear();
-    cat_sum.clear();
   }
 
   void floor(int64_t f) {
     sum.floor(f);
-    for (map<string,object_stat_sum_t>::iterator p = cat_sum.begin(); p != cat_sum.end(); ++p)
-      p->second.floor(f);
   }
 
-  void add(const object_stat_sum_t& o, const string& cat) {
+  void add(const object_stat_sum_t& o) {
     sum.add(o);
-    if (cat.length())
-      cat_sum[cat].add(o);
   }
 
   void add(const object_stat_collection_t& o) {
     sum.add(o.sum);
-    for (map<string,object_stat_sum_t>::const_iterator p = o.cat_sum.begin();
-	 p != o.cat_sum.end();
-	 ++p)
-      cat_sum[p->first].add(p->second);
   }
   void sub(const object_stat_collection_t& o) {
     sum.sub(o.sum);
-    for (map<string,object_stat_sum_t>::const_iterator p = o.cat_sum.begin();
-	 p != o.cat_sum.end();
-	 ++p) {
-      object_stat_sum_t& s = cat_sum[p->first];
-      s.sub(p->second);
-      if (s.is_zero())
-	cat_sum.erase(p->first);
-    }
   }
 };
 WRITE_CLASS_ENCODER(object_stat_collection_t)
@@ -1472,8 +1447,10 @@ struct pool_stat_t {
   object_stat_collection_t stats;
   int64_t log_size;
   int64_t ondisk_log_size;    // >= active_log_size
+  int32_t up;       ///< number of up replicas or shards
+  int32_t acting;   ///< number of acting replicas or shards
 
-  pool_stat_t() : log_size(0), ondisk_log_size(0)
+  pool_stat_t() : log_size(0), ondisk_log_size(0), up(0), acting(0)
   { }
 
   void floor(int64_t f) {
@@ -1482,23 +1459,33 @@ struct pool_stat_t {
       log_size = f;
     if (ondisk_log_size < f)
       ondisk_log_size = f;
+    if (up < f)
+      up = f;
+    if (acting < f)
+      acting = f;
   }
 
   void add(const pg_stat_t& o) {
     stats.add(o.stats);
     log_size += o.log_size;
     ondisk_log_size += o.ondisk_log_size;
+    up += o.up.size();
+    acting += o.acting.size();
   }
   void sub(const pg_stat_t& o) {
     stats.sub(o.stats);
     log_size -= o.log_size;
     ondisk_log_size -= o.ondisk_log_size;
+    up -= o.up.size();
+    acting -= o.acting.size();
   }
 
   bool is_zero() const {
     return (stats.is_zero() &&
 	    log_size == 0 &&
-	    ondisk_log_size == 0);
+	    ondisk_log_size == 0 &&
+	    up == 0 &&
+	    acting == 0);
   }
 
   void dump(Formatter *f) const;
@@ -2502,7 +2489,6 @@ struct object_copy_data_t {
   bufferlist data;
   bufferlist omap_header;
   map<string, bufferlist> omap;
-  string category;
 
   /// which snaps we are defined for (if a snap and not the head)
   vector<snapid_t> snaps;
@@ -2739,8 +2725,6 @@ static inline ostream& operator<<(ostream& out, const notify_info_t& n) {
 
 struct object_info_t {
   hobject_t soid;
-  string category;
-
   eversion_t version, prior_version;
   version_t user_version;
   osd_reqid_t last_reqid;

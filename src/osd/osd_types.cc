@@ -820,7 +820,7 @@ int pg_pool_t::calc_bits_of(int t)
   int b = 0;
   while (t > 0) {
     t = t >> 1;
-    b++;
+    ++b;
   }
   return b;
 }
@@ -1594,20 +1594,13 @@ void object_stat_collection_t::dump(Formatter *f) const
   f->open_object_section("stat_sum");
   sum.dump(f);
   f->close_section();
-  f->open_object_section("stat_cat_sum");
-  for (map<string,object_stat_sum_t>::const_iterator p = cat_sum.begin(); p != cat_sum.end(); ++p) {
-    f->open_object_section(p->first.c_str());
-    p->second.dump(f);
-    f->close_section();
-  }
-  f->close_section();
 }
 
 void object_stat_collection_t::encode(bufferlist& bl) const
 {
   ENCODE_START(2, 2, bl);
   ::encode(sum, bl);
-  ::encode(cat_sum, bl);
+  ::encode((__u32)0, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -1615,7 +1608,10 @@ void object_stat_collection_t::decode(bufferlist::iterator& bl)
 {
   DECODE_START_LEGACY_COMPAT_LEN(2, 2, 2, bl);
   ::decode(sum, bl);
-  ::decode(cat_sum, bl);
+  {
+    map<string,object_stat_sum_t> cat_sum;
+    ::decode(cat_sum, bl);
+  }
   DECODE_FINISH(bl);
 }
 
@@ -1625,10 +1621,8 @@ void object_stat_collection_t::generate_test_instances(list<object_stat_collecti
   o.push_back(new object_stat_collection_t(a));
   list<object_stat_sum_t*> l;
   object_stat_sum_t::generate_test_instances(l);
-  char n[2] = { 'a', 0 };
   for (list<object_stat_sum_t*>::iterator p = l.begin(); p != l.end(); ++p) {
-    a.add(**p, n);
-    n[0]++;
+    a.add(**p);
     o.push_back(new object_stat_collection_t(a));
   }
 }
@@ -1929,6 +1923,8 @@ void pool_stat_t::dump(Formatter *f) const
   stats.dump(f);
   f->dump_int("log_size", log_size);
   f->dump_int("ondisk_log_size", ondisk_log_size);
+  f->dump_int("up", up);
+  f->dump_int("acting", acting);
 }
 
 void pool_stat_t::encode(bufferlist &bl, uint64_t features) const
@@ -1942,20 +1938,29 @@ void pool_stat_t::encode(bufferlist &bl, uint64_t features) const
     return;
   }
 
-  ENCODE_START(5, 5, bl);
+  ENCODE_START(6, 5, bl);
   ::encode(stats, bl);
   ::encode(log_size, bl);
   ::encode(ondisk_log_size, bl);
+  ::encode(up, bl);
+  ::encode(acting, bl);
   ENCODE_FINISH(bl);
 }
 
 void pool_stat_t::decode(bufferlist::iterator &bl)
 {
-  DECODE_START_LEGACY_COMPAT_LEN(5, 5, 5, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(6, 5, 5, bl);
   if (struct_v >= 4) {
     ::decode(stats, bl);
     ::decode(log_size, bl);
     ::decode(ondisk_log_size, bl);
+    if (struct_v >= 6) {
+      ::decode(up, bl);
+      ::decode(acting, bl);
+    } else {
+      up = 0;
+      acting = 0;
+    }
   } else {
     ::decode(stats.sum.num_bytes, bl);
     uint64_t num_kb;
@@ -1990,6 +1995,8 @@ void pool_stat_t::generate_test_instances(list<pool_stat_t*>& o)
   a.stats = *l.back();
   a.log_size = 123;
   a.ondisk_log_size = 456;
+  a.acting = 3;
+  a.up = 4;
   o.push_back(new pool_stat_t(a));
 }
 
@@ -3285,7 +3292,7 @@ void object_copy_data_t::encode(bufferlist& bl) const
   ENCODE_START(3, 1, bl);
   ::encode(size, bl);
   ::encode(mtime, bl);
-  ::encode(category, bl);
+  ::encode((__u32)0, bl);  // was category; no longer used
   ::encode(attrs, bl);
   ::encode(data, bl);
   ::encode(omap, bl);
@@ -3301,7 +3308,10 @@ void object_copy_data_t::decode(bufferlist::iterator& bl)
   DECODE_START(2, bl);
   ::decode(size, bl);
   ::decode(mtime, bl);
-  ::decode(category, bl);
+  {
+    string category;
+    ::decode(category, bl);  // no longer used
+  }
   ::decode(attrs, bl);
   ::decode(data, bl);
   ::decode(omap, bl);
@@ -3794,7 +3804,6 @@ void object_info_t::copy_user_bits(const object_info_t& other)
   truncate_seq = other.truncate_seq;
   truncate_size = other.truncate_size;
   flags = other.flags;
-  category = other.category;
   user_version = other.user_version;
 }
 
@@ -3824,7 +3833,7 @@ void object_info_t::encode(bufferlist& bl) const
   ENCODE_START(14, 8, bl);
   ::encode(soid, bl);
   ::encode(myoloc, bl);	//Retained for compatibility
-  ::encode(category, bl);
+  ::encode((__u32)0, bl); // was category, no longer used
   ::encode(version, bl);
   ::encode(prior_version, bl);
   ::encode(last_reqid, bl);
@@ -3855,23 +3864,12 @@ void object_info_t::decode(bufferlist::iterator& bl)
   object_locator_t myoloc;
   DECODE_START_LEGACY_COMPAT_LEN(13, 8, 8, bl);
   map<entity_name_t, watch_info_t> old_watchers;
-  if (struct_v >= 2 && struct_v <= 5) {
-    sobject_t obj;
-    ::decode(obj, bl);
-    ::decode(myoloc, bl);
-    soid = hobject_t(obj.oid, myoloc.key, obj.snap, 0, 0 , "");
-    soid.hash = legacy_object_locator_to_ps(soid.oid, myoloc);
-  } else if (struct_v >= 6) {
-    ::decode(soid, bl);
-    ::decode(myoloc, bl);
-    if (struct_v == 6) {
-      hobject_t hoid(soid.oid, myoloc.key, soid.snap, soid.hash, 0 , "");
-      soid = hoid;
-    }
+  ::decode(soid, bl);
+  ::decode(myoloc, bl);
+  {
+    string category;
+    ::decode(category, bl);  // no longer used
   }
-    
-  if (struct_v >= 5)
-    ::decode(category, bl);
   ::decode(version, bl);
   ::decode(prior_version, bl);
   ::decode(last_reqid, bl);
@@ -3883,22 +3881,19 @@ void object_info_t::decode(bufferlist::iterator& bl)
     ::decode(snaps, bl);
   ::decode(truncate_seq, bl);
   ::decode(truncate_size, bl);
-  if (struct_v >= 3) {
-    // if this is struct_v >= 13, we will overwrite this
-    // below since this field is just here for backwards
-    // compatibility
-    __u8 lo;
-    ::decode(lo, bl);
-    flags = (flag_t)lo;
-  } else {
-    flags = (flag_t)0;
-  }
-  if (struct_v >= 4) {
-    ::decode(old_watchers, bl);
-    eversion_t user_eversion;
-    ::decode(user_eversion, bl);
-    user_version = user_eversion.version;
-  }
+
+  // if this is struct_v >= 13, we will overwrite this
+  // below since this field is just here for backwards
+  // compatibility
+  __u8 lo;
+  ::decode(lo, bl);
+  flags = (flag_t)lo;
+
+  ::decode(old_watchers, bl);
+  eversion_t user_eversion;
+  ::decode(user_eversion, bl);
+  user_version = user_eversion.version;
+
   if (struct_v >= 9) {
     bool uses_tmap = false;
     ::decode(uses_tmap, bl);
@@ -3938,7 +3933,6 @@ void object_info_t::dump(Formatter *f) const
   f->open_object_section("oid");
   soid.dump(f);
   f->close_section();
-  f->dump_string("category", category);
   f->dump_stream("version") << version;
   f->dump_stream("prior_version") << prior_version;
   f->dump_stream("last_reqid") << last_reqid;

@@ -294,7 +294,14 @@ int main(int argc, const char **argv)
 
 
   if (convertfilestore) {
-    int err = OSD::do_convertfs(store);
+    int err = store->mount();
+    if (err < 0) {
+      derr << TEXT_RED << " ** ERROR: error mounting store " << g_conf->osd_data
+	   << ": " << cpp_strerror(-err) << TEXT_NORMAL << dendl;
+      exit(1);
+    }
+    err = store->upgrade();
+    store->umount();
     if (err < 0) {
       derr << TEXT_RED << " ** ERROR: error converting store " << g_conf->osd_data
 	   << ": " << cpp_strerror(-err) << TEXT_NORMAL << dendl;
@@ -406,6 +413,12 @@ int main(int argc, const char **argv)
     CEPH_FEATURE_MSG_AUTH |
     CEPH_FEATURE_OSD_ERASURE_CODES;
 
+  uint64_t osd_required =
+    CEPH_FEATURE_UID |
+    CEPH_FEATURE_PGID64 |
+    CEPH_FEATURE_OSDENC |
+    CEPH_FEATURE_OSD_SNAPMAPPER;
+
   ms_public->set_default_policy(Messenger::Policy::stateless_server(supported, 0));
   ms_public->set_policy_throttlers(entity_name_t::TYPE_CLIENT,
 				   client_byte_throttler.get(),
@@ -423,9 +436,7 @@ int main(int argc, const char **argv)
   ms_cluster->set_policy(entity_name_t::TYPE_MON, Messenger::Policy::lossy_client(0,0));
   ms_cluster->set_policy(entity_name_t::TYPE_OSD,
 			 Messenger::Policy::lossless_peer(supported,
-							  CEPH_FEATURE_UID |
-							  CEPH_FEATURE_PGID64 |
-							  CEPH_FEATURE_OSDENC));
+							  osd_required));
   ms_cluster->set_policy(entity_name_t::TYPE_CLIENT,
 			 Messenger::Policy::stateless_server(0, 0));
 
@@ -467,15 +478,6 @@ int main(int argc, const char **argv)
   // Set up crypto, daemonize, etc.
   global_init_daemonize(g_ceph_context, 0);
   common_init_finish(g_ceph_context);
-
-  if (g_conf->filestore_update_to >= (int)store->get_target_version()) {
-    int err = OSD::do_convertfs(store);
-    if (err < 0) {
-      derr << TEXT_RED << " ** ERROR: error converting store " << g_conf->osd_data
-	   << ": " << cpp_strerror(-err) << TEXT_NORMAL << dendl;
-      exit(1);
-    }
-  }
 
   MonClient mc(g_ceph_context);
   if (mc.build_initial_monmap() < 0)

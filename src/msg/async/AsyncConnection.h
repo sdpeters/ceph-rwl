@@ -109,7 +109,7 @@ class AsyncConnection : public Connection {
 
   bool is_connected() {
     // FIXME?
-    return true;
+    return state != STATE_CLOSED;
   }
 
   // Only call when AsyncConnection first construct
@@ -124,9 +124,27 @@ class AsyncConnection : public Connection {
   int send_message(Message *m);
 
   void send_keepalive();
+  // mark_down need to ensure all events completely finished. So we introduce
+  // a separator impl:
+  //
+  // Thread A             Event loop N          Event loop N+1
+  // mark_down()
+  // dispatch
+  // wait
+  //  \                   C_handle_stop
+  //  \                   stop()
+  //  \                   _stop()
+  //  \                   dispatch
+  //  \                                         C_handle_signal
+  //  \                                         wakeup_stop()
+  //  \                                         signal
+  // finished
+  //
+  // Note: Don't call it from AsyncConnection
   void mark_down() {
-    Mutex::Locker l(lock);
-    _stop();
+    Mutex::Locker l(stop_lock);
+    center->dispatch_event_external(stop_handler);
+    stop_cond.Wait(stop_lock);
   }
   void mark_disposable() {
     Mutex::Locker l(lock);
@@ -228,8 +246,16 @@ class AsyncConnection : public Connection {
   EventCallbackRef write_handler;
   EventCallbackRef reset_handler;
   EventCallbackRef remote_reset_handler;
+  EventCallbackRef connect_handler;
+  EventCallbackRef fast_connect_handler;
+  EventCallbackRef accept_handler;
+  EventCallbackRef fast_accept_handler;
+  EventCallbackRef stop_handler;
+  EventCallbackRef signal_handler;
   bool keepalive;
   struct iovec msgvec[IOV_LEN];
+  Mutex stop_lock; // used to protect `mark_down_cond`
+  Cond stop_cond;
 
   // Tis section are temp variables used by state transition
 
@@ -263,6 +289,15 @@ class AsyncConnection : public Connection {
   // used by eventcallback
   void handle_write();
   void process();
+  // Helper: only called by C_handle_stop
+  void stop() {
+    Mutex::Locker l(lock);
+    _stop();
+  }
+  void wakeup_stop() {
+    Mutex::Locker l(stop_lock);
+    stop_cond.Signal();
+  }
 }; /* AsyncConnection */
 
 typedef boost::intrusive_ptr<AsyncConnection> AsyncConnectionRef;

@@ -5,7 +5,7 @@ Copyright 2011, Hannu Valtonen <hannu.valtonen@ormod.com>
 """
 from ctypes import CDLL, c_char_p, c_size_t, c_void_p, c_char, c_int, c_long, \
     c_ulong, create_string_buffer, byref, Structure, c_uint64, c_ubyte, \
-    pointer, CFUNCTYPE, c_int64
+    pointer, CFUNCTYPE, c_int64, c_uint8
 from ctypes.util import find_library
 import ctypes
 import errno
@@ -39,6 +39,10 @@ class NoData(Error):
 
 class ObjectExists(Error):
     """ `ObjectExists` class, derived from `Error` """
+    pass
+
+class ObjectBusy(Error):
+    """ `ObjectBusy` class, derived from `Error` """
     pass
 
 class IOError(Error):
@@ -90,6 +94,7 @@ def make_ex(ret, msg):
         errno.EIO       : IOError,
         errno.ENOSPC    : NoSpace,
         errno.EEXIST    : ObjectExists,
+        errno.EBUSY     : ObjectBusy,
         errno.ENODATA   : NoData,
         errno.EINTR     : InterruptedOrTimeoutError,
         errno.ETIMEDOUT : TimedOut
@@ -121,6 +126,10 @@ class rados_cluster_stat_t(Structure):
                 ("kb_used", c_uint64),
                 ("kb_avail", c_uint64),
                 ("num_objects", c_uint64)]
+
+class timeval(Structure):
+    _fields_ = [("tv_sec", c_long), ("tv_usec", c_long)]
+
 
 class Version(object):
     """ Version information """
@@ -421,7 +430,7 @@ Rados object in state %s." % (self.state))
         ret = run_in_thread(self.librados.rados_connect, (self.cluster,),
                             timeout)
         if (ret != 0):
-            raise make_ex(ret, "error calling connect")
+            raise make_ex(ret, "error connecting to the cluster")
         self.state = "connected"
 
     def get_cluster_stats(self):
@@ -654,12 +663,12 @@ Rados object in state %s." % (self.state))
         """
         self.require_state("connected")
         if not isinstance(ioctx_name, str):
-            raise TypeError('ioctx_name must be a string')
+            raise TypeError('the name of the pool must be a string')
         ioctx = c_void_p()
         ret = run_in_thread(self.librados.rados_ioctx_create,
                             (self.cluster, c_char_p(ioctx_name), byref(ioctx)))
         if ret < 0:
-            raise make_ex(ret, "error opening ioctx '%s'" % ioctx_name)
+            raise make_ex(ret, "error opening pool '%s'" % ioctx_name)
         return Ioctx(ioctx_name, self.librados, ioctx)
 
     def mon_command(self, cmd, inbuf, timeout=0, target=None):
@@ -910,27 +919,65 @@ class Completion(object):
         self.onsafe = onsafe
         self.ioctx = ioctx
 
-    def wait_for_safe(self):
+    def is_safe(self):
         """
         Is an asynchronous operation safe?
 
         This does not imply that the safe callback has finished.
 
-        :returns: whether the operation is safe
+        :returns: True if the operation is safe
         """
         return run_in_thread(self.ioctx.librados.rados_aio_is_safe,
-                             (self.rados_comp,))
+                             (self.rados_comp,)) == 1
 
-    def wait_for_complete(self):
+    def is_complete(self):
         """
         Has an asynchronous operation completed?
 
         This does not imply that the safe callback has finished.
 
-        :returns:  whether the operation is completed
+        :returns: True if the operation is completed
         """
         return run_in_thread(self.ioctx.librados.rados_aio_is_complete,
-                             (self.rados_comp,))
+                             (self.rados_comp,)) == 1
+
+    def wait_for_safe(self):
+        """
+        Wait for an asynchronous operation to be marked safe
+
+        This does not imply that the safe callback has finished.
+        """
+        run_in_thread(self.ioctx.librados.rados_aio_wait_for_safe,
+                      (self.rados_comp,))
+
+    def wait_for_complete(self):
+        """
+        Wait for an asynchronous operation to complete
+
+        This does not imply that the complete callback has finished.
+        """
+        run_in_thread(self.ioctx.librados.rados_aio_wait_for_complete,
+                      (self.rados_comp,))
+
+    def wait_for_safe_and_cb(self):
+        """
+        Wait for an asynchronous operation to be marked safe and for
+        the safe callback to have returned
+        """
+        run_in_thread(self.ioctx.librados.rados_aio_wait_for_safe_and_cb,
+                      (self.rados_comp,))
+
+    def wait_for_complete_and_cb(self):
+        """
+        Wait for an asynchronous operation to complete and for the
+        complete callback to have returned
+
+        :returns:  whether the operation is completed
+        """
+        return run_in_thread(
+            self.ioctx.librados.rados_aio_wait_for_complete_and_cb,
+            (self.rados_comp,)
+        )
 
     def get_return_value(self):
         """
@@ -1738,6 +1785,126 @@ returned %d, but should return zero on success." % (self.name, ret))
         """
         self.require_ioctx_open()
         return run_in_thread(self.librados.rados_get_last_version, (self.io,))
+
+    def lock_exclusive(self, key, name, cookie, desc="", duration=None, flags=0):
+
+        """
+        Take an exclusive lock on an object
+
+        :param key: name of the object
+        :type key: str
+        :param name: name of the lock
+        :type name: str
+        :param cookie: cookie of the lock
+        :type cookie: str
+        :param desc: description of the lock
+        :type desc: str
+        :param duration: duration of the lock in seconds
+        :type duration: int
+        :param flags: flags
+        :type flags: int
+
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        """
+        self.require_ioctx_open()
+        if not isinstance(key, str):
+            raise TypeError('key must be a string')
+        if not isinstance(name, str):
+            raise TypeError('name must be a string')
+        if not isinstance(cookie, str):
+            raise TypeError('cookie must be a string')
+        if not isinstance(desc, str):
+            raise TypeError('desc must be a string')
+        if duration is not None and not isinstance(duration, int):
+            raise TypeError('duration must be a integer')
+        if not isinstance(flags, int):
+            raise TypeError('flags must be a integer')
+
+        ret = run_in_thread(self.librados.rados_lock_exclusive,
+                            (self.io, c_char_p(key), c_char_p(name), c_char_p(cookie),
+                             c_char_p(desc),
+                             timeval(duration, None) if duration is None else None,
+                             c_uint8(flags)))
+        if ret < 0:
+            raise make_ex(ret, "Ioctx.rados_lock_exclusive(%s): failed to set lock %s on %s" % (self.name, name, key))
+
+    def lock_shared(self, key, name, cookie, tag, desc="", duration=None, flags=0):
+
+        """
+        Take a shared lock on an object
+
+        :param key: name of the object
+        :type key: str
+        :param name: name of the lock
+        :type name: str
+        :param cookie: cookie of the lock
+        :type cookie: str
+        :param tag: tag of the lock
+        :type tag: str
+        :param desc: description of the lock
+        :type desc: str
+        :param duration: duration of the lock in seconds
+        :type duration: int
+        :param flags: flags
+        :type flags: int
+
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        """
+        self.require_ioctx_open()
+        if not isinstance(key, str):
+            raise TypeError('key must be a string')
+        if not isinstance(name, str):
+            raise TypeError('name must be a string')
+        if not isinstance(cookie, str):
+            raise TypeError('cookie must be a string')
+        if not isinstance(tag, str):
+            raise TypeError('tag must be a string')
+        if not isinstance(desc, str):
+            raise TypeError('desc must be a string')
+        if duration is not None and not isinstance(duration, int):
+            raise TypeError('duration must be a integer')
+        if not isinstance(flags, int):
+            raise TypeError('flags must be a integer')
+
+        ret = run_in_thread(self.librados.rados_lock_shared,
+                            (self.io, c_char_p(key), c_char_p(name), c_char_p(cookie),
+                             c_char_p(tag), c_char_p(desc),
+                             timeval(duration, None) if duration is None else None,
+                             c_uint8(flags)))
+        if ret < 0:
+            raise make_ex(ret, "Ioctx.rados_lock_exclusive(%s): failed to set lock %s on %s" % (self.name, name, key))
+
+    def unlock(self, key, name, cookie):
+
+        """
+        Release a shared or exclusive lock on an object
+
+        :param key: name of the object
+        :type key: str
+        :param name: name of the lock
+        :type name: str
+        :param cookie: cookie of the lock
+        :type cookie: str
+
+        :raises: :class:`TypeError`
+        :raises: :class:`Error`
+        """
+        self.require_ioctx_open()
+        if not isinstance(key, str):
+            raise TypeError('key must be a string')
+        if not isinstance(name, str):
+            raise TypeError('name must be a string')
+        if not isinstance(cookie, str):
+            raise TypeError('cookie must be a string')
+
+        ret = run_in_thread(self.librados.rados_unlock,
+                            (self.io, c_char_p(key), c_char_p(name), c_char_p(cookie)))
+        if ret < 0:
+            raise make_ex(ret, "Ioctx.rados_lock_exclusive(%s): failed to set lock %s on %s" % (self.name, name, key))
+
+
 
 def set_object_locator(func):
     def retfunc(self, *args, **kwargs):
