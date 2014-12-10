@@ -1075,7 +1075,11 @@ int RGWPutObjProcessor_Atomic::prepare(RGWRados *store, string *oid_rand)
   head_obj.init(bucket, obj_str);
 
   if (versioned_object) {
-    store->gen_rand_obj_instance_name(&head_obj);
+    if (!version_id.empty()) {
+      head_obj.set_instance(version_id);
+    } else {
+      store->gen_rand_obj_instance_name(&head_obj);
+    }
   }
 
   manifest.set_trivial_rule(max_chunk_size, store->ctx()->_conf->rgw_obj_stripe_size);
