@@ -2909,6 +2909,14 @@ int RGWRados::Object::Write::write_meta(uint64_t size,
   epoch = ref.ioctx.get_last_version();
   poolid = ref.ioctx.get_id();
 
+  /* successfully modified object, update internal object state */
+  state->exists = true;
+  state->mtime = meta.set_mtime;
+  state->size = size;
+  state->has_attrs = true;
+  state->epoch = epoch;
+  state->attrset = attrs;
+
   r = target->complete_atomic_modification();
   if (r < 0) {
     ldout(store->ctx(), 0) << "ERROR: complete_atomic_modification returned r=" << r << dendl;
@@ -3205,7 +3213,7 @@ int RGWRados::rewrite_obj(RGWBucketInfo& dest_bucket_info, rgw_obj& obj)
     return ret;
   }
 
-  return copy_obj_data(rctx, dest_bucket_info, read_op, end, obj, obj, max_chunk_size, NULL, mtime, attrset, RGW_OBJ_CATEGORY_MAIN, NULL, NULL);
+  return copy_obj_data(rctx, dest_bucket_info, read_op, end, obj, obj, max_chunk_size, NULL, mtime, attrset, RGW_OBJ_CATEGORY_MAIN, 0, NULL, NULL, NULL);
 }
 
 int RGWRados::fetch_remote_obj(RGWObjectCtx& obj_ctx,
@@ -3226,6 +3234,8 @@ int RGWRados::fetch_remote_obj(RGWObjectCtx& obj_ctx,
                bool replace_attrs,
                map<string, bufferlist>& attrs,
                RGWObjCategory category,
+               uint64_t olh_epoch,
+               string *version_id,
                string *ptag,
                struct rgw_err *err,
                void (*progress_cb)(off_t, void *),
@@ -3377,6 +3387,8 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
                bool replace_attrs,
                map<string, bufferlist>& attrs,
                RGWObjCategory category,
+               uint64_t olh_epoch,
+               string *version_id,
                string *ptag,
                struct rgw_err *err,
                void (*progress_cb)(off_t, void *),
@@ -3407,8 +3419,8 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
   if (remote_src || !source_zone.empty()) {
     return fetch_remote_obj(obj_ctx, user_id, client_id, op_id, info, source_zone,
                dest_obj, src_obj, dest_bucket_info, src_bucket_info, mtime, mod_ptr,
-               unmod_ptr, if_match, if_nomatch, replace_attrs, attrs,
-               category, ptag, err, progress_cb, progress_data);
+               unmod_ptr, if_match, if_nomatch, replace_attrs, attrs, category,
+               olh_epoch, version_id, ptag, err, progress_cb, progress_data);
   }
 
   map<string, bufferlist> src_attrs;
@@ -3474,7 +3486,8 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
 
   if (copy_data) { /* refcounting tail wouldn't work here, just copy the data */
     return copy_obj_data(obj_ctx, dest_bucket_info, read_op, end, dest_obj, src_obj,
-                         max_chunk_size, mtime, 0, src_attrs, category, ptag, err);
+                         max_chunk_size, mtime, 0, src_attrs, category, olh_epoch,
+                         version_id, ptag, err);
   }
 
   RGWObjManifest::obj_iterator miter = astate->manifest.obj_begin();
@@ -3489,6 +3502,15 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
     return ret;
   }
 
+  bool versioned_dest = dest_bucket_info.versioning_enabled();
+
+  if (version_id && !version_id->empty()) {
+    versioned_dest = true;
+    dest_obj.set_instance(*version_id);
+  } else if (versioned_dest) {
+    gen_rand_obj_instance_name(&dest_obj);
+  }
+
   bufferlist first_chunk;
 
   bool copy_itself = (dest_obj == src_obj);
@@ -3497,6 +3519,11 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
 
   RGWRados::Object dest_op_target(this, obj_ctx, dest_obj);
   RGWRados::Object::Write write_op(&dest_op_target);
+
+  RGWObjState *dest_state = NULL;
+  ret = get_obj_state(&obj_ctx, dest_obj, &dest_state, NULL);
+  if (ret < 0)
+    return ret;
 
   string tag;
 
@@ -3551,10 +3578,18 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
   write_op.meta.mtime = mtime;
   write_op.meta.flags = PUT_OBJ_CREATE;
   write_op.meta.category = category;
+  write_op.meta.olh_epoch = olh_epoch;
 
   ret = write_op.write_meta(end + 1, attrs);
   if (ret < 0)
     goto done_ret;
+
+  if (versioned_dest || dest_state->is_olh) {
+    ret = set_olh(obj_ctx, dest_bucket_info.owner, dest_obj, false, NULL, olh_epoch);
+    if (ret < 0) {
+      goto done_ret;
+    }
+  }
 
   return 0;
 
@@ -3592,6 +3627,8 @@ int RGWRados::copy_obj_data(RGWObjectCtx& obj_ctx,
 	       time_t set_mtime,
                map<string, bufferlist>& attrs,
                RGWObjCategory category,
+               uint64_t olh_epoch,
+               string *version_id,
                string *ptag,
                struct rgw_err *err)
 {
@@ -5450,9 +5487,10 @@ int RGWRados::olh_init_modification(RGWObjState& state, rgw_obj& obj, string *op
 {
   int ret;
 
-  do {
-    ret = olh_init_modification_impl(state, obj, op_tag);
-  } while (ret == -EEXIST);
+  ret = olh_init_modification_impl(state, obj, op_tag);
+  if (ret == -EEXIST) {
+    ret = -ECANCELED;
+  }
 
   return ret;
 }
