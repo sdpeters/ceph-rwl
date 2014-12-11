@@ -694,6 +694,10 @@ OPTION(filestore_wbthrottle_xfs_inodes_start_flusher, OPT_U64, 500)
 OPTION(filestore_wbthrottle_btrfs_inodes_hard_limit, OPT_U64, 5000)
 OPTION(filestore_wbthrottle_xfs_inodes_hard_limit, OPT_U64, 5000)
 
+/// Experimental aio fsync option
+OPTION(filestore_experimental_enable_aio_fsync, OPT_BOOL, false)
+OPTION(filestore_experimental_aio_fsyncs_limit, OPT_U64, 16)
+
 // Tests index failure paths
 OPTION(filestore_index_retry_probability, OPT_DOUBLE, 0)
 

@@ -7,6 +7,10 @@
 #include "common/perf_counters.h"
 
 WBThrottle::WBThrottle(CephContext *cct) :
+#ifdef HAVE_LIBAIO
+  aio_fsync(cct->_conf->filestore_experimental_enable_aio_fsync),
+  aio_next(0), aio_in_flight(0),
+#endif
   cur_ios(0), cur_size(0),
   cct(cct),
   logger(NULL),
@@ -34,9 +38,41 @@ WBThrottle::WBThrottle(CephContext *cct) :
     logger->set(i, 0);
 
   cct->_conf->add_observer(this);
+
+#ifdef HAVE_LIBAIO
+  if (aio_fsync) {
+    iocbs.resize(cct->_conf->filestore_experimental_aio_fsyncs_limit);
+    for (vector<iocb>::iterator i = iocbs.begin(); i != iocbs.end(); ++i)
+      memset(&*i, sizeof(*i), 0);
+    io_events.resize(iocbs.size());
+    io_setup(iocbs.size(), &ctxp);
+  }
+#endif
 }
 
+#ifdef HAVE_LIBAIO
+void WBThrottle::wait_fsync_completions(int num) {
+  while (aio_in_flight > num) {
+    int r = io_getevents(ctxp, 1, io_events.size(), &(io_events[0]), NULL);
+    assert(r > 0);
+    assert(r <= aio_in_flight);
+    aio_in_flight -= r;
+  }
+}
+
+void WBThrottle::do_aio_fsync(int fd) {
+  wait_fsync_completions(iocbs.size() - 1);
+  int slot = aio_next++ % iocbs.size();
+  aio_in_flight++;
+  int r = io_fsync(ctxp, &(iocbs[slot]), NULL, fd);
+  assert(r == 0);
+}
+#endif
+
 WBThrottle::~WBThrottle() {
+#ifdef HAVE_LIBAIO
+  wait_fsync_completions(0);
+#endif
   assert(cct);
   cct->get_perfcounters_collection()->remove(logger);
   delete logger;
@@ -160,17 +196,31 @@ void *WBThrottle::entry()
   while (get_next_should_flush(&wb)) {
     clearing = wb.get<0>();
     lock.Unlock();
+#ifdef HAVE_LIBAIO
+    // TODOXXX: as this is set up, we decrement counters etc
+    // when the aio is queued rather than when it is completed
+    if (aio_fsync) {
+      do_aio_fsync(**wb.get<1>());
+    } else {
+#else
 #ifdef HAVE_FDATASYNC
     ::fdatasync(**wb.get<1>());
 #else
     ::fsync(**wb.get<1>());
 #endif
+#endif
+
+#ifdef HAVE_LIBAIO
+    }
+#endif
+
 #ifdef HAVE_POSIX_FADVISE
     if (wb.get<2>().nocache) {
       int fa_r = posix_fadvise(**wb.get<1>(), 0, 0, POSIX_FADV_DONTNEED);
       assert(fa_r == 0);
     }
 #endif
+
     lock.Lock();
     clearing = ghobject_t();
     cur_ios -= wb.get<2>().ios;

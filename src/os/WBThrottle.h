@@ -26,6 +26,10 @@
 #include "common/Thread.h"
 #include "common/ceph_context.h"
 
+#ifdef HAVE_LIBAIO
+#include <libaio.h>
+#endif
+
 class PerfCounters;
 enum {
   l_wbthrottle_first = 999090,
@@ -44,6 +48,18 @@ enum {
  * Tracks, throttles, and flushes outstanding IO
  */
 class WBThrottle : Thread, public md_config_obs_t {
+#ifdef HAVE_LIBAIO
+  bool aio_fsync;
+  io_context_t ctxp;
+  vector<iocb> iocbs;
+  vector<io_event> io_events;
+  int aio_next;
+  int aio_in_flight;
+
+  void wait_fsync_completions(int num);
+  void do_aio_fsync(int fd);
+#endif
+
   ghobject_t clearing;
 
   /* *_limits.first is the start_flusher limit and
