@@ -893,7 +893,7 @@ RGWPutObjProcessor::~RGWPutObjProcessor()
   list<rgw_obj>::iterator iter;
   for (iter = objs.begin(); iter != objs.end(); ++iter) {
     rgw_obj& obj = *iter;
-    int r = store->delete_obj(obj_ctx, bucket_owner, obj, false);
+    int r = store->delete_obj(obj_ctx, bucket_info, obj, false);
     if (r < 0 && r != -ENOENT) {
       ldout(store->ctx(), 0) << "WARNING: failed to remove obj (" << obj << "), leaked" << dendl;
     }
@@ -1153,7 +1153,11 @@ int RGWPutObjProcessor_Atomic::do_complete(string& etag, time_t *mtime, time_t s
 
   obj_ctx.set_atomic(head_obj);
 
-  RGWRados::Object op_target(store, obj_ctx, head_obj);
+  RGWRados::Object op_target(store, bucket_info, obj_ctx, head_obj);
+
+  /* some object types shouldn't be versioned, e.g., multipart parts */
+  op_target.set_versioning_disabled(!versioned_object);
+
   RGWRados::Object::Write obj_op(&op_target);
 
   obj_op.meta.data = &first_chunk;
@@ -1161,30 +1165,14 @@ int RGWPutObjProcessor_Atomic::do_complete(string& etag, time_t *mtime, time_t s
   obj_op.meta.ptag = &unique_tag; /* use req_id as operation tag */
   obj_op.meta.mtime = mtime;
   obj_op.meta.set_mtime = set_mtime;
-  obj_op.meta.owner = bucket_owner;
+  obj_op.meta.owner = bucket_info.owner;
   obj_op.meta.flags = PUT_OBJ_CREATE;
-
-  bool is_olh = false;
-  if (head_obj.get_instance().empty()) {
-    RGWObjState *astate = NULL;
-    r = store->get_obj_state(&obj_ctx, head_obj, &astate, NULL, false); /* don't follow olh */
-    if (r < 0) {
-      return r;
-    }
-    is_olh = astate->is_olh;
-  }
 
   r = obj_op.write_meta(obj_len, attrs);
   if (r < 0) {
     return r;
   }
 
-  if (versioned_object || is_olh) {
-    r = store->set_olh(obj_ctx, bucket_owner, head_obj, false, NULL, olh_epoch);
-    if (r < 0) {
-      return r;
-    }
-  }
   return 0;
 }
 
@@ -2821,6 +2809,8 @@ int RGWRados::Object::Write::write_meta(uint64_t size,
   if (r < 0)
     return r;
 
+  bool is_olh = state->is_olh;
+
   bool reset_obj = (meta.flags & PUT_OBJ_CREATE) != 0;
   r = target->prepare_atomic_modification(op, reset_obj, meta.ptag);
   if (r < 0)
@@ -2930,6 +2920,13 @@ int RGWRados::Object::Write::write_meta(uint64_t size,
 
   if (meta.mtime) {
     *meta.mtime = meta.set_mtime;
+  }
+
+  if (target->versioning_enabled() || is_olh) {
+    r = store->set_olh(target->get_ctx(), target->get_bucket_info(), obj, false, NULL, meta.olh_epoch);
+    if (r < 0) {
+      return r;
+    }
   }
 
   /* update quota cache */
@@ -3191,7 +3188,7 @@ int RGWRados::rewrite_obj(RGWBucketInfo& dest_bucket_info, rgw_obj& obj)
   uint64_t obj_size;
   RGWObjectCtx rctx(this);
 
-  RGWRados::Object op_target(this, rctx, obj);
+  RGWRados::Object op_target(this, dest_bucket_info, rctx, obj);
   RGWRados::Object::Read read_op(&op_target);
 
   read_op.params.attrs = &attrset;
@@ -3249,7 +3246,7 @@ int RGWRados::fetch_remote_obj(RGWObjectCtx& obj_ctx,
   append_rand_alpha(cct, tag, tag, 32);
 
   RGWPutObjProcessor_Atomic processor(obj_ctx,
-                                      dest_bucket_info.owner, dest_obj.bucket, dest_obj.get_object(),
+                                      dest_bucket_info, dest_obj.bucket, dest_obj.get_object(),
                                       cct->_conf->rgw_obj_stripe_size, tag, dest_bucket_info.versioning_enabled());
   int ret = processor.prepare(this, NULL);
   if (ret < 0)
@@ -3426,7 +3423,7 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
   map<string, bufferlist> src_attrs;
   int64_t ofs = 0;
   int64_t end = -1;
-  RGWRados::Object src_op_target(this, obj_ctx, src_obj);
+  RGWRados::Object src_op_target(this, src_bucket_info, obj_ctx, src_obj);
   RGWRados::Object::Read read_op(&src_op_target);
 
   read_op.conds.mod_ptr = mod_ptr;
@@ -3517,13 +3514,8 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
   RGWObjManifest *pmanifest; 
   ldout(cct, 0) << "dest_obj=" << dest_obj << " src_obj=" << src_obj << " copy_itself=" << (int)copy_itself << dendl;
 
-  RGWRados::Object dest_op_target(this, obj_ctx, dest_obj);
+  RGWRados::Object dest_op_target(this, dest_bucket_info, obj_ctx, dest_obj);
   RGWRados::Object::Write write_op(&dest_op_target);
-
-  RGWObjState *dest_state = NULL;
-  ret = get_obj_state(&obj_ctx, dest_obj, &dest_state, NULL);
-  if (ret < 0)
-    return ret;
 
   string tag;
 
@@ -3584,13 +3576,6 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
   if (ret < 0)
     goto done_ret;
 
-  if (versioned_dest || dest_state->is_olh) {
-    ret = set_olh(obj_ctx, dest_bucket_info.owner, dest_obj, false, NULL, olh_epoch);
-    if (ret < 0) {
-      goto done_ret;
-    }
-  }
-
   return 0;
 
 done_ret:
@@ -3640,7 +3625,7 @@ int RGWRados::copy_obj_data(RGWObjectCtx& obj_ctx,
   append_rand_alpha(cct, tag, tag, 32);
 
   RGWPutObjProcessor_Atomic processor(obj_ctx,
-                                      dest_bucket_info.owner, dest_obj.bucket, dest_obj.get_object(),
+                                      dest_bucket_info, dest_obj.bucket, dest_obj.get_object(),
                                       cct->_conf->rgw_obj_stripe_size, tag, dest_bucket_info.versioning_enabled());
   int ret = processor.prepare(this, NULL);
   if (ret < 0)
@@ -3968,7 +3953,7 @@ int RGWRados::Object::Delete::delete_obj()
       meta.owner_display_name = params.obj_owner.get_display_name();
       meta.mtime = ceph_clock_now(store->ctx());
 
-      int r = store->set_olh(target->get_ctx(), params.bucket_owner, marker, true, &meta, params.olh_epoch);
+      int r = store->set_olh(target->get_ctx(), target->get_bucket_info(), marker, true, &meta, params.olh_epoch);
       if (r < 0) {
         return r;
       }
@@ -3982,7 +3967,7 @@ int RGWRados::Object::Delete::delete_obj()
       if (exists) {
         result.delete_marker = dirent.is_delete_marker();
       }
-      r = store->unlink_obj_instance(target->get_ctx(), params.bucket_owner, obj, params.olh_epoch);
+      r = store->unlink_obj_instance(target->get_ctx(), target->get_bucket_info(), obj, params.olh_epoch);
       if (r < 0) {
         return r;
       }
@@ -4064,12 +4049,12 @@ int RGWRados::Object::Delete::delete_obj()
   return 0;
 }
 
-int RGWRados::delete_obj(RGWObjectCtx& obj_ctx, const string& bucket_owner, rgw_obj& obj, int versioning_status)
+int RGWRados::delete_obj(RGWObjectCtx& obj_ctx, RGWBucketInfo& bucket_info, rgw_obj& obj, int versioning_status)
 {
-  RGWRados::Object del_target(this, obj_ctx, obj);
+  RGWRados::Object del_target(this, bucket_info, obj_ctx, obj);
   RGWRados::Object::Delete del_op(&del_target);
 
-  del_op.params.bucket_owner = bucket_owner;
+  del_op.params.bucket_owner = bucket_info.owner;
   del_op.params.versioning_status = versioning_status;
 
   return del_op.delete_obj();
@@ -5620,7 +5605,7 @@ int RGWRados::bucket_index_trim_olh_log(RGWObjState& state, rgw_obj& obj_instanc
   return 0;
 }
 
-int RGWRados::apply_olh_log(RGWObjectCtx& obj_ctx, RGWObjState& state, const string& bucket_owner, rgw_obj& obj,
+int RGWRados::apply_olh_log(RGWObjectCtx& obj_ctx, RGWObjState& state, RGWBucketInfo& bucket_info, rgw_obj& obj,
                             bufferlist& olh_tag, map<uint64_t, vector<rgw_bucket_olh_log_entry> >& log,
                             uint64_t *plast_ver)
 {
@@ -5699,7 +5684,7 @@ int RGWRados::apply_olh_log(RGWObjectCtx& obj_ctx, RGWObjState& state, const str
     cls_rgw_obj_key& key = *liter;
     rgw_obj obj_instance(bucket, key.name);
     obj_instance.set_instance(key.instance);
-    int ret = delete_obj(obj_ctx, bucket_owner, obj_instance, 0);
+    int ret = delete_obj(obj_ctx, bucket_info, obj_instance, 0);
     if (ret < 0 && ret != -ENOENT) {
       ldout(cct, 0) << "ERROR: delete_obj() returned " << ret << " obj_instance=" << obj_instance << dendl;
       return ret;
@@ -5723,7 +5708,7 @@ int RGWRados::apply_olh_log(RGWObjectCtx& obj_ctx, RGWObjState& state, const str
 /*
  * read olh log and apply it
  */
-int RGWRados::update_olh(RGWObjectCtx& obj_ctx, RGWObjState *state, const string& bucket_owner, rgw_obj& obj)
+int RGWRados::update_olh(RGWObjectCtx& obj_ctx, RGWObjState *state, RGWBucketInfo& bucket_info, rgw_obj& obj)
 {
   map<uint64_t, vector<rgw_bucket_olh_log_entry> > log;
   bool is_truncated;
@@ -5734,7 +5719,7 @@ int RGWRados::update_olh(RGWObjectCtx& obj_ctx, RGWObjState *state, const string
     if (ret < 0) {
       return ret;
     }
-    ret = apply_olh_log(obj_ctx, *state, bucket_owner, obj, state->olh_tag, log, &ver_marker);
+    ret = apply_olh_log(obj_ctx, *state, bucket_info, obj, state->olh_tag, log, &ver_marker);
     if (ret < 0) {
       return ret;
     }
@@ -5743,7 +5728,7 @@ int RGWRados::update_olh(RGWObjectCtx& obj_ctx, RGWObjState *state, const string
   return 0;
 }
 
-int RGWRados::set_olh(RGWObjectCtx& obj_ctx, const string& bucket_owner, rgw_obj& target_obj, bool delete_marker, rgw_bucket_dir_entry_meta *meta,
+int RGWRados::set_olh(RGWObjectCtx& obj_ctx, RGWBucketInfo& bucket_info, rgw_obj& target_obj, bool delete_marker, rgw_bucket_dir_entry_meta *meta,
                       uint64_t olh_epoch)
 {
   string op_tag;
@@ -5777,7 +5762,7 @@ int RGWRados::set_olh(RGWObjectCtx& obj_ctx, const string& bucket_owner, rgw_obj
       continue;
     }
 
-    ret = update_olh(obj_ctx, state, bucket_owner, olh_obj);
+    ret = update_olh(obj_ctx, state, bucket_info, olh_obj);
     if (ret < 0) {
       ldout(cct, 20) << "update_olh() target_obj=" << target_obj << " returned " << ret << dendl;
       continue;
@@ -5791,7 +5776,7 @@ int RGWRados::set_olh(RGWObjectCtx& obj_ctx, const string& bucket_owner, rgw_obj
   return 0;
 }
 
-int RGWRados::unlink_obj_instance(RGWObjectCtx& obj_ctx, const string& bucket_owner, rgw_obj& target_obj,
+int RGWRados::unlink_obj_instance(RGWObjectCtx& obj_ctx, RGWBucketInfo& bucket_info, rgw_obj& target_obj,
                                   uint64_t olh_epoch)
 {
   string op_tag;
@@ -5824,7 +5809,7 @@ int RGWRados::unlink_obj_instance(RGWObjectCtx& obj_ctx, const string& bucket_ow
       continue;
     }
 
-    ret = update_olh(obj_ctx, state, bucket_owner, olh_obj);
+    ret = update_olh(obj_ctx, state, bucket_info, olh_obj);
     if (ret < 0) {
       ldout(cct, 20) << "update_olh() target_obj=" << target_obj << " returned " << ret << dendl;
       continue;
@@ -5980,7 +5965,7 @@ int RGWRados::follow_olh(RGWObjectCtx& obj_ctx, RGWObjState *state, rgw_obj& olh
     if (ret < 0) {
       ldout(cct, 0) << "ERROR: get_bucket_instance_info() returned " << ret << " olh_obj.bucket=" << olh_obj.bucket << dendl;
     }
-    ret = update_olh(obj_ctx, state, bucket_info.owner, olh_obj);
+    ret = update_olh(obj_ctx, state, bucket_info, olh_obj);
     if (ret < 0) {
       return ret;
     }
