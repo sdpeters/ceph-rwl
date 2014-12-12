@@ -434,9 +434,10 @@ public:
 
   /* You should not use these items without taking their respective queue locks
    * (if they have one) */
-  xlist<PG*>::item recovery_item, stat_queue_item;
+  xlist<PG*>::item stat_queue_item;
   bool snap_trim_queued;
   bool scrub_queued;
+  bool recovery_queued;
 
   int recovery_ops_active;
   set<pg_shard_t> waiting_on_backfill;
@@ -2158,6 +2159,7 @@ public:
 
   void queue_snap_trim();
   bool requeue_scrub();
+  void queue_recovery(bool front = false);
   bool queue_scrub();
 
   /// share pg info after a pg is active

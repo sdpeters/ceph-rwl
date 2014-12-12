@@ -864,7 +864,7 @@ protected:
     assert(ctx->release_snapset_obc == false);
     ctx->lock_to_release = OpContext::NONE;
     if (requeue_recovery || requeue_recovery_clone || requeue_recovery_snapset)
-      osd->recovery_wq.queue(this);
+      queue_recovery();
     if (requeue_snaptrimmer ||
 	requeue_snaptrimmer_clone ||
 	requeue_snaptrimmer_snapset)

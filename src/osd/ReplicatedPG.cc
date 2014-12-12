@@ -8646,7 +8646,7 @@ void ReplicatedPG::mark_all_unfound_lost(int what)
   share_pg_log();
 
   // queue ourselves so that we push the (now-lost) object_infos to replicas.
-  osd->queue_for_recovery(this);
+  queue_recovery();
 }
 
 void ReplicatedPG::_finish_mark_all_unfound_lost(list<ObjectContextRef>& obcs)
@@ -8778,7 +8778,6 @@ void ReplicatedPG::on_shutdown()
   dout(10) << "on_shutdown" << dendl;
 
   // remove from queues
-  osd->recovery_wq.dequeue(this);
   osd->pg_stat_queue_dequeue(this);
   osd->dequeue_pg(this, 0);
   osd->peering_wq.dequeue(this);
