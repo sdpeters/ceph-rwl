@@ -71,7 +71,7 @@ void WBThrottle::do_aio_fsync(int fd) {
   int slot = aio_next++ % iocbs.size();
   aio_in_flight++;
   int r = io_fsync(ctxp, &(iocbs[slot]), NULL, fd);
-  if (r != 0) {
+  if (r != 1) {
     int err = errno;
     dout(0) << "io_fsync failed with r = " << r
 	    << " and errno: " << err
