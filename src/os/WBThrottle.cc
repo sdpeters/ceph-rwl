@@ -3,8 +3,14 @@
 
 #include "acconfig.h"
 
+#include "common/debug.h"
+#include "common/errno.h"
 #include "os/WBThrottle.h"
 #include "common/perf_counters.h"
+
+#define dout_subsys ceph_subsys_filestore
+#undef dout_prefix
+#define dout_prefix *_dout << "WBThrottle: "
 
 WBThrottle::WBThrottle(CephContext *cct) :
 #ifdef HAVE_LIBAIO
@@ -65,7 +71,13 @@ void WBThrottle::do_aio_fsync(int fd) {
   int slot = aio_next++ % iocbs.size();
   aio_in_flight++;
   int r = io_fsync(ctxp, &(iocbs[slot]), NULL, fd);
-  assert(r == 0);
+  if (r != 0) {
+    int err = errno;
+    dout(0) << "io_fsync failed with r = " << r
+	    << " and errno: " << err
+	    << dendl;
+    assert(0 == "error return from io_fsync");
+  }
 }
 #endif
 
