@@ -48,15 +48,33 @@ enum {
  * Tracks, throttles, and flushes outstanding IO
  */
 class WBThrottle : Thread, public md_config_obs_t {
+  /**
+   * PendingWB tracks the ios pending on an object.
+   */
+  class PendingWB {
+  public:
+    bool nocache;
+    uint64_t size;
+    uint64_t ios;
+    PendingWB() : nocache(true), size(0), ios(0) {}
+    void add(bool _nocache, uint64_t _size, uint64_t _ios) {
+      if (!_nocache)
+	nocache = false; // only nocache if all writes are nocache
+      size += _size;
+      ios += _ios;
+    }
+  };
+
 #ifdef HAVE_LIBAIO
   bool aio_fsync;
   io_context_t ctxp;
   vector<iocb> iocbs;
   vector<io_event> io_events;
-  int aio_next;
-  int aio_in_flight;
+  list<boost::tuple<ghobject_t, FDRef, PendingWB> > flushing;
+  unsigned aio_next;
+  unsigned aio_in_flight;
 
-  void wait_fsync_completions(int num);
+  void wait_fsync_completions(unsigned num);
   void do_aio_fsync(int fd);
 #endif
 
@@ -77,23 +95,6 @@ class WBThrottle : Thread, public md_config_obs_t {
 
   uint64_t cur_ios;  /// Currently unflushed IOs
   uint64_t cur_size; /// Currently unflushed bytes
-
-  /**
-   * PendingWB tracks the ios pending on an object.
-   */
-  class PendingWB {
-  public:
-    bool nocache;
-    uint64_t size;
-    uint64_t ios;
-    PendingWB() : nocache(true), size(0), ios(0) {}
-    void add(bool _nocache, uint64_t _size, uint64_t _ios) {
-      if (!_nocache)
-	nocache = false; // only nocache if all writes are nocache
-      size += _size;
-      ios += _ios;
-    }
-  };
 
   CephContext *cct;
   PerfCounters *logger;
@@ -184,6 +185,8 @@ public:
 
   /// Thread
   void *entry();
+
+  void complete(boost::tuple<ghobject_t, FDRef, PendingWB> &wb);
 };
 
 #endif

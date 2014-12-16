@@ -57,13 +57,19 @@ WBThrottle::WBThrottle(CephContext *cct) :
 }
 
 #ifdef HAVE_LIBAIO
-void WBThrottle::wait_fsync_completions(int num) {
+void WBThrottle::wait_fsync_completions(unsigned num) {
   while (aio_in_flight > num) {
+    assert(aio_in_flight == flushing.size());
     int r = io_getevents(ctxp, 1, io_events.size(), &(io_events[0]), NULL);
     assert(r > 0);
     assert(r <= aio_in_flight);
     aio_in_flight -= r;
+    while (--r > 0) {
+      complete(flushing.front());
+      flushing.pop_front();
+    }
   }
+  assert(aio_in_flight == flushing.size());
 }
 
 void WBThrottle::do_aio_fsync(int fd) {
@@ -209,10 +215,10 @@ void *WBThrottle::entry()
     clearing = wb.get<0>();
     lock.Unlock();
 #ifdef HAVE_LIBAIO
-    // TODOXXX: as this is set up, we decrement counters etc
-    // when the aio is queued rather than when it is completed
     if (aio_fsync) {
       do_aio_fsync(**wb.get<1>());
+      lock.Lock();
+      flushing.push_back(wb);
     } else {
 #else
 #ifdef HAVE_FDATASYNC
@@ -222,10 +228,6 @@ void *WBThrottle::entry()
 #endif
 #endif
 
-#ifdef HAVE_LIBAIO
-    }
-#endif
-
 #ifdef HAVE_POSIX_FADVISE
     if (wb.get<2>().nocache) {
       int fa_r = posix_fadvise(**wb.get<1>(), 0, 0, POSIX_FADV_DONTNEED);
@@ -233,17 +235,29 @@ void *WBThrottle::entry()
     }
 #endif
 
+
     lock.Lock();
     clearing = ghobject_t();
+    complete(wb);
+
+#ifdef HAVE_LIBAIO
+    }
+#endif
+
+    wb = boost::tuple<ghobject_t, FDRef, PendingWB>();
+  }
+  return 0;
+}
+
+void WBThrottle::complete(
+  boost::tuple<ghobject_t, FDRef, PendingWB> &wb)
+{
     cur_ios -= wb.get<2>().ios;
     logger->dec(l_wbthrottle_ios_dirtied, wb.get<2>().ios);
     cur_size -= wb.get<2>().size;
     logger->dec(l_wbthrottle_bytes_dirtied, wb.get<2>().size);
     logger->dec(l_wbthrottle_inodes_dirtied);
     cond.Signal();
-    wb = boost::tuple<ghobject_t, FDRef, PendingWB>();
-  }
-  return 0;
 }
 
 void WBThrottle::queue_wb(
