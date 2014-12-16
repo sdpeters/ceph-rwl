@@ -56,8 +56,9 @@ WBThrottle::WBThrottle(CephContext *cct) :
 
 #ifdef HAVE_LIBAIO
 void WBThrottle::wait_fsync_completions(unsigned num) {
-  while (aio_in_flight > num) {
-    assert(aio_in_flight == flushing.size());
+  if (aio_in_flight == 0)
+    return;
+  do {
     int r = io_getevents(ctxp, 1, iocbs.size(), &(io_events[0]), NULL);
     assert(r > 0);
     assert((unsigned)r <= aio_in_flight);
@@ -70,14 +71,17 @@ void WBThrottle::wait_fsync_completions(unsigned num) {
       assert(next_aio >= aio_in_flight);
       int slot = (next_aio - aio_in_flight) % iocbs.size();
       if (iocbs[slot].done) {
-	complete(iocbs[slot].wb);
+	{
+	  Mutex::Locker l(lock);
+	  complete(iocbs[slot].wb);
+	}
 	iocbs[slot].clear();
 	aio_in_flight--;
       } else {
 	break;
       }
     }
-  }
+  } while (aio_in_flight > num);
 }
 
 void WBThrottle::do_aio_fsync(FDRef fd, const PendingWB &wb)
@@ -206,11 +210,25 @@ bool WBThrottle::get_next_should_flush(
 {
   assert(lock.is_locked());
   assert(next);
+
+#ifdef HAVE_LIBAIO
+  if (!stopping &&
+      cur_ios < io_limits.first &&
+      pending_wbs.size() < fd_limits.first &&
+      cur_size < size_limits.first &&
+      aio_in_flight > 0) {
+    lock.Unlock();
+    wait_fsync_completions(0);
+    lock.Lock();
+  }
+#endif
+
   while (!stopping &&
          cur_ios < io_limits.first &&
          pending_wbs.size() < fd_limits.first &&
-         cur_size < size_limits.first)
-         cond.Wait(lock);
+         cur_size < size_limits.first) {
+    cond.Wait(lock);
+  }
   if (stopping)
     return false;
   assert(!pending_wbs.empty());
@@ -235,7 +253,6 @@ void *WBThrottle::entry()
     if (aio_fsync) {
       do_aio_fsync(wb.get<1>(), wb.get<2>());
       lock.Lock();
-      flushing.push_back(wb);
     } else {
 #else
 #ifdef HAVE_FDATASYNC

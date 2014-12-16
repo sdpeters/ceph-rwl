@@ -81,7 +81,6 @@ class WBThrottle : Thread, public md_config_obs_t {
     }
   };
   vector<aiocb> iocbs;
-  list<boost::tuple<ghobject_t, FDRef, PendingWB> > flushing;
   unsigned aio_in_flight;
   unsigned next_aio;
 
