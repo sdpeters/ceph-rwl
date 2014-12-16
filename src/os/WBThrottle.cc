@@ -15,7 +15,7 @@
 WBThrottle::WBThrottle(CephContext *cct) :
 #ifdef HAVE_LIBAIO
   aio_fsync(cct->_conf->filestore_experimental_enable_aio_fsync),
-  aio_next(0), aio_in_flight(0),
+  aio_in_flight(0), next_aio(0),
 #endif
   cur_ios(0), cur_size(0),
   cct(cct),
@@ -48,8 +48,6 @@ WBThrottle::WBThrottle(CephContext *cct) :
 #ifdef HAVE_LIBAIO
   if (aio_fsync) {
     iocbs.resize(cct->_conf->filestore_experimental_aio_fsyncs_limit);
-    for (vector<iocb>::iterator i = iocbs.begin(); i != iocbs.end(); ++i)
-      memset(&*i, sizeof(*i), 0);
     io_events.resize(iocbs.size());
     io_setup(iocbs.size(), &ctxp);
   }
@@ -60,23 +58,42 @@ WBThrottle::WBThrottle(CephContext *cct) :
 void WBThrottle::wait_fsync_completions(unsigned num) {
   while (aio_in_flight > num) {
     assert(aio_in_flight == flushing.size());
-    int r = io_getevents(ctxp, 1, io_events.size(), &(io_events[0]), NULL);
+    int r = io_getevents(ctxp, 1, iocbs.size(), &(io_events[0]), NULL);
     assert(r > 0);
-    assert(r <= aio_in_flight);
-    aio_in_flight -= r;
-    while (--r > 0) {
-      complete(flushing.front());
-      flushing.pop_front();
+    assert((unsigned)r <= aio_in_flight);
+    for (int i = 0; i < r; ++i) {
+      aiocb *cb = reinterpret_cast<aiocb*>(io_events[i].obj);
+      assert(!cb->done);
+      cb->done = true;
+    }
+    while (aio_in_flight > 0) {
+      assert(next_aio >= aio_in_flight);
+      int slot = (next_aio - aio_in_flight) % iocbs.size();
+      if (iocbs[slot].done) {
+	complete(iocbs[slot].wb);
+	iocbs[slot].clear();
+	aio_in_flight--;
+      } else {
+	break;
+      }
     }
   }
-  assert(aio_in_flight == flushing.size());
 }
 
-void WBThrottle::do_aio_fsync(int fd) {
+void WBThrottle::do_aio_fsync(FDRef fd, const PendingWB &wb)
+{
   wait_fsync_completions(iocbs.size() - 1);
-  int slot = aio_next++ % iocbs.size();
+  int slot = next_aio++ % iocbs.size();
   aio_in_flight++;
-  int r = io_fsync(ctxp, &(iocbs[slot]), NULL, fd);
+
+  int r = 0;
+  int tries = 100;
+  while (r >= 0 && r < 1 && tries-- > 0) {
+    assert(!iocbs[slot].done);
+    iocbs[slot].wb = wb;
+    iocbs[slot].fd = fd;
+    r = io_fsync(ctxp, &(iocbs[slot].cb), NULL, **fd);
+  }
   if (r != 1) {
     int err = errno;
     dout(0) << "io_fsync failed with r = " << r
@@ -216,7 +233,7 @@ void *WBThrottle::entry()
     lock.Unlock();
 #ifdef HAVE_LIBAIO
     if (aio_fsync) {
-      do_aio_fsync(**wb.get<1>());
+      do_aio_fsync(wb.get<1>(), wb.get<2>());
       lock.Lock();
       flushing.push_back(wb);
     } else {
@@ -238,7 +255,7 @@ void *WBThrottle::entry()
 
     lock.Lock();
     clearing = ghobject_t();
-    complete(wb);
+    complete(wb.get<2>());
 
 #ifdef HAVE_LIBAIO
     }
@@ -249,13 +266,12 @@ void *WBThrottle::entry()
   return 0;
 }
 
-void WBThrottle::complete(
-  boost::tuple<ghobject_t, FDRef, PendingWB> &wb)
+void WBThrottle::complete(const PendingWB &wb)
 {
-    cur_ios -= wb.get<2>().ios;
-    logger->dec(l_wbthrottle_ios_dirtied, wb.get<2>().ios);
-    cur_size -= wb.get<2>().size;
-    logger->dec(l_wbthrottle_bytes_dirtied, wb.get<2>().size);
+    cur_ios -= wb.ios;
+    logger->dec(l_wbthrottle_ios_dirtied, wb.ios);
+    cur_size -= wb.size;
+    logger->dec(l_wbthrottle_bytes_dirtied, wb.size);
     logger->dec(l_wbthrottle_inodes_dirtied);
     cond.Signal();
 }

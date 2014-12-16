@@ -56,7 +56,8 @@ class WBThrottle : Thread, public md_config_obs_t {
     bool nocache;
     uint64_t size;
     uint64_t ios;
-    PendingWB() : nocache(true), size(0), ios(0) {}
+    PendingWB() : nocache(true), size(0), ios(0)
+      {}
     void add(bool _nocache, uint64_t _size, uint64_t _ios) {
       if (!_nocache)
 	nocache = false; // only nocache if all writes are nocache
@@ -68,14 +69,24 @@ class WBThrottle : Thread, public md_config_obs_t {
 #ifdef HAVE_LIBAIO
   bool aio_fsync;
   io_context_t ctxp;
-  vector<iocb> iocbs;
   vector<io_event> io_events;
+  struct aiocb {
+    iocb cb;
+    bool done;
+    FDRef fd;
+    PendingWB wb;
+    aiocb() : done(false) {}
+    void clear() {
+      *this = aiocb();
+    }
+  };
+  vector<aiocb> iocbs;
   list<boost::tuple<ghobject_t, FDRef, PendingWB> > flushing;
-  unsigned aio_next;
   unsigned aio_in_flight;
+  unsigned next_aio;
 
   void wait_fsync_completions(unsigned num);
-  void do_aio_fsync(int fd);
+  void do_aio_fsync(FDRef fd, const PendingWB &wb);
 #endif
 
   ghobject_t clearing;
@@ -186,7 +197,7 @@ public:
   /// Thread
   void *entry();
 
-  void complete(boost::tuple<ghobject_t, FDRef, PendingWB> &wb);
+  void complete(const PendingWB &wb);
 };
 
 #endif
