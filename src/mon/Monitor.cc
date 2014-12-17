@@ -1190,6 +1190,11 @@ void Monitor::handle_sync_chunk(MMonSync *m)
 void Monitor::handle_sync_no_cookie(MMonSync *m)
 {
   dout(10) << __func__ << dendl;
+  if (m->cookie != sync_cookie) {
+    dout(10) << __func__ << " cookie does not match (ours: " << sync_cookie
+             << ", theirs: " << m->cookie << ") -- ignore." << dendl;
+    return;
+  }
   bootstrap();
 }
 
