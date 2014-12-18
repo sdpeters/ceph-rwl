@@ -59,7 +59,7 @@ void WBThrottle::wait_fsync_completions(unsigned num) {
   if (aio_in_flight == 0)
     return;
   do {
-    int r = io_getevents(ctxp, 1, iocbs.size(), &(io_events[0]), NULL);
+    int r = io_getevents(ctxp, 1, io_events.size(), &(io_events[0]), NULL);
     assert(r > 0);
     assert((unsigned)r <= aio_in_flight);
     for (int i = 0; i < r; ++i) {
@@ -271,13 +271,13 @@ void *WBThrottle::entry()
 
 
     lock.Lock();
-    clearing = ghobject_t();
     complete(wb.get<2>());
 
 #ifdef HAVE_LIBAIO
     }
 #endif
 
+    clearing = ghobject_t();
     wb = boost::tuple<ghobject_t, FDRef, PendingWB>();
   }
   return 0;
