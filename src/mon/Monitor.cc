@@ -54,6 +54,9 @@
 #include "messages/MMonHealth.h"
 #include "messages/MPing.h"
 
+#include "messages/MLog.h"
+#include "messages/MLogAck.h"
+
 #include "common/strtol.h"
 #include "common/ceph_argparse.h"
 #include "common/Timer.h"
@@ -3018,6 +3021,14 @@ bool Monitor::dispatch(MonSession *s, Message *m, const bool src_is_mon)
 
     // log
     case MSG_LOG:
+      if (g_conf->mon_msg_blackhole_mlog) {
+	dout(20) << __func__ << " blackhole " << *m << dendl;
+        MLog *mlog = (MLog*)m;
+        send_reply(mlog,
+                   new MLogAck(mlog->fsid, mlog->entries.rbegin()->seq));
+        m->put();
+        break;
+      }
       paxos_service[PAXOS_LOG]->dispatch((PaxosServiceMessage*)m);
       break;
 
