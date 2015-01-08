@@ -3021,7 +3021,7 @@ bool Monitor::dispatch(MonSession *s, Message *m, const bool src_is_mon)
 
     // log
     case MSG_LOG:
-      if (g_conf->mon_msg_blackhole_mlog) {
+      if (g_conf->mon_msg_blackhole_mlog && m->get_source().is_osd()) {
 	dout(20) << __func__ << " blackhole " << *m << dendl;
         MLog *mlog = (MLog*)m;
         send_reply(mlog,
