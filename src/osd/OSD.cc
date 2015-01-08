@@ -7834,6 +7834,7 @@ void OSD::process_peering_events(
       pg->unlock();
       continue;
     }
+    dout(20) << __func__ << " pg " << *pg << " q is " << pg->peering_queue << dendl;
     if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
       pg->queue_null(curmap->get_epoch(), curmap->get_epoch());
     } else if (!pg->peering_queue.empty()) {
@@ -8031,13 +8032,25 @@ void OSD::PeeringWQ::_dequeue(list<PG*> *out) {
       i != peering_queue.end() &&
       out->size() < osd->cct->_conf->osd_peering_wq_batch_size;
       ) {
-        if (in_use.count(*i)) {
-          ++i;
-        } else {
-          out->push_back(*i);
-          got.insert(*i);
-          peering_queue.erase(i++);
-        }
+    if (in_use.count(*i)) {
+      generic_dout(20) << __func__ << " skipping in_use " << *i << dendl;
+      ++i;
+    } else {
+      generic_dout(20) << __func__ << " taking " << *i << dendl;
+      out->push_back(*i);
+      got.insert(*i);
+      peering_queue.erase(i++);
+    }
   }
   in_use.insert(got.begin(), got.end());
+  generic_dout(20) << __func__ << " in_use now " << in_use << dendl;
+}
+
+void OSD::PeeringWQ::_process_finish(const list<PG *> &pgs) {
+  for (list<PG*>::const_iterator i = pgs.begin();
+       i != pgs.end();
+       ++i) {
+    in_use.erase(*i);
+  }
+  generic_dout(20) << __func__ << " finished " << pgs << " in_use now " << in_use << dendl;
 }

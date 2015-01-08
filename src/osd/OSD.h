@@ -1246,13 +1246,7 @@ private:
 	(*i)->put("PeeringWQ");
       }
     }
-    void _process_finish(const list<PG *> &pgs) {
-      for (list<PG*>::const_iterator i = pgs.begin();
-	   i != pgs.end();
-	   ++i) {
-	in_use.erase(*i);
-      }
-    }
+    void _process_finish(const list<PG *> &pgs);
     void _clear() {
       assert(peering_queue.empty());
     }

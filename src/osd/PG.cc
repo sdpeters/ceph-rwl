@@ -5276,6 +5276,7 @@ void PG::queue_peering_event(CephPeeringEvtRef evt)
   if (old_peering_evt(evt))
     return;
   peering_queue.push_back(evt);
+  dout(20) << __func__ << " evt " << evt << " q " << peering_queue << dendl;
   osd->queue_for_peering(this);
 }
 
