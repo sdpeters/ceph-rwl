@@ -509,10 +509,10 @@ private:
   /**
    *
    */
-  list<Context*> proposals;
-  /**
-   * @}
-   */
+
+  MonitorDBStore::Transaction *pending_proposal;
+  list<Context*> pending_finishers;
+  list<Context*> committing_finishers;
 
   /**
    * @defgroup Paxos_h_sync_warns Synchronization warnings
@@ -972,17 +972,9 @@ private:
   void warn_on_future_time(utime_t t, entity_name_t from);
 
   /**
-   * Queue a new proposal by pushing it at the back of the queue; do not
-   * propose it.
-   *
-   * @param bl The bufferlist to be proposed
-   * @param onfinished The callback to be called once the proposal finishes
-   */
-  void queue_proposal(bufferlist& bl, Context *onfinished);
-  /**
    * Begin proposing the Proposal at the front of the proposals queue.
    */
-  void propose_queued();
+  void propose_pending();
 
   /**
    * refresh state from store
@@ -1019,8 +1011,12 @@ public:
 		   lease_ack_timeout_event(0),
 		   lease_timeout_event(0),
 		   accept_timeout_event(0),
+		   pending_proposal(NULL),
 		   clock_drift_warned(0),
 		   trimming(false) { }
+  ~Paxos() {
+    delete pending_proposal;
+  }
 
   const string get_name() const {
     return paxos_name;
@@ -1259,13 +1255,6 @@ public:
   }
 
   /**
-   * List all queued proposals
-   *
-   * @param out[out] Output Stream onto which we will output the list
-   *		     of queued proposals.
-   */
-  void list_proposals(ostream& out);
-  /**
    * Propose a new value to the Leader.
    *
    * This function enables the submission of a new value to the Leader, which
@@ -1274,7 +1263,11 @@ public:
    * @param bl A bufferlist holding the value to be proposed
    * @param onfinish A callback to be fired up once we finish the proposal
    */
-  bool propose_new_value(bufferlist& bl, Context *onfinished=0);
+  MonitorDBStore::Transaction *get_pending_transaction();
+  void queue_pending_finisher(Context *onfinished);
+
+  bool trigger_propose();
+
   /**
    * Add oncommit to the back of the list of callbacks waiting for us to
    * finish committing.
