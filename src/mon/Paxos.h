@@ -277,9 +277,9 @@ private:
   /**
    * Last committed value's time.
    *
-   * When the commit happened.
+   * When the commit round finished
    */
-  utime_t last_commit_time;
+  utime_t last_finish_round_time;
   /**
    * The last Proposal Number we have accepted.
    *

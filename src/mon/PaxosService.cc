@@ -155,11 +155,11 @@ bool PaxosService::should_propose(double& delay)
     delay = 0.0;
   else {
     utime_t now = ceph_clock_now(g_ceph_context);
-    if ((now - paxos->last_commit_time) > g_conf->paxos_propose_interval)
+    if ((now - paxos->last_finish_round_time) > g_conf->paxos_propose_interval)
       delay = (double)g_conf->paxos_min_wait;
     else
-      delay = (double)(g_conf->paxos_propose_interval + paxos->last_commit_time
-		       - now);
+      delay = (double)(g_conf->paxos_propose_interval +
+                       paxos->last_finish_round_time - now);
   }
   return true;
 }

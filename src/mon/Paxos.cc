@@ -756,7 +756,6 @@ void Paxos::commit()
 
   // commit locally
   last_committed++;
-  last_commit_time = ceph_clock_now(g_ceph_context);
   t.put(get_name(), "last_committed", last_committed);
 
   // decode the value and apply its transaction to the store.
@@ -915,6 +914,8 @@ void Paxos::finish_round()
 {
   dout(10) << __func__ << dendl;
   assert(mon->is_leader());
+
+  last_finish_round_time = ceph_clock_now(g_ceph_context);
 
   // ok, now go active!
   state = STATE_ACTIVE;
