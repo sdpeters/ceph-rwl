@@ -2258,48 +2258,46 @@ void PG::_update_calc_stats()
 
 void PG::publish_stats_to_osd()
 {
+  if (!is_primary())
+    return;
+
   pg_stats_publish_lock.Lock();
-  if (is_primary()) {
-    // update our stat summary
-    info.stats.reported_epoch = get_osdmap()->get_epoch();
-    ++info.stats.reported_seq;
 
-    if (info.stats.stats.sum.num_scrub_errors)
-      state_set(PG_STATE_INCONSISTENT);
-    else
-      state_clear(PG_STATE_INCONSISTENT);
+  // update our stat summary
+  info.stats.reported_epoch = get_osdmap()->get_epoch();
+  ++info.stats.reported_seq;
 
-    utime_t now = ceph_clock_now(cct);
-    info.stats.last_fresh = now;
-    if (info.stats.state != state) {
-      info.stats.state = state;
-      info.stats.last_change = now;
-      if ((state & PG_STATE_ACTIVE) &&
-	  !(info.stats.state & PG_STATE_ACTIVE))
-	info.stats.last_became_active = now;
-    }
-    if (info.stats.state & PG_STATE_CLEAN)
-      info.stats.last_clean = now;
-    if (info.stats.state & PG_STATE_ACTIVE)
-      info.stats.last_active = now;
-    info.stats.last_unstale = now;
+  if (info.stats.stats.sum.num_scrub_errors)
+    state_set(PG_STATE_INCONSISTENT);
+  else
+    state_clear(PG_STATE_INCONSISTENT);
 
-    _update_calc_stats();
-
-    pg_stats_publish_valid = true;
-    pg_stats_publish = info.stats;
-    pg_stats_publish.stats.add(unstable_stats);
-
-    dout(15) << "publish_stats_to_osd " << pg_stats_publish.reported_epoch
-	     << ":" << pg_stats_publish.reported_seq << dendl;
-  } else {
-    pg_stats_publish_valid = false;
-    dout(15) << "publish_stats_to_osd -- not primary" << dendl;
+  utime_t now = ceph_clock_now(cct);
+  info.stats.last_fresh = now;
+  if (info.stats.state != state) {
+    info.stats.state = state;
+    info.stats.last_change = now;
+    if ((state & PG_STATE_ACTIVE) &&
+	!(info.stats.state & PG_STATE_ACTIVE))
+      info.stats.last_became_active = now;
   }
+  if (info.stats.state & PG_STATE_CLEAN)
+    info.stats.last_clean = now;
+  if (info.stats.state & PG_STATE_ACTIVE)
+    info.stats.last_active = now;
+  info.stats.last_unstale = now;
+
+  _update_calc_stats();
+
+  pg_stats_publish_valid = true;
+  pg_stats_publish = info.stats;
+  pg_stats_publish.stats.add(unstable_stats);
+
+  dout(15) << "publish_stats_to_osd " << pg_stats_publish.reported_epoch
+	   << ":" << pg_stats_publish.reported_seq << dendl;
   pg_stats_publish_lock.Unlock();
 
-  if (is_primary())
-    osd->pg_stat_queue_enqueue(this);
+  osd->pg_stat_queue_enqueue(this);
 }
 
 void PG::clear_publish_stats()
@@ -4774,6 +4772,10 @@ void PG::start_peering_interval(
     info.stats.acting_primary = new_acting_primary;
     info.stats.mapping_epoch = info.history.same_interval_since;
   }
+
+  pg_stats_publish_lock.Lock();
+  pg_stats_publish_valid = false;
+  pg_stats_publish_lock.Unlock();
 
   // This will now be remapped during a backfill in cases
   // that it would not have been before.
