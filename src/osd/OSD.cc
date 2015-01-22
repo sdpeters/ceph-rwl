@@ -1915,6 +1915,10 @@ int OSD::init()
     derr << "unable to obtain rotating service keys; retrying" << dendl;
   }
 
+  r = update_crush_location();
+  if (r < 0)
+    goto monout;
+
   osd_lock.Lock();
   if (is_stopping())
     return 0;
@@ -2393,6 +2397,77 @@ int OSD::shutdown()
   peering_wq.clear();
 
   return r;
+}
+
+int OSD::update_crush_location()
+{
+  if (!g_conf->osd_crush_update_on_start) {
+    dout(10) << __func__ << " false" << dendl;
+    return 0;
+  }
+
+  struct statfs st;
+  int r = store->statfs(&st);
+  if (r < 0) {
+    derr << "statfs: " << cpp_strerror(r) << dendl;
+    return r;
+  }
+  char weight[32] = {0};
+  snprintf(weight, sizeof(weight), "%.5lf",
+	   MAX((double).001,
+	       (double)st.f_blocks * (double)st.f_bsize /
+	       (double)(1ull << 40 /* TB */)));
+
+  vector<string> locvec;
+  get_str_vec(g_conf->crush_location, ";, \t", locvec);
+  std::multimap<string,string> loc;
+  r = CrushWrapper::parse_loc_multimap(locvec, &loc);
+  if (r < 0) {
+    derr << "error parsing crush_location '" << g_conf->crush_location
+	 << "': " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  if (loc.empty()) {
+    struct utsname u;
+    int r = uname(&u);
+    if (r < 0) {
+      derr << __func__ << " failed uname(2): " << cpp_strerror(r) << dendl;
+      return r;
+    }
+    loc.insert(make_pair("root", "default"));
+    loc.insert(make_pair("host", u.nodename));
+    dout(10) << __func__ << " empty crush_location, populating with default "
+	     << loc << dendl;
+  }
+
+  string cmd =
+    string("{\"prefix\": \"osd crush create-or-move\", ") +
+    string("\"id\": ") + stringify(whoami) + string(", ") +
+    string("\"weight\":") + weight + string(", ") +
+    string("\"args\": [");
+  for (multimap<string,string>::iterator p = loc.begin(); p != loc.end(); ++p) {
+    if (p != loc.begin())
+      cmd += ", ";
+    cmd += "\"" + p->first + "=" + p->second + "\"";
+  }
+  cmd += "]}";
+
+  dout(10) << __func__ << " cmd: " << cmd << dendl;
+  vector<string> vcmd(1);
+  vcmd[0] = cmd;
+  bufferlist inbl;
+
+  C_SaferCond w;
+  string outs;
+  r = monc->start_mon_command(vcmd, inbl, NULL, &outs, &w);
+  w.wait();
+  if (r < 0) {
+    derr << __func__ << " fail: '" << outs << "': " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  return 0;
 }
 
 void OSD::write_superblock(ObjectStore::Transaction& t)
