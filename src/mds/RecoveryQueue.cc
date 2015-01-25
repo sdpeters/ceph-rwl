@@ -79,7 +79,7 @@ void RecoveryQueue::advance()
 
 void RecoveryQueue::_start(CInode *in)
 {
-  inode_t *pi = in->get_projected_inode();
+  const const_inode_ref& pi = in->get_projected_inode();
 
   // blech
   if (pi->client_ranges.size() && !pi->get_max_size()) {
@@ -88,16 +88,16 @@ void RecoveryQueue::_start(CInode *in)
   }
 
   if (pi->client_ranges.size() && pi->get_max_size()) {
-    dout(10) << "starting " << in->inode.size << " " << pi->client_ranges
+    dout(10) << "starting " << pi->size << " " << pi->client_ranges
 	     << " " << *in << dendl;
     file_recovering.insert(in);
 
     C_MDC_Recover *fin = new C_MDC_Recover(this, in);
-    mds->filer->probe(in->inode.ino, &in->inode.layout, in->last,
+    mds->filer->probe(in->ino(), &pi->layout, in->last,
 		      pi->get_max_size(), &fin->size, &fin->mtime, false,
 		      0, fin);
   } else {
-    dout(10) << "skipping " << in->inode.size << " " << *in << dendl;
+    dout(10) << "skipping " << pi->size << " " << *in << dendl;
     in->state_clear(CInode::STATE_RECOVERING);
     mds->locker->eval(in, CEPH_LOCK_IFILE);
     in->auth_unpin(this);

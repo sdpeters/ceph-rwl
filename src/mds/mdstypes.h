@@ -141,7 +141,7 @@ struct frag_info_t : public scatter_info_t {
   }
 
   // *this += cur - acc;
-  void add_delta(const frag_info_t &cur, frag_info_t &acc, bool& touched_mtime) {
+  void add_delta(const frag_info_t &cur, const frag_info_t &acc, bool& touched_mtime) {
     if (!(cur.mtime == acc.mtime)) {
       mtime = cur.mtime;
       touched_mtime = true;
@@ -200,7 +200,7 @@ struct nest_info_t : public scatter_info_t {
   }
 
   // *this += cur - acc;
-  void add_delta(const nest_info_t &cur, nest_info_t &acc) {
+  void add_delta(const nest_info_t &cur, const nest_info_t &acc) {
     if (cur.rctime > rctime)
       rctime = cur.rctime;
     rbytes += cur.rbytes - acc.rbytes;
@@ -456,7 +456,7 @@ struct inode_t {
     memset(&layout, 0, sizeof(layout));
   }
 
-  uint64_t get_layout_size_increment() {
+  uint64_t get_layout_size_increment() const {
     return (uint64_t)layout.fl_object_size * (uint64_t)layout.fl_stripe_count;
   }
 

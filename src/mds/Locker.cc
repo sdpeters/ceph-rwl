@@ -167,7 +167,7 @@ void Locker::include_snap_rdlocks(set<SimpleLock*>& rdlocks, CInode *in)
 }
 
 void Locker::include_snap_rdlocks_wlayout(set<SimpleLock*>& rdlocks, CInode *in,
-                                  ceph_file_layout **layout)
+                                  	  const ceph_file_layout **layout)
 {
   //rdlock ancestor snaps
   CInode *t = in;
@@ -1693,7 +1693,7 @@ void Locker::xlock_import(SimpleLock *lock)
 version_t Locker::issue_file_data_version(CInode *in)
 {
   dout(7) << "issue_file_data_version on " << *in << dendl;
-  return in->inode.file_data_version;
+  return in->get_inode().file_data_version;
 }
 
 class C_Locker_FileUpdate_finish : public LockerContext {
@@ -1888,7 +1888,7 @@ bool Locker::issue_caps(CInode *in, Capability *only_cap)
     allowed |= xlocker_allowed & in->get_xlocker_mask(it->first);
 
     Session *session = mds->get_session(it->first);
-    if (in->inode.inline_version != CEPH_INLINE_NONE &&
+    if (in->get_inline_version() != CEPH_INLINE_NONE &&
 	!(session && session->connection &&
 	  session->connection->has_feature(CEPH_FEATURE_MDS_INLINE_DATA)))
       allowed &= ~(CEPH_CAP_FILE_RD | CEPH_CAP_FILE_WR);
@@ -1909,7 +1909,7 @@ bool Locker::issue_caps(CInode *in, Capability *only_cap)
     }
 
     // notify clients about deleted inode, to make sure they release caps ASAP.
-    if (in->inode.nlink == 0)
+    if (in->get_nlink() == 0)
       wanted |= CEPH_CAP_LINK_SHARED;
 
     // are there caps that the client _wants_ and can have, but aren't pending?
@@ -2005,7 +2005,7 @@ void Locker::revoke_stale_caps(Session *session)
       cap->revoke();
 
       if (in->is_auth() &&
-	  in->inode.client_ranges.count(client))
+	  in->get_inode().client_ranges.count(client))
 	in->state_set(CInode::STATE_NEEDSRECOVER);
 
       if (!in->filelock.is_stable()) eval_gather(&in->filelock);
@@ -2153,7 +2153,7 @@ public:
 
 void Locker::calc_new_client_ranges(CInode *in, uint64_t size, map<client_t,client_writeable_range_t>& new_ranges)
 {
-  inode_t *latest = in->get_projected_inode();
+  const const_inode_ref& latest = in->get_projected_inode();
   uint64_t ms;
   if(latest->has_layout()) {
     ms = ROUND_UP_TO((size+1)<<1, latest->get_layout_size_increment());
@@ -2170,10 +2170,10 @@ void Locker::calc_new_client_ranges(CInode *in, uint64_t size, map<client_t,clie
     if ((p->second->issued() | p->second->wanted()) & (CEPH_CAP_FILE_WR|CEPH_CAP_FILE_BUFFER)) {
       client_writeable_range_t& nr = new_ranges[p->first];
       nr.range.first = 0;
-      if (latest->client_ranges.count(p->first)) {
-	client_writeable_range_t& oldr = latest->client_ranges[p->first];
-	nr.range.last = MAX(ms, oldr.range.last);
-	nr.follows = oldr.follows;
+      map<client_t,client_writeable_range_t>::const_iterator q = latest->client_ranges.find(p->first);
+      if (q != latest->client_ranges.end()) {
+	nr.range.last = MAX(ms, q->second.range.last);
+	nr.follows = q->second.follows;
       } else {
 	nr.range.last = ms;
 	nr.follows = in->first - 1;
@@ -2189,7 +2189,7 @@ bool Locker::check_inode_max_size(CInode *in, bool force_wrlock,
 {
   assert(in->is_auth());
 
-  inode_t *latest = in->get_projected_inode();
+  const const_inode_ref& latest = in->get_projected_inode();
   map<client_t, client_writeable_range_t> new_ranges;
   uint64_t size = latest->size;
   bool new_max = update_max;
@@ -2283,15 +2283,10 @@ bool Locker::check_inode_max_size(CInode *in, bool force_wrlock,
     le = eu;
   }
   mds->mdlog->start_entry(le);
-  if (update_size) {  // FIXME if/when we do max_size nested accounting
-    mdcache->predirty_journal_parents(mut, metablob, in, 0, PREDIRTY_PRIMARY);
-    // no cow, here!
-    CDentry *parent = in->get_projected_parent_dn();
-    metablob->add_primary_dentry(parent, in, true);
-  } else {
-    metablob->add_dir_context(in->get_projected_parent_dn()->get_dir());
-    mdcache->journal_dirty_inode(mut.get(), metablob, in);
-  }
+  mdcache->predirty_journal_parents(mut, metablob, in, 0, PREDIRTY_PRIMARY);
+  // no cow, here!
+  CDentry *parent = in->get_projected_parent_dn();
+  metablob->add_primary_dentry(parent, in, true);
   mds->mdlog->submit_entry(le,
           new C_Locker_FileUpdate_finish(this, in, mut, true));
   wrlock_force(&in->filelock, mut);  // wrlock for duration of journal
@@ -2904,14 +2899,14 @@ void Locker::_update_cap_fields(CInode *in, int dirty, MClientCaps *m, inode_t *
 	      << " for " << *in << dendl;
       pi->mtime = mtime;
     }
-    if (in->inode.is_file() &&   // ONLY if regular file
+    if (in->is_file() &&   // ONLY if regular file
 	size > pi->size) {
       dout(7) << "  size " << pi->size << " -> " << size
 	      << " for " << *in << dendl;
       pi->size = size;
       pi->rstat.rbytes = size;
     }
-    if (in->inode.is_file() &&
+    if (in->is_file() &&
         (dirty & CEPH_CAP_FILE_WR) &&
         inline_version > pi->inline_version) {
       pi->inline_version = inline_version;
@@ -2968,12 +2963,14 @@ bool Locker::_do_cap_update(CInode *in, Capability *cap,
 	   << " on " << *in << dendl;
   assert(in->is_auth());
   client_t client = m->get_source().num();
-  inode_t *latest = in->get_projected_inode();
+  const const_inode_ref latest = in->get_projected_inode();
 
   // increase or zero max_size?
   uint64_t size = m->get_size();
   bool change_max = false;
-  uint64_t old_max = latest->client_ranges.count(client) ? latest->client_ranges[client].range.last : 0;
+
+  map<client_t,client_writeable_range_t>::const_iterator p = latest->client_ranges.find(client);
+  uint64_t old_max =p != latest->client_ranges.end() ? p->second.range.last : 0;
   uint64_t new_max = old_max;
   
   if (in->is_file()) {
@@ -3067,6 +3064,8 @@ bool Locker::_do_cap_update(CInode *in, Capability *cap,
   // do the update.
   EUpdate *le = new EUpdate(mds->mdlog, "cap update");
   mds->mdlog->start_entry(le);
+  MutationRef mut(new MutationImpl);
+  mut->ls = mds->mdlog->get_current_segment();
 
   // xattrs update?
   map<string,bufferptr> *px = 0;
@@ -3077,9 +3076,6 @@ bool Locker::_do_cap_update(CInode *in, Capability *cap,
 
   inode_t *pi = in->project_inode(px);
   pi->version = in->pre_dirty();
-
-  MutationRef mut(new MutationImpl);
-  mut->ls = mds->mdlog->get_current_segment();
 
   _update_cap_fields(in, dirty, m, pi);
 
@@ -3233,7 +3229,7 @@ void Locker::remove_client_cap(CInode *in, client_t client)
   if (in->is_auth()) {
     // make sure we clear out the client byte range
     if (in->get_projected_inode()->client_ranges.count(client) &&
-	!(in->inode.nlink == 0 && !in->is_any_caps()))    // unless it's unlink + stray
+	!(in->get_nlink() == 0 && !in->is_any_caps()))    // unless it's unlink + stray
       check_inode_max_size(in);
   } else {
     request_inode_file_caps(in);
@@ -4080,7 +4076,7 @@ public:
 void Locker::scatter_writebehind(ScatterLock *lock)
 {
   CInode *in = static_cast<CInode*>(lock->get_parent());
-  dout(10) << "scatter_writebehind " << in->inode.mtime << " on " << *lock << " on " << *in << dendl;
+  dout(10) << "scatter_writebehind " << in->get_inode().mtime << " on " << *lock << " on " << *in << dendl;
 
   // journal
   MutationRef mut(new MutationImpl);
@@ -4096,7 +4092,7 @@ void Locker::scatter_writebehind(ScatterLock *lock)
   inode_t *pi = in->project_inode();
   pi->version = in->pre_dirty();
 
-  in->finish_scatter_gather_update(lock->get_type());
+  in->finish_scatter_gather_update(lock->get_type(), mut, pi);
   lock->start_flush();
 
   EUpdate *le = new EUpdate(mds->mdlog, "scatter_writebehind");
@@ -4535,7 +4531,7 @@ void Locker::file_eval(ScatterLock *lock, bool *need_issue)
 	    << dendl;
     if (!((loner_wanted|loner_issued) & (CEPH_CAP_GEXCL|CEPH_CAP_GWR|CEPH_CAP_GBUFFER)) ||
 	 (other_wanted & (CEPH_CAP_GEXCL|CEPH_CAP_GWR|CEPH_CAP_GRD)) ||
-	(in->inode.is_dir() && in->multiple_nonstale_caps())) {  // FIXME.. :/
+	(in->is_dir() && in->multiple_nonstale_caps())) {  // FIXME.. :/
       dout(20) << " should lose it" << dendl;
       // we should lose it.
       //  loner  other   want
@@ -4564,7 +4560,7 @@ void Locker::file_eval(ScatterLock *lock, bool *need_issue)
 	   !lock->is_rdlocked() &&
 	   //!lock->is_waiter_for(SimpleLock::WAIT_WR) &&
 	   ((wanted & (CEPH_CAP_GWR|CEPH_CAP_GBUFFER)) ||
-	    (in->inode.is_dir() && !in->has_subtree_or_exporting_dirfrag())) &&
+	    (in->is_dir() && !in->has_subtree_or_exporting_dirfrag())) &&
 	   in->get_target_loner() >= 0) {
     dout(7) << "file_eval stable, bump to loner " << *lock
 	    << " on " << *lock->get_parent() << dendl;

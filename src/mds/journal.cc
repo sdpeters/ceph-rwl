@@ -402,11 +402,16 @@ void EMetaBlob::fullbit::encode(bufferlist& bl) const {
   ::encode(dnfirst, bl);
   ::encode(dnlast, bl);
   ::encode(dnv, bl);
-  ::encode(inode, bl);
-  ::encode(xattrs, bl);
-  if (inode.is_symlink())
+  ::encode(*inode, bl);
+  if (xattrs) {
+    ::encode(*xattrs, bl);
+  } else {
+    __u32 n = 0;
+    ::encode(n, bl);
+  }
+  if (inode->is_symlink())
     ::encode(symlink, bl);
-  if (inode.is_dir()) {
+  if (inode->is_dir()) {
     ::encode(dirfragtree, bl);
     ::encode(snapbl, bl);
   }
@@ -426,11 +431,20 @@ void EMetaBlob::fullbit::decode(bufferlist::iterator &bl) {
   ::decode(dnfirst, bl);
   ::decode(dnlast, bl);
   ::decode(dnv, bl);
-  ::decode(inode, bl);
-  ::decode(xattrs, bl);
-  if (inode.is_symlink())
+  inode_t *_inode = new inode_t;
+  ::decode(*_inode, bl);
+  inode.reset(_inode);
+ 
+  map<string,bufferptr> _xattrs;
+  ::decode(_xattrs, bl);
+  if (!_xattrs.empty()) {
+    map<string,bufferptr> *buf = new map<string,bufferptr>;
+    buf->swap(_xattrs);
+    xattrs.reset(buf);
+  }
+  if (inode->is_symlink())
     ::decode(symlink, bl);
-  if (inode.is_dir()) {
+  if (inode->is_dir()) {
     ::decode(dirfragtree, bl);
     ::decode(snapbl, bl);
     if ((struct_v == 2) || (struct_v == 3)) {
@@ -439,7 +453,7 @@ void EMetaBlob::fullbit::decode(bufferlist::iterator &bl) {
       if (dir_layout_exists) {
 	__u8 dir_struct_v;
 	::decode(dir_struct_v, bl); // default_file_layout version
-	::decode(inode.layout, bl); // and actual layout, that we care about
+	::decode(_inode->layout, bl); // and actual layout, that we care about
       }
     }
   }
@@ -468,21 +482,23 @@ void EMetaBlob::fullbit::dump(Formatter *f) const
   f->dump_stream("snapid.last") << dnlast;
   f->dump_int("dentry version", dnv);
   f->open_object_section("inode");
-  inode.dump(f);
+  inode->dump(f);
   f->close_section(); // inode
   f->open_array_section("xattrs");
-  for (map<string, bufferptr>::const_iterator iter = xattrs.begin();
-      iter != xattrs.end(); ++iter) {
-    f->dump_string(iter->first.c_str(), iter->second.c_str());
+  if (xattrs) {
+    for (map<string, bufferptr>::const_iterator iter = xattrs->begin();
+	iter != xattrs->end(); ++iter) {
+      f->dump_string(iter->first.c_str(), iter->second.c_str());
+    }
   }
   f->close_section(); // xattrs
-  if (inode.is_symlink()) {
+  if (inode->is_symlink()) {
     f->dump_string("symlink", symlink);
   }
-  if (inode.is_dir()) {
+  if (inode->is_dir()) {
     f->dump_stream("frag tree") << dirfragtree;
     f->dump_string("has_snapbl", snapbl.length() ? "true" : "false");
-    if (inode.has_layout()) {
+    if (inode->has_layout()) {
       f->open_object_section("file layout policy");
       // FIXME
       f->dump_string("layout", "the layout exists");
@@ -505,12 +521,12 @@ void EMetaBlob::fullbit::dump(Formatter *f) const
 
 void EMetaBlob::fullbit::generate_test_instances(list<EMetaBlob::fullbit*>& ls)
 {
-  inode_t inode;
+  const_inode_ref inode(new inode_t);
+  const_xattrs_ref empty_xattrs;
   fragtree_t fragtree;
-  map<string,bufferptr> empty_xattrs;
   bufferlist empty_snapbl;
   fullbit *sample = new fullbit("/testdn", 0, 0, 0,
-                                inode, fragtree, empty_xattrs, "", empty_snapbl,
+                                inode, empty_xattrs, fragtree, "", empty_snapbl,
                                 false, NULL);
   ls.push_back(sample);
 }
@@ -519,7 +535,7 @@ void EMetaBlob::fullbit::update_inode(MDS *mds, CInode *in)
 {
   in->inode = inode;
   in->xattrs = xattrs;
-  if (in->inode.is_dir()) {
+  if (inode->is_dir()) {
     if (!(in->dirfragtree == dirfragtree)) {
       dout(10) << "EMetaBlob::fullbit::update_inode dft " << in->dirfragtree << " -> "
 	       << dirfragtree << " on " << *in << dendl;
@@ -545,7 +561,7 @@ void EMetaBlob::fullbit::update_inode(MDS *mds, CInode *in)
      * divy up 
      */
     in->decode_snap_blob(snapbl);  
-  } else if (in->inode.is_symlink()) {
+  } else if (inode->is_symlink()) {
     in->symlink = symlink;
   }
   in->old_inodes = old_inodes;
@@ -663,7 +679,13 @@ void EMetaBlob::nullbit::generate_test_instances(list<nullbit*>& ls)
 void EMetaBlob::dirlump::encode(bufferlist& bl) const
 {
   ENCODE_START(2, 2, bl);
-  ::encode(fnode, bl);
+  if (fnode->version == version) {
+    ::encode(*fnode, bl);
+  } else {
+    fnode_t tmp(*fnode);
+    tmp.version = version;
+    ::encode(tmp, bl);
+  }
   ::encode(state, bl);
   ::encode(nfull, bl);
   ::encode(nremote, bl);
@@ -676,7 +698,11 @@ void EMetaBlob::dirlump::encode(bufferlist& bl) const
 void EMetaBlob::dirlump::decode(bufferlist::iterator &bl)
 {
   DECODE_START_LEGACY_COMPAT_LEN(2, 2, 2, bl)
-  ::decode(fnode, bl);
+  {
+    fnode_t *_fnode = new fnode_t;
+    ::decode(*_fnode, bl);
+    fnode.reset(_fnode);
+  }
   ::decode(state, bl);
   ::decode(nfull, bl);
   ::decode(nremote, bl);
@@ -693,7 +719,7 @@ void EMetaBlob::dirlump::dump(Formatter *f) const
     me->_decode_bits();
   }
   f->open_object_section("fnode");
-  fnode.dump(f);
+  fnode->dump(f);
   f->close_section(); // fnode
   f->dump_string("state", state_string());
   f->dump_int("nfull", nfull);
@@ -835,7 +861,7 @@ void EMetaBlob::get_inodes(
     list<ceph::shared_ptr<fullbit> > const &fb_list = dl.get_dfull();
     for (list<ceph::shared_ptr<fullbit> >::const_iterator
         iter = fb_list.begin(); iter != fb_list.end(); ++iter) {
-      inodes.insert((*iter)->inode.ino);
+      inodes.insert((*iter)->inode->ino);
     }
 
     // Record inodes of remotebits
@@ -924,7 +950,7 @@ void EMetaBlob::get_paths(
         iter = fb_list.begin(); iter != fb_list.end(); ++iter) {
       std::string const &dentry = (*iter)->dn;
       children[dir_ino].push_back(dentry);
-      ino_locations[(*iter)->inode.ino] = Location(dir_ino, dentry);
+      ino_locations[(*iter)->inode->ino] = Location(dir_ino, dentry);
     }
 
     for (list<nullbit>::const_iterator
@@ -955,8 +981,8 @@ void EMetaBlob::get_paths(
         iter = fb_list.begin(); iter != fb_list.end(); ++iter) {
       std::string const &dentry = (*iter)->dn;
       children[dir_ino].push_back(dentry);
-      ino_locations[(*iter)->inode.ino] = Location(dir_ino, dentry);
-      if (children.find((*iter)->inode.ino) == children.end()) {
+      ino_locations[(*iter)->inode->ino] = Location(dir_ino, dentry);
+      if (children.find((*iter)->inode->ino) == children.end()) {
         leaf_locations.push_back(Location(dir_ino, dentry));
 
       }
@@ -1100,7 +1126,7 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg, MDSlaveUpdate *slaveup)
   assert(g_conf->mds_kill_journal_replay_at != 1);
 
   for (list<ceph::shared_ptr<fullbit> >::iterator p = roots.begin(); p != roots.end(); ++p) {
-    CInode *in = mds->mdcache->get_inode((*p)->inode.ino);
+    CInode *in = mds->mdcache->get_inode((*p)->inode->ino);
     bool isnew = in ? false:true;
     if (!in)
       in = new CInode(mds->mdcache, false);
@@ -1168,8 +1194,8 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg, MDSlaveUpdate *slaveup)
 
       dout(10) << "EMetaBlob.replay added dir " << *dir << dendl;  
     }
-    dir->set_version( lump.fnode.version );
     dir->fnode = lump.fnode;
+    dir->set_version(lump.fnode->version);
 
     if (lump.is_importing()) {
       dir->state_set(CDir::STATE_AUTH);
@@ -1178,14 +1204,14 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg, MDSlaveUpdate *slaveup)
     if (lump.is_dirty()) {
       dir->_mark_dirty(logseg);
 
-      if (!(dir->fnode.rstat == dir->fnode.accounted_rstat)) {
+      if (!(dir->fnode->rstat == dir->fnode->accounted_rstat)) {
 	dout(10) << "EMetaBlob.replay      dirty nestinfo on " << *dir << dendl;
 	mds->locker->mark_updated_scatterlock(&dir->inode->nestlock);
 	logseg->dirty_dirfrag_nest.push_back(&dir->inode->item_dirty_dirfrag_nest);
       } else {
 	dout(10) << "EMetaBlob.replay      clean nestinfo on " << *dir << dendl;
       }
-      if (!(dir->fnode.fragstat == dir->fnode.accounted_fragstat)) {
+      if (!(dir->fnode->fragstat == dir->fnode->accounted_fragstat)) {
 	dout(10) << "EMetaBlob.replay      dirty fragstat on " << *dir << dendl;
 	mds->locker->mark_updated_scatterlock(&dir->inode->filelock);
 	logseg->dirty_dirfrag_dir.push_back(&dir->inode->item_dirty_dirfrag_dir);
@@ -1230,7 +1256,7 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg, MDSlaveUpdate *slaveup)
       if (lump.is_importing())
 	dn->state_set(CDentry::STATE_AUTH);
 
-      CInode *in = mds->mdcache->get_inode(p->inode.ino, p->dnlast);
+      CInode *in = mds->mdcache->get_inode(p->inode->ino, p->dnlast);
       if (!in) {
 	in = new CInode(mds->mdcache, dn->is_auth(), p->dnfirst, p->dnlast);
 	p->update_inode(mds, in);
@@ -1240,7 +1266,7 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg, MDSlaveUpdate *slaveup)
 	    unlinked[dn->get_linkage()->get_inode()] = dir;
 	    stringstream ss;
 	    ss << "EMetaBlob.replay FIXME had dentry linked to wrong inode " << *dn
-	       << " " << *dn->get_linkage()->get_inode() << " should be " << p->inode.ino;
+	       << " " << *dn->get_linkage()->get_inode() << " should be " << p->inode->ino;
 	    dout(0) << ss.str() << dendl;
 	    mds->clog->warn(ss);
 	  }
@@ -1263,7 +1289,7 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg, MDSlaveUpdate *slaveup)
 	      unlinked[dn->get_linkage()->get_inode()] = dir;
 	      stringstream ss;
 	      ss << "EMetaBlob.replay FIXME had dentry linked to wrong inode " << *dn
-		 << " " << *dn->get_linkage()->get_inode() << " should be " << p->inode.ino;
+		 << " " << *dn->get_linkage()->get_inode() << " should be " << p->inode->ino;
 	      dout(0) << ss.str() << dendl;
 	      mds->clog->warn(ss);
 	    }

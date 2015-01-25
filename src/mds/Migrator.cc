@@ -1276,7 +1276,7 @@ void Migrator::encode_export_inode(CInode *in, bufferlist& enc_state,
     dout(20) << " did replicate_relax_locks, now " << *in << dendl;
   }
 
-  ::encode(in->inode.ino, enc_state);
+  ::encode(in->ino(), enc_state);
   ::encode(in->last, enc_state);
   in->encode_export(enc_state);
 
@@ -2752,7 +2752,7 @@ void Migrator::decode_import_inode(CDentry *dn, bufferlist::iterator& blp, mds_r
     dout(10) << "  had " << *in << dendl;
   }
 
-  if (in->inode.is_dirty_rstat())
+  if (in->get_inode().is_dirty_rstat())
     in->mark_dirty_rstat();
   
   // clear if dirtyscattered, since we're going to journal this

@@ -185,7 +185,7 @@ void CDentry::mark_dirty(version_t pv, LogSegment *ls)
   _mark_dirty(ls);
 
   // mark dir too
-  dir->mark_dirty(pv, ls);
+  dir->mark_dirty(pv, ls, false);
 }
 
 
@@ -445,7 +445,7 @@ void CDentry::encode_lock_state(int type, bufferlist& bl)
   if (linkage.is_primary()) {
     c = 1;
     ::encode(c, bl);
-    ::encode(linkage.get_inode()->inode.ino, bl);
+    ::encode(linkage.get_inode()->ino(), bl);
   }
   else if (linkage.is_remote()) {
     c = 2;

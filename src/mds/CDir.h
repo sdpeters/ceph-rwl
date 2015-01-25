@@ -40,6 +40,8 @@ class bloom_filter;
 
 struct ObjectOperation;
 
+typedef ceph::shared_ptr<const fnode_t> const_fnode_ref;
+
 ostream& operator<<(ostream& out, const class CDir& dir);
 class CDir : public MDSCacheObject {
   /*
@@ -168,47 +170,51 @@ public:
     return dirfrag() < (static_cast<const CDir*>(r))->dirfrag();
   }
 
-  fnode_t fnode;
+  const_fnode_ref fnode;
   snapid_t first;
   std::map<snapid_t,old_rstat_t> dirty_old_rstat;  // [value.first,key]
 
   // my inodes with dirty rstat data
   elist<CInode*> dirty_rstat_inodes;     
 
-  void resync_accounted_fragstat();
-  void resync_accounted_rstat();
-  void assimilate_dirty_rstat_inodes();
+  void resync_accounted_fragstat(fnode_t *pf);
+  void resync_accounted_rstat(fnode_t *pf);
+  void assimilate_dirty_rstat_inodes(fnode_t *pf);
   void assimilate_dirty_rstat_inodes_finish(MutationRef& mut, EMetaBlob *blob);
 
 protected:
-  version_t projected_version;
-  std::list<fnode_t*> projected_fnode;
+  version_t version, projected_version;
+  std::list<const_fnode_ref> projected_fnode;
 
 public:
   elist<CDir*>::item item_dirty, item_new;
 
 
 public:
-  version_t get_version() const { return fnode.version; }
+  version_t get_version() const {
+    return version;
+  }
   void set_version(version_t v) { 
     assert(projected_fnode.empty());
-    projected_version = fnode.version = v; 
+    projected_version = version = v; 
+  }
+  void _set_version(version_t v) {
+    fnode_t& _fnode = const_cast<fnode_t&>(*fnode);
+    _fnode.version = projected_version = version = v;
   }
   version_t get_projected_version() const { return projected_version; }
 
-  const fnode_t *get_projected_fnode() const {
+  const const_fnode_ref& get_projected_fnode() const {
     if (projected_fnode.empty())
-      return &fnode;
+      return fnode;
     else
       return projected_fnode.back();
+  }
+  fnode_t *_get_projected_fnode() {
+    assert(!projected_fnode.empty());
+    return const_cast<fnode_t*>(projected_fnode.back().get());
   }
 
-  fnode_t *get_projected_fnode() {
-    if (projected_fnode.empty())
-      return &fnode;
-    else
-      return projected_fnode.back();
-  }
   fnode_t *project_fnode();
 
   void pop_and_dirty_projected_fnode(LogSegment *ls);
@@ -221,7 +227,7 @@ public:
       get(PIN_DIRTY);
     }
   }
-  void mark_dirty(version_t pv, LogSegment *ls);
+  void mark_dirty(version_t pv, LogSegment *ls, bool new_dir);
   void log_mark_dirty();
   void mark_clean();
 
@@ -297,7 +303,7 @@ protected:
    * It's deleted when you mark_complete() and is deliberately not serialized.*/
 
  public:
-  CDir(CInode *in, frag_t fg, MDCache *mdcache, bool auth);
+  CDir(CInode *in, frag_t fg, MDCache *mdcache, bool auth, bool alloc_fnode=true);
   ~CDir() {
     remove_bloom();
     g_num_dir--;
@@ -458,13 +464,18 @@ private:
 
   void _encode_base(bufferlist& bl) {
     ::encode(first, bl);
-    ::encode(fnode, bl);
+    ::encode(*fnode, bl);
     ::encode(dir_rep, bl);
     ::encode(dir_rep_by, bl);
   }
   void _decode_base(bufferlist::iterator& p) {
     ::decode(first, p);
-    ::decode(fnode, p);
+    {
+      fnode_t *_fnode = new fnode_t;
+      ::decode(*_fnode, p);
+      version = projected_version = _fnode->version;
+      fnode.reset(_fnode);
+    }
     ::decode(dir_rep, p);
     ::decode(dir_rep_by, p);
   }

@@ -219,13 +219,13 @@ public:
     strong_inodes[i] = inode_strong(n, cw, dl, nl, dftl);
   }
   void add_inode_locks(CInode *in, __u32 nonce, bufferlist& bl) {
-    ::encode(in->inode.ino, inode_locks);
+    ::encode(in->ino(), inode_locks);
     ::encode(in->last, inode_locks);
     ::encode(nonce, inode_locks);
     ::encode(bl, inode_locks);
   }
   void add_inode_base(CInode *in) {
-    ::encode(in->inode.ino, inode_base);
+    ::encode(in->ino(), inode_base);
     ::encode(in->last, inode_base);
     bufferlist bl;
     in->_encode_base(bl);

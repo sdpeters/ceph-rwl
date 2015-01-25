@@ -146,14 +146,14 @@ public:
 
   CInode* rdlock_path_pin_ref(MDRequestRef& mdr, int n, set<SimpleLock*>& rdlocks, bool want_auth,
 			      bool no_want_auth=false,
-			      ceph_file_layout **layout=NULL,
+			      const ceph_file_layout **layout=NULL,
 			      bool no_lookup=false);
   CDentry* rdlock_path_xlock_dentry(MDRequestRef& mdr, int n,
                                     set<SimpleLock*>& rdlocks,
                                     set<SimpleLock*>& wrlocks,
 				    set<SimpleLock*>& xlocks, bool okexist,
 				    bool mustexist, bool alwaysxlock,
-				    ceph_file_layout **layout=NULL);
+				    const ceph_file_layout **layout=NULL);
 
   CDir* try_open_auth_dirfrag(CInode *diri, frag_t fg, MDRequestRef& mdr);
 
@@ -175,7 +175,7 @@ public:
 			  ceph_file_layout *layout);
   int parse_quota_vxattr(string name, string value, quota_info_t *quota);
   void handle_set_vxattr(MDRequestRef& mdr, CInode *cur,
-			 ceph_file_layout *dir_layout,
+			 const ceph_file_layout *dir_layout,
 			 set<SimpleLock*> rdlocks,
 			 set<SimpleLock*> wrlocks,
 			 set<SimpleLock*> xlocks);

@@ -116,16 +116,12 @@ void MutationImpl::pop_and_dirty_projected_inodes()
   }
 }
 
-void MutationImpl::add_projected_fnode(CDir *dir)
-{
-  projected_fnodes.push_back(dir);
-}
-
 void MutationImpl::pop_and_dirty_projected_fnodes()
 {
-  while (!projected_fnodes.empty()) {
-    CDir *dir = projected_fnodes.front();
-    projected_fnodes.pop_front();
+  set<CDir*>::iterator p = projected_fnodes.begin();
+  while (p != projected_fnodes.end()) {
+    CDir *dir = *p;
+    projected_fnodes.erase(p++);
     dir->pop_and_dirty_projected_fnode(ls);
   }
 }
@@ -149,8 +145,8 @@ void MutationImpl::add_cow_dentry(CDentry *dn)
 
 void MutationImpl::apply()
 {
-  pop_and_dirty_projected_inodes();
   pop_and_dirty_projected_fnodes();
+  pop_and_dirty_projected_inodes();
   
   for (list<CInode*>::iterator p = dirty_cow_inodes.begin();
        p != dirty_cow_inodes.end();

@@ -64,6 +64,9 @@ extern cinode_lock_info_t cinode_lock_info[];
 extern int num_cinode_locks;
 
 
+typedef ceph::shared_ptr<const inode_t> const_inode_ref;
+typedef ceph::shared_ptr<const std::map<std::string, bufferptr> > const_xattrs_ref;
+
 /**
  * Base class for CInode, containing the backing store data and
  * serialization methods.  This exists so that we can read and
@@ -72,18 +75,25 @@ extern int num_cinode_locks;
  */
 class InodeStore {
 public:
-  inode_t                    inode;        // the inode itself
+  const_inode_ref		inode; // the inode itself
+  const_xattrs_ref		xattrs;
   std::string                symlink;      // symlink dest, if symlink
-  std::map<std::string, bufferptr> xattrs;
   fragtree_t                 dirfragtree;  // dir frag tree, if any.  always consistent with our dirfrag map.
   std::map<snapid_t, old_inode_t> old_inodes;   // key = last, value.first = first
   bufferlist		     snap_blob;    // Encoded copy of SnapRealm, because we can't
                                            // rehydrate it without full MDCache
 
+  InodeStore(bool alloc_inode=false)
+  {
+    if (alloc_inode)
+      inode.reset(new inode_t);
+  }
+
   /* Helpers */
-  bool is_file() const    { return inode.is_file(); }
-  bool is_symlink() const { return inode.is_symlink(); }
-  bool is_dir() const     { return inode.is_dir(); }
+  bool is_file() const    { return inode->is_file(); }
+  bool is_symlink() const { return inode->is_symlink(); }
+  bool is_dir() const     { return inode->is_dir(); }
+  int32_t get_nlink() const { return inode->nlink; }
   static object_t get_object_name(inodeno_t ino, frag_t fg, const char *suffix);
 
   /* Full serialization for use in ".inode" root inode objects */
@@ -219,8 +229,8 @@ public:
 
   bool is_multiversion() const {
     return snaprealm ||  // other snaprealms will link to me
-      inode.is_dir() ||  // links to me in other snaps
-      inode.nlink > 1 || // there are remote links, possibly snapped, that will need to find me
+      inode->is_dir() ||  // links to me in other snaps
+      inode->nlink > 1 || // there are remote links, possibly snapped, that will need to find me
       !old_inodes.empty(); // once multiversion, always multiversion.  until old_inodes gets cleaned out.
   }
   snapid_t get_oldest_snap();
@@ -256,16 +266,12 @@ public:
    */
 
   struct projected_inode_t {
-    inode_t *inode;
-    std::map<std::string,bufferptr> *xattrs;
+    const_inode_ref inode;
+    const_xattrs_ref xattrs;
     sr_t *snapnode;
 
-    projected_inode_t()
-      : inode(NULL), xattrs(NULL), snapnode(NULL) {}
-    projected_inode_t(inode_t *in, sr_t *sn)
-      : inode(in), xattrs(NULL), snapnode(sn) {}
-    projected_inode_t(inode_t *in, std::map<std::string, bufferptr> *xp = NULL, sr_t *sn = NULL)
-      : inode(in), xattrs(xp), snapnode(sn) {}
+    projected_inode_t(inode_t *in, std::map<std::string, bufferptr> *xp = NULL)
+      : inode(in), xattrs(xp),  snapnode(NULL) { }
   };
   std::list<projected_inode_t*> projected_nodes;   // projected values (only defined while dirty)
   int num_projected_xattrs;
@@ -283,7 +289,7 @@ public:
 
   version_t get_projected_version() const {
     if (projected_nodes.empty())
-      return inode.version;
+      return inode->version;
     else
       return projected_nodes.back()->inode->version;
   }
@@ -291,46 +297,39 @@ public:
     return !projected_nodes.empty();
   }
 
-  const inode_t *get_projected_inode() const {
+  const const_inode_ref& get_projected_inode() const {
     if (projected_nodes.empty())
-      return &inode;
+      return inode;
     else
       return projected_nodes.back()->inode;
   }
-  inode_t *get_projected_inode() {
-    if (projected_nodes.empty())
-      return &inode;
-    else
-      return projected_nodes.back()->inode;
-  }
-  inode_t *get_previous_projected_inode() {
+  const const_inode_ref& get_previous_projected_inode() const {
     assert(!projected_nodes.empty());
-    std::list<projected_inode_t*>::reverse_iterator p = projected_nodes.rbegin();
+    std::list<projected_inode_t*>::const_reverse_iterator p = projected_nodes.rbegin();
     ++p;
     if (p != projected_nodes.rend())
       return (*p)->inode;
     else
-      return &inode;
+      return inode;
   }
-
-  std::map<std::string,bufferptr> *get_projected_xattrs() {
+  const const_xattrs_ref& get_projected_xattrs() const {
     if (num_projected_xattrs > 0 && !projected_nodes.empty()) {
-      for (std::list<projected_inode_t*>::reverse_iterator p = projected_nodes.rbegin();
+      for (std::list<projected_inode_t*>::const_reverse_iterator p = projected_nodes.rbegin();
 	   p != projected_nodes.rend();
 	   ++p)
 	if ((*p)->xattrs)
 	  return (*p)->xattrs;
     }
-    return &xattrs;
+    return xattrs;
   }
-  std::map<std::string,bufferptr> *get_previous_projected_xattrs() {
-      std::list<projected_inode_t*>::reverse_iterator p = projected_nodes.rbegin();
+  const const_xattrs_ref& get_previous_projected_xattrs() const {
+      std::list<projected_inode_t*>::const_reverse_iterator p = projected_nodes.rbegin();
     for (++p;  // skip the most recent projected value
 	 p != projected_nodes.rend();
 	 ++p)
       if ((*p)->xattrs)
 	return (*p)->xattrs;
-    return &xattrs;
+    return xattrs;
   }
 
   sr_t *project_snaprealm(snapid_t snapid=0);
@@ -469,7 +468,8 @@ public:
   friend class CInodeExport;
 
   // ---------------------------
-  CInode(MDCache *c, bool auth=true, snapid_t f=2, snapid_t l=CEPH_NOSNAP) : 
+  CInode(MDCache *c, bool auth=true, snapid_t f=2, snapid_t l=CEPH_NOSNAP, bool alloc_inode=true) :
+    InodeStore(alloc_inode),
     mdcache(c),
     snaprealm(0), containing_realm(0),
     first(f), last(l),
@@ -515,11 +515,11 @@ public:
   
 
   // -- accessors --
-  bool is_root() const { return inode.ino == MDS_INO_ROOT; }
-  bool is_stray() const { return MDS_INO_IS_STRAY(inode.ino); }
-  bool is_mdsdir() const { return MDS_INO_IS_MDSDIR(inode.ino); }
+  bool is_root() const { return ino() == MDS_INO_ROOT; }
+  bool is_stray() const { return MDS_INO_IS_STRAY(ino()); }
+  bool is_mdsdir() const { return MDS_INO_IS_MDSDIR(ino()); }
   bool is_base() const { return is_root() || is_mdsdir(); }
-  bool is_system() const { return inode.ino < MDS_INO_SYSTEM_BASE; }
+  bool is_system() const { return ino() < MDS_INO_SYSTEM_BASE; }
 
   bool is_head() const { return last == CEPH_NOSNAP; }
 
@@ -534,11 +534,11 @@ public:
   void clear_ambiguous_auth(std::list<MDSInternalContextBase*>& finished);
   void clear_ambiguous_auth();
 
-  inodeno_t ino() const { return inode.ino; }
-  vinodeno_t vino() const { return vinodeno_t(inode.ino, last); }
-  int d_type() const { return IFTODT(inode.mode); }
+  inodeno_t ino() const { return inode->ino; }
+  vinodeno_t vino() const { return vinodeno_t(ino(), last); }
+  int d_type() const { return IFTODT(inode->mode); }
 
-  inode_t& get_inode() { return inode; }
+  const inode_t& get_inode() { return *inode; }
   CDentry* get_parent_dn() { return parent; }
   const CDentry* get_projected_parent_dn() const { return !projected_parent.empty() ? projected_parent.back() : parent; }
   CDentry* get_projected_parent_dn() { return !projected_parent.empty() ? projected_parent.back() : parent; }
@@ -561,11 +561,12 @@ public:
   void name_stray_dentry(std::string& dname);
   
   // -- dirtyness --
-  version_t get_version() const { return inode.version; }
+  version_t get_version() const { return inode->version; }
+  version_t get_inline_version() const { return inode->inline_version; }
 
   version_t pre_dirty();
   void _mark_dirty(LogSegment *ls);
-  void mark_dirty(version_t projected_dirv, LogSegment *ls);
+  void mark_dirty(version_t projected_dirv, LogSegment *ls, bool new_inode);
   void mark_clean();
 
   void store(MDSInternalContextBase *fin);
@@ -713,7 +714,7 @@ public:
   void start_scatter(ScatterLock *lock);
   void finish_scatter_update(ScatterLock *lock, CDir *dir,
 			     version_t inode_version, version_t dir_accounted_version);
-  void finish_scatter_gather_update(int type);
+  void finish_scatter_gather_update(int type, MutationRef& mut, inode_t *pi);
   void finish_scatter_gather_update_accounted(int type, MutationRef& mut, EMetaBlob *metablob);
 
   // -- snap --

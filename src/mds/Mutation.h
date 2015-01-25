@@ -79,8 +79,8 @@ public:
 
   // for applying projected inode changes
   list<CInode*> projected_inodes;
-  list<CDir*> projected_fnodes;
   list<ScatterLock*> updated_locks;
+  set<CDir*> projected_fnodes;
 
   list<CInode*> dirty_cow_inodes;
   list<pair<CDentry*,version_t> > dirty_cow_dentries;
@@ -150,8 +150,14 @@ public:
   void drop_local_auth_pins();
   void add_projected_inode(CInode *in);
   void pop_and_dirty_projected_inodes();
-  void add_projected_fnode(CDir *dir);
   void pop_and_dirty_projected_fnodes();
+  void add_projected_fnode(CDir *dir) {
+    assert(projected_fnodes.count(dir) == 0);
+    projected_fnodes.insert(dir);
+  }
+  bool has_projected_fnode(CDir *dir) const {
+    return projected_fnodes.count(dir) > 0;
+  }
   void add_updated_lock(ScatterLock *lock);
   void add_cow_inode(CInode *in);
   void add_cow_dentry(CDentry *dn);
