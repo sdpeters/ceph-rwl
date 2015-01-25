@@ -1287,15 +1287,6 @@ protected:
 #endif
     return ref;
   }
-#ifdef MDS_REF_SET
-  int get_pin_totals() {
-    int total = 0;
-    for(std::map<int,int>::iterator i = ref_map.begin(); i != ref_map.end(); ++i) {
-      total += i->second;
-    }
-    return total;
-  }
-#endif
   virtual const char *pin_name(int by) const = 0;
   //bool is_pinned_by(int by) { return ref_set.count(by); }
   //multiset<int>& get_ref_set() { return ref_set; }
@@ -1319,7 +1310,6 @@ protected:
       ref--;
 #ifdef MDS_REF_SET
       ref_map[by]--;
-      assert(ref == get_pin_totals());
 #endif
       if (ref == 0)
 	last_put();
@@ -1343,7 +1333,6 @@ protected:
     if (ref_map.find(by) == ref_map.end())
       ref_map[by] = 0;
     ref_map[by]++;
-    assert(ref == get_pin_totals());
 #endif
   }
 
