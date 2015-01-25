@@ -72,7 +72,7 @@ class Filer {
     int err;
     bool found_size;
 
-    Probe(inodeno_t i, ceph_file_layout &l, snapid_t sn,
+    Probe(inodeno_t i, const ceph_file_layout &l, snapid_t sn,
 	  uint64_t f, uint64_t *e, utime_t *m, int fl, bool fw, Context *c) : 
       lock("Filer::Probe"), ino(i), layout(l), snapid(sn),
       psize(e), pmtime(m), flags(fl), fwd(fw), onfinish(c),
@@ -100,7 +100,7 @@ class Filer {
   /*** async file interface.  scatter/gather as needed. ***/
 
   int read(inodeno_t ino,
-	   ceph_file_layout *layout,
+	   const ceph_file_layout *layout,
 	   snapid_t snap,
            uint64_t offset, 
            uint64_t len, 
@@ -115,7 +115,7 @@ class Filer {
   }
 
   int read_trunc(inodeno_t ino,
-	   ceph_file_layout *layout,
+	   const ceph_file_layout *layout,
 	   snapid_t snap,
            uint64_t offset, 
            uint64_t len, 
@@ -133,7 +133,7 @@ class Filer {
   }
 
   int write(inodeno_t ino,
-	    ceph_file_layout *layout,
+	    const ceph_file_layout *layout,
 	    const SnapContext& snapc,
 	    uint64_t offset, 
             uint64_t len, 
@@ -149,7 +149,7 @@ class Filer {
   }
 
   int write_trunc(inodeno_t ino,
-	    ceph_file_layout *layout,
+	    const ceph_file_layout *layout,
 	    const SnapContext& snapc,
 	    uint64_t offset, 
             uint64_t len, 
@@ -168,7 +168,7 @@ class Filer {
   }
 
   int truncate(inodeno_t ino,
-	       ceph_file_layout *layout,
+	       const ceph_file_layout *layout,
 	       const SnapContext& snapc,
 	       uint64_t offset,
 	       uint64_t len,
@@ -204,7 +204,7 @@ class Filer {
   }
 
   int zero(inodeno_t ino,
-	   ceph_file_layout *layout,
+	   const ceph_file_layout *layout,
 	   const SnapContext& snapc,
 	   uint64_t offset,
            uint64_t len,
@@ -246,7 +246,7 @@ class Filer {
   }
 
   int zero(inodeno_t ino,
-	   ceph_file_layout *layout,
+	   const ceph_file_layout *layout,
 	   const SnapContext& snapc,
 	   uint64_t offset,
            uint64_t len,
@@ -263,7 +263,7 @@ class Filer {
   }
   // purge range of ino.### objects
   int purge_range(inodeno_t ino,
-		  ceph_file_layout *layout,
+		  const ceph_file_layout *layout,
 		  const SnapContext& snapc,
 		  uint64_t first_obj, uint64_t num_obj,
 		  utime_t mtime,
@@ -277,7 +277,7 @@ class Filer {
    *  and whether we stop when we find data, or hole.
    */
   int probe(inodeno_t ino,
-	    ceph_file_layout *layout,
+	    const ceph_file_layout *layout,
 	    snapid_t snapid,
 	    uint64_t start_from,
 	    uint64_t *end,

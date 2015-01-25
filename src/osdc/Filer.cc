@@ -64,7 +64,7 @@ public:
 };
 
 int Filer::probe(inodeno_t ino,
-		 ceph_file_layout *layout,
+		 const ceph_file_layout *layout,
 		 snapid_t snapid,
 		 uint64_t start_from,
 		 uint64_t *end,           // LB, when !fwd
@@ -265,7 +265,7 @@ struct PurgeRange {
   int flags;
   Context *oncommit;
   int uncommitted;
-  PurgeRange(inodeno_t i, ceph_file_layout& l, const SnapContext& sc,
+  PurgeRange(inodeno_t i, const ceph_file_layout& l, const SnapContext& sc,
 	     uint64_t fo, uint64_t no, utime_t t, int fl, Context *fin) :
 	  lock("Filer::PurgeRange"), ino(i), layout(l), snapc(sc),
 	  first(fo), num(no), mtime(t), flags(fl), oncommit(fin),
@@ -273,7 +273,7 @@ struct PurgeRange {
 };
 
 int Filer::purge_range(inodeno_t ino,
-		       ceph_file_layout *layout,
+		       const ceph_file_layout *layout,
 		       const SnapContext& snapc,
 		       uint64_t first_obj, uint64_t num_obj,
 		       utime_t mtime,
