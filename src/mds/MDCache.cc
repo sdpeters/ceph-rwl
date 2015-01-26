@@ -7539,6 +7539,9 @@ int MDCache::path_traverse(MDRequestRef& mdr, Message *req, MDSInternalContextBa
         if (in) {
 	  dout(7) << "linking in remote in " << *in << dendl;
 	  dn->link_remote(dnl, in);
+	} else if (dn->state_test(CDentry::STATE_BADREMOTEINO)) {
+	  dout(7) << "bad remote ino on " << *dn << dendl;
+	  return -EIO;
 	} else {
           dout(7) << "remote link to " << dnl->get_remote_ino() << ", which i don't have" << dendl;
 	  assert(mdr);  // we shouldn't hit non-primary dentries doing a non-mdr traversal!
