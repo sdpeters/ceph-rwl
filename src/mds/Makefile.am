@@ -1,35 +1,40 @@
-libmds_la_SOURCES = \
-	mds/Capability.cc \
-	mds/MDS.cc \
-	mds/Beacon.cc \
+libmds_types_la_SOURCES = \
+	mds/events.cc \
 	mds/locks.c \
+	mds/mdstypes.cc \
+	mds/snap.cc \
+	mds/Capability.cc \
+	mds/InoTable.cc \
+	mds/LogEvent.cc \
+	mds/MDSAuthCaps.cc \
+	mds/Session.cc
+noinst_LTLIBRARIES += libmds_types.la
+
+libmds_la_SOURCES = \
 	mds/journal.cc \
-	mds/Server.cc \
-	mds/Mutation.cc \
-	mds/MDCache.cc \
-	mds/RecoveryQueue.cc \
-	mds/Locker.cc \
-	mds/Migrator.cc \
-	mds/MDBalancer.cc \
+	mds/Beacon.cc \
 	mds/CDentry.cc \
 	mds/CDir.cc \
 	mds/CInode.cc \
-	mds/LogEvent.cc \
-	mds/MDSTable.cc \
-	mds/InoTable.cc \
 	mds/JournalPointer.cc \
+	mds/Locker.cc \
+	mds/Migrator.cc \
+	mds/MDBalancer.cc \
+	mds/MDCache.cc \
+	mds/MDLog.cc \
+	mds/MDS.cc \
+	mds/MDSContext.cc \
+	mds/MDSTable.cc \
 	mds/MDSTableClient.cc \
 	mds/MDSTableServer.cc \
-	mds/Session.cc \
+	mds/Mutation.cc \
+	mds/RecoveryQueue.cc \
+	mds/Server.cc \
+	mds/SessionMap.cc \
 	mds/SnapRealm.cc \
 	mds/SnapServer.cc \
-	mds/snap.cc \
-	mds/SessionMap.cc \
-	mds/MDSContext.cc \
-	mds/MDSAuthCaps.cc \
-	mds/MDLog.cc \
 	common/TrackedOp.cc
-libmds_la_LIBADD = $(LIBOSDC)
+libmds_la_LIBADD = $(LIBOSDC) $(LIBMDS_TYPES)
 noinst_LTLIBRARIES += libmds.la
 
 noinst_HEADERS += \

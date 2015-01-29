@@ -147,6 +147,7 @@ LIBOSDC = libosdc.la
 LIBMON = libmon.la
 LIBMON_TYPES = libmon_types.la
 LIBMDS = libmds.la
+LIBMDS_TYPES = libmds_types.la
 LIBCLIENT = libclient.la
 LIBCLIENT_FUSE = libclient_fuse.la
 LIBRADOS = librados.la

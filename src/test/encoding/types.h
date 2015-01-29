@@ -174,8 +174,8 @@ TYPE_NOCOPY(Capability)
 #include "mds/InoTable.h"
 TYPE(InoTable)
 
-#include "mds/SnapServer.h"
-TYPEWITHSTRAYDATA(SnapServer)
+//#include "mds/SnapServer.h"
+//TYPEWITHSTRAYDATA(SnapServer)
 
 #include "mds/SessionMap.h"
 TYPE(SessionMapStore)

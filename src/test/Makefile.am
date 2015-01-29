@@ -62,7 +62,7 @@ ceph_dencoder_SOURCES = \
 ceph_dencoder_LDADD = \
 	$(LIBOSD_TYPES) \
 	$(LIBOS_TYPES) \
-	$(LIBMDS) \
+	$(LIBMDS_TYPES) \
 	$(LIBMON_TYPES) \
 	$(DENCODER_DEPS) \
 	$(CEPH_GLOBAL)
@@ -613,7 +613,7 @@ unittest_osd_osdcap_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 check_PROGRAMS += unittest_osd_osdcap
 
 unittest_mds_authcap_SOURCES = test/mds/TestMDSAuthCaps.cc 
-unittest_mds_authcap_LDADD = $(LIBMDS) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
+unittest_mds_authcap_LDADD = $(LIBMDS_TYPES) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 unittest_mds_authcap_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 check_PROGRAMS += unittest_mds_authcap
 
