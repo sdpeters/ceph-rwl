@@ -16,6 +16,7 @@
 
 #include "common/Formatter.h"
 
+boost::pool<> Capability::pool(sizeof(Capability));
 
 /*
  * Capability::Export
