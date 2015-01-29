@@ -7,6 +7,21 @@
 const mds_gid_t MDS_GID_NONE = mds_gid_t(0);
 const mds_rank_t MDS_RANK_NONE = mds_rank_t(-1);
 
+long g_num_ino = 0;
+long g_num_dir = 0;
+long g_num_dn = 0;
+long g_num_cap = 0;
+
+long g_num_inoa = 0;
+long g_num_dira = 0;
+long g_num_dna = 0;
+long g_num_capa = 0;
+
+long g_num_inos = 0;
+long g_num_dirs = 0;
+long g_num_dns = 0;
+long g_num_caps = 0;
+
 void dump(const ceph_file_layout& l, Formatter *f)
 {
   f->dump_unsigned("stripe_unit", l.fl_stripe_unit);
