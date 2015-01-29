@@ -604,6 +604,43 @@ struct session_info_t {
 WRITE_CLASS_ENCODER(session_info_t)
 
 
+/**
+ * Base class for CInode, containing the backing store data and
+ * serialization methods.  This exists so that we can read and
+ * handle CInodes from the backing store without hitting all
+ * the business logic in CInode proper.
+ */
+class InodeStore {
+public:
+  inode_t                    inode;        // the inode itself
+  std::string                symlink;      // symlink dest, if symlink
+  std::map<std::string, bufferptr> xattrs;
+  fragtree_t                 dirfragtree;  // dir frag tree, if any.  always consistent with our dirfrag map.
+  std::map<snapid_t, old_inode_t> old_inodes;   // key = last, value.first = first
+  bufferlist		     snap_blob;    // Encoded copy of SnapRealm, because we can't
+                                           // rehydrate it without full MDCache
+
+  /* Helpers */
+  bool is_file() const    { return inode.is_file(); }
+  bool is_symlink() const { return inode.is_symlink(); }
+  bool is_dir() const     { return inode.is_dir(); }
+  static object_t get_object_name(inodeno_t ino, frag_t fg, const char *suffix);
+
+  /* Full serialization for use in ".inode" root inode objects */
+  void encode(bufferlist &bl) const;
+  void decode(bufferlist::iterator &bl);
+
+  /* Serialization without ENCODE_START/FINISH blocks for use embedded in dentry */
+  void encode_bare(bufferlist &bl) const;
+  void decode_bare(bufferlist::iterator &bl, __u8 struct_v=4);
+
+  /* For use in debug and ceph-dencoder */
+  void dump(Formatter *f) const;
+  static void generate_test_instances(std::list<InodeStore*>& ls);
+};
+
+
+
 // =======
 // dentries
 

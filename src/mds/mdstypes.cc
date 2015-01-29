@@ -546,6 +546,92 @@ void old_inode_t::generate_test_instances(list<old_inode_t*>& ls)
 
 
 /*
+ * InodeStore
+ */
+
+object_t InodeStore::get_object_name(inodeno_t ino, frag_t fg, const char *suffix)
+{
+  char n[60];
+  snprintf(n, sizeof(n), "%llx.%08llx%s", (long long unsigned)ino, (long long unsigned)fg, suffix ? suffix : "");
+  return object_t(n);
+}
+
+void InodeStore::encode_bare(bufferlist &bl) const
+{
+  ::encode(inode, bl);
+  if (is_symlink())
+    ::encode(symlink, bl);
+  ::encode(dirfragtree, bl);
+  ::encode(xattrs, bl);
+  ::encode(snap_blob, bl);
+  ::encode(old_inodes, bl);
+}
+
+void InodeStore::encode(bufferlist &bl) const
+{
+  ENCODE_START(4, 4, bl);
+  encode_bare(bl);
+  ENCODE_FINISH(bl);
+}
+
+void InodeStore::decode_bare(bufferlist::iterator &bl, __u8 struct_v)
+{
+  ::decode(inode, bl);
+  if (is_symlink())
+    ::decode(symlink, bl);
+  ::decode(dirfragtree, bl);
+  ::decode(xattrs, bl);
+  ::decode(snap_blob, bl);
+  ::decode(old_inodes, bl);
+  if (struct_v == 2 && inode.is_dir()) {
+    bool default_layout_exists;
+    ::decode(default_layout_exists, bl);
+    if (default_layout_exists) {
+      ::decode(struct_v, bl); // this was a default_file_layout
+      ::decode(inode.layout, bl); // but we only care about the layout portion
+    }
+  }
+}
+
+void InodeStore::decode(bufferlist::iterator &bl)
+{
+  DECODE_START_LEGACY_COMPAT_LEN(4, 4, 4, bl);
+  decode_bare(bl, struct_v);
+  DECODE_FINISH(bl);
+}
+
+void InodeStore::dump(Formatter *f) const
+{
+  f->open_object_section("inode_store");
+  {
+    inode.dump(f);
+    f->dump_string("symlink", symlink);
+    // FIXME: dirfragtree: dump methods for fragtree_t
+    // FIXME: xattrs: JSON-safe versions of binary xattrs
+    f->open_array_section("old_inodes");
+    for (std::map<snapid_t, old_inode_t>::const_iterator i = old_inodes.begin(); i != old_inodes.end(); ++i) {
+      f->open_object_section("old_inode");
+      {
+        // The key is the last snapid, the first is in the old_inode_t
+        f->dump_int("last", i->first);
+        i->second.dump(f);
+      }
+      f->close_section();  // old_inode
+    }
+    f->close_section();  // old_inodes
+  }
+  f->close_section();  // inode_store
+}
+
+void InodeStore::generate_test_instances(list<InodeStore*> &ls)
+{
+  InodeStore *populated = new InodeStore;
+  populated->inode.ino = 0xdeadbeef;
+  populated->symlink = "rhubarb";
+  ls.push_back(populated);
+}
+
+/*
  * fnode_t
  */
 void fnode_t::encode(bufferlist &bl) const
