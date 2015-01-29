@@ -3,6 +3,12 @@
 
 #include "mdstypes.h"
 #include "common/Formatter.h"
+#include "Session.h"
+
+#define dout_subsys ceph_subsys_mds
+#undef dout_prefix
+#define dout_prefix *_dout << "mds." << rank << ".sessionmap "
+
 
 const mds_gid_t MDS_GID_NONE = mds_gid_t(0);
 const mds_rank_t MDS_RANK_NONE = mds_rank_t(-1);
@@ -832,6 +838,121 @@ void session_info_t::generate_test_instances(list<session_info_t*>& ls)
   ls.back()->prealloc_inos.insert(377, 112);
   // we can't add used inos; they're cleared on decode
 }
+
+/*
+ * SessionMapStore
+ */
+
+void SessionMapStore::encode(bufferlist& bl) const
+{
+  uint64_t pre = -1;     // for 0.19 compatibility; we forgot an encoding prefix.
+  ::encode(pre, bl);
+
+  ENCODE_START(3, 3, bl);
+  ::encode(version, bl);
+
+  for (ceph::unordered_map<entity_name_t,Session*>::const_iterator p = session_map.begin(); 
+       p != session_map.end(); 
+       ++p) {
+    if (p->second->is_open() ||
+	p->second->is_closing() ||
+	p->second->is_stale() ||
+	p->second->is_killing()) {
+      ::encode(p->first, bl);
+      p->second->info.encode(bl);
+    }
+  }
+  ENCODE_FINISH(bl);
+}
+
+void SessionMapStore::decode(bufferlist::iterator& p)
+{
+  utime_t now = ceph_clock_now(g_ceph_context);
+  uint64_t pre;
+  ::decode(pre, p);
+  if (pre == (uint64_t)-1) {
+    DECODE_START_LEGACY_COMPAT_LEN(3, 3, 3, p);
+    assert(struct_v >= 2);
+    
+    ::decode(version, p);
+    
+    while (!p.end()) {
+      entity_inst_t inst;
+      ::decode(inst.name, p);
+      Session *s = get_or_add_session(inst);
+      if (s->is_closed())
+        s->set_state(Session::STATE_OPEN);
+      s->decode(p);
+    }
+
+    DECODE_FINISH(p);
+  } else {
+    // --- old format ----
+    version = pre;
+
+    // this is a meaningless upper bound.  can be ignored.
+    __u32 n;
+    ::decode(n, p);
+    
+    while (n-- && !p.end()) {
+      bufferlist::iterator p2 = p;
+      Session *s = new Session;
+      s->info.decode(p);
+      if (session_map.count(s->info.inst.name)) {
+	// eager client connected too fast!  aie.
+	dout(10) << " already had session for " << s->info.inst.name << ", recovering" << dendl;
+	entity_name_t n = s->info.inst.name;
+	delete s;
+	s = session_map[n];
+	p = p2;
+	s->info.decode(p);
+      } else {
+	session_map[s->info.inst.name] = s;
+      }
+      s->set_state(Session::STATE_OPEN);
+      s->last_cap_renew = now;
+    }
+  }
+}
+
+void SessionMapStore::dump(Formatter *f) const
+{
+  f->open_array_section("Sessions");
+  for (ceph::unordered_map<entity_name_t,Session*>::const_iterator p = session_map.begin();
+       p != session_map.end();
+       ++p)  {
+    f->open_object_section("Session");
+    f->open_object_section("entity name");
+    p->first.dump(f);
+    f->close_section(); // entity name
+    f->dump_string("state", p->second->get_state_name());
+    f->open_object_section("Session info");
+    p->second->info.dump(f);
+    f->close_section(); // Session info
+    f->close_section(); // Session
+  }
+  f->close_section(); // Sessions
+}
+
+void SessionMapStore::generate_test_instances(list<SessionMapStore*>& ls)
+{
+  // pretty boring for now
+  ls.push_back(new SessionMapStore());
+}
+
+Session* SessionMapStore::get_or_add_session(const entity_inst_t& i)
+{
+  Session *s;
+  if (session_map.count(i.name)) {
+    s = session_map[i.name];
+  } else {
+    s = session_map[i.name] = new Session;
+    s->info.inst = i;
+    s->last_cap_renew = ceph_clock_now(g_ceph_context);
+  }
+  return s;
+}
+
 
 
 /*

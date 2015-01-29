@@ -20,6 +20,7 @@ libmds_la_SOURCES = \
 	mds/JournalPointer.cc \
 	mds/MDSTableClient.cc \
 	mds/MDSTableServer.cc \
+	mds/Session.cc \
 	mds/SnapRealm.cc \
 	mds/SnapServer.cc \
 	mds/snap.cc \
@@ -62,6 +63,7 @@ noinst_HEADERS += \
 	mds/Migrator.h \
 	mds/ScatterLock.h \
 	mds/Server.h \
+	mds/Session.h \
 	mds/SessionMap.h \
 	mds/SimpleLock.h \
 	mds/SnapClient.h \
