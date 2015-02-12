@@ -8,7 +8,10 @@ import os
 from contextlib import nested
 from nose import with_setup, SkipTest
 from nose.tools import eq_ as eq, assert_raises
-from rados import Rados
+from rados import (Rados,
+                   LIBRADOS_OP_FLAG_FADVISE_DONTNEED,
+                   LIBRADOS_OP_FLAG_FADVISE_NOCACHE,
+                   LIBRADOS_OP_FLAG_FADVISE_RANDOM)
 from rbd import (RBD, Image, ImageNotFound, InvalidArgument, ImageExists,
                  ImageBusy, ImageHasSnapshots, ReadOnlyImage,
                  FunctionNotSupported, ArgumentOutOfRange,
@@ -292,12 +295,27 @@ class TestImage(object):
         info = self.image.stat()
         check_stat(info, IMG_SIZE, IMG_ORDER)
 
+    def test_flags(self):
+        flags = self.image.flags()
+        eq(0, flags)
+
     def test_write(self):
         data = rand_data(256)
         self.image.write(data, 0)
 
+    def test_write_with_fadvise_flags(self):
+        data = rand_data(256)
+        self.image.write(data, 0, LIBRADOS_OP_FLAG_FADVISE_DONTNEED)
+        self.image.write(data, 0, LIBRADOS_OP_FLAG_FADVISE_NOCACHE)
+
     def test_read(self):
         data = self.image.read(0, 20)
+        eq(data, '\0' * 20)
+
+    def test_read_with_fadvise_flags(self):
+        data = self.image.read(0, 20, LIBRADOS_OP_FLAG_FADVISE_DONTNEED)
+        eq(data, '\0' * 20)
+        data = self.image.read(0, 20, LIBRADOS_OP_FLAG_FADVISE_RANDOM)
         eq(data, '\0' * 20)
 
     def test_large_write(self):
@@ -741,6 +759,7 @@ class TestClone(object):
 
     def test_resize_io(self):
         parent_data = self.image.read(IMG_SIZE / 2, 256)
+        self.image.resize(0)
         self.clone.resize(IMG_SIZE / 2 + 128)
         child_data = self.clone.read(IMG_SIZE / 2, 128)
         eq(child_data, parent_data[:128])

@@ -1220,13 +1220,13 @@ int main(int argc, const char **argv)
 
   delete olog;
 
-  rgw_perf_stop(g_ceph_context);
-
   RGWStoreManager::close_storage(store);
 
   rgw_tools_cleanup();
   rgw_shutdown_resolver();
   curl_global_cleanup();
+
+  rgw_perf_stop(g_ceph_context);
 
   dout(1) << "final shutdown" << dendl;
   g_ceph_context->put();

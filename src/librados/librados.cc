@@ -1039,6 +1039,11 @@ std::string librados::IoCtx::get_pool_name()
   return s;
 }
 
+const std::string& librados::IoCtx::get_pool_name() const
+{
+  return io_ctx_impl->get_cached_pool_name();
+}
+
 uint64_t librados::IoCtx::get_instance_id() const
 {
   return io_ctx_impl->client->get_instance_id();
@@ -1787,11 +1792,6 @@ void librados::IoCtx::set_assert_src_version(const std::string& oid, uint64_t ve
   io_ctx_impl->set_assert_src_version(obj, ver);
 }
 
-const std::string& librados::IoCtx::get_pool_name() const
-{
-  return io_ctx_impl->pool_name;
-}
-
 void librados::IoCtx::locator_set_key(const string& key)
 {
   io_ctx_impl->oloc.key = key;
@@ -2124,6 +2124,12 @@ int librados::Rados::cluster_fsid(string *fsid)
 int librados::Rados::wait_for_latest_osdmap()
 {
   return client->wait_for_latest_osdmap();
+}
+
+int librados::Rados::blacklist_add(const std::string& client_address,
+				   uint32_t expire_seconds)
+{
+  return client->blacklist_add(client_address, expire_seconds);
 }
 
 librados::PoolAsyncCompletion *librados::Rados::pool_async_create_completion()
@@ -2471,6 +2477,13 @@ extern "C" int rados_wait_for_latest_osdmap(rados_t cluster)
   return retval;
 }
 
+extern "C" int rados_blacklist_add(rados_t cluster, char *client_address,
+				   uint32_t expire_seconds)
+{
+  librados::RadosClient *radosp = (librados::RadosClient *)cluster;
+  return radosp->blacklist_add(client_address, expire_seconds);
+}
+
 extern "C" int rados_pool_list(rados_t cluster, char *buf, size_t len)
 {
   tracepoint(librados, rados_pool_list_enter, cluster, len);
@@ -2759,16 +2772,23 @@ extern "C" int rados_ioctx_pool_stat(rados_ioctx_t io, struct rados_pool_stat_t 
   tracepoint(librados, rados_ioctx_pool_stat_enter, io);
   librados::IoCtxImpl *io_ctx_impl = (librados::IoCtxImpl *)io;
   list<string> ls;
-  ls.push_back(io_ctx_impl->pool_name);
-  map<string, ::pool_stat_t> rawresult;
+  std::string pool_name;
 
-  int err = io_ctx_impl->client->get_pool_stats(ls, rawresult);
+  int err = io_ctx_impl->client->pool_get_name(io_ctx_impl->get_id(), &pool_name);
+  if (err) {
+    tracepoint(librados, rados_ioctx_pool_stat_exit, err, stats);
+    return err;
+  }
+  ls.push_back(pool_name);
+
+  map<string, ::pool_stat_t> rawresult;
+  err = io_ctx_impl->client->get_pool_stats(ls, rawresult);
   if (err) {
     tracepoint(librados, rados_ioctx_pool_stat_exit, err, stats);
     return err;
   }
 
-  ::pool_stat_t& r = rawresult[io_ctx_impl->pool_name];
+  ::pool_stat_t& r = rawresult[pool_name];
   stats->num_kb = SHIFT_ROUND_UP(r.stats.sum.num_bytes, 10);
   stats->num_bytes = r.stats.sum.num_bytes;
   stats->num_objects = r.stats.sum.num_objects;
@@ -3068,12 +3088,19 @@ extern "C" int rados_ioctx_get_pool_name(rados_ioctx_t io, char *s, unsigned max
 {
   tracepoint(librados, rados_ioctx_get_pool_name_enter, io, maxlen);
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
-  if (ctx->pool_name.length() >= maxlen) {
+  std::string pool_name;
+
+  int err = ctx->client->pool_get_name(ctx->get_id(), &pool_name);
+  if (err) {
+    tracepoint(librados, rados_ioctx_get_pool_name_exit, err, "");
+    return err;
+  }
+  if (pool_name.length() >= maxlen) {
     tracepoint(librados, rados_ioctx_get_pool_name_exit, -ERANGE, "");
     return -ERANGE;
   }
-  strcpy(s, ctx->pool_name.c_str());
-  int retval = ctx->pool_name.length();
+  strcpy(s, pool_name.c_str());
+  int retval = pool_name.length();
   tracepoint(librados, rados_ioctx_get_pool_name_exit, retval, s);
   return retval;
 }
@@ -4125,6 +4152,13 @@ extern "C" void rados_write_op_set_flags(rados_write_op_t write_op, int flags)
   tracepoint(librados, rados_write_op_set_flags_exit);
 }
 
+extern "C" void rados_write_op_assert_version(rados_write_op_t write_op, uint64_t ver)
+{
+  tracepoint(librados, rados_write_op_assert_version_enter, write_op, ver);
+  ((::ObjectOperation *)write_op)->assert_version(ver);
+  tracepoint(librados, rados_write_op_assert_version_exit);
+}
+
 extern "C" void rados_write_op_assert_exists(rados_write_op_t write_op)
 {
   tracepoint(librados, rados_write_op_assert_exists_enter, write_op);
@@ -4378,6 +4412,13 @@ extern "C" void rados_read_op_set_flags(rados_read_op_t read_op, int flags)
   tracepoint(librados, rados_read_op_set_flags_enter, read_op, flags);
   set_op_flags((::ObjectOperation *)read_op, flags);
   tracepoint(librados, rados_read_op_set_flags_exit);
+}
+
+extern "C" void rados_read_op_assert_version(rados_read_op_t read_op, uint64_t ver)
+{
+  tracepoint(librados, rados_read_op_assert_version_enter, read_op, ver);
+  ((::ObjectOperation *)read_op)->assert_version(ver);
+  tracepoint(librados, rados_read_op_assert_version_exit);
 }
 
 extern "C" void rados_read_op_assert_exists(rados_read_op_t read_op)

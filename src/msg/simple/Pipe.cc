@@ -850,13 +850,15 @@ void Pipe::set_socket_options()
 
   int prio = msgr->get_socket_priority();
   if (prio >= 0) {
+    int r;
+#ifdef IPTOS_CLASS_CS6
     int iptos = IPTOS_CLASS_CS6;
-    int r = ::setsockopt(sd, IPPROTO_IP, IP_TOS, &iptos, sizeof(iptos));
+    r = ::setsockopt(sd, IPPROTO_IP, IP_TOS, &iptos, sizeof(iptos));
     if (r < 0) {
       ldout(msgr->cct,0) << "couldn't set IP_TOS to " << iptos
                          << ": " << cpp_strerror(errno) << dendl;
     }
-
+#endif
     // setsockopt(IPTOS_CLASS_CS6) sets the priority of the socket as 0.
     // See http://goo.gl/QWhvsD and http://goo.gl/laTbjT
     // We need to call setsockopt(SO_PRIORITY) after it.
@@ -1925,8 +1927,7 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
            << dendl;
 
   // verify header crc
-  if (!(msgr->crcflags & MSG_CRC_HEADER)) {
-  } else if (header_crc != header.crc) {
+  if ((msgr->crcflags & MSG_CRC_HEADER) && header_crc != header.crc) {
     ldout(msgr->cct,0) << "reader got bad header crc " << header_crc << " != " << header.crc << dendl;
     return -1;
   }
@@ -2052,11 +2053,9 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
     ceph_msg_footer_old old_footer;
     if (tcp_read((char*)&old_footer, sizeof(old_footer)) < 0)
       goto out_dethrottle;
-    if (msgr->crcflags & MSG_CRC_HEADER) {
-      footer.front_crc = old_footer.front_crc;
-      footer.middle_crc = old_footer.middle_crc;
-      footer.data_crc = old_footer.data_crc;
-    }
+    footer.front_crc = old_footer.front_crc;
+    footer.middle_crc = old_footer.middle_crc;
+    footer.data_crc = old_footer.data_crc;
     footer.sig = 0;
     footer.flags = old_footer.flags;
   }
@@ -2339,10 +2338,10 @@ int Pipe::write_message(ceph_msg_header& header, ceph_msg_footer& footer, buffer
     if (msgr->crcflags & MSG_CRC_HEADER) {
       old_footer.front_crc = footer.front_crc;
       old_footer.middle_crc = footer.middle_crc;
-      old_footer.data_crc = footer.data_crc;
     } else {
-	old_footer.front_crc = old_footer.middle_crc = old_footer.data_crc = 0;
+	old_footer.front_crc = old_footer.middle_crc = 0;
     }
+    old_footer.data_crc = msgr->crcflags & MSG_CRC_DATA ? footer.data_crc : 0;
     old_footer.flags = footer.flags;   
     msgvec[msg.msg_iovlen].iov_base = (char*)&old_footer;
     msgvec[msg.msg_iovlen].iov_len = sizeof(old_footer);

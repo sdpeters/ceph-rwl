@@ -100,10 +100,14 @@
  * separating spaces in the quoted string.
  *
  * The monitor marshals this JSON into a std::map<string, cmd_vartype>
-* where cmd_vartype is a boost::variant type-enforcing discriminated
-* type, so the monitor is expected to know the type of each argument.
-* See cmdparse.cc/h for more details.
-*/
+ * where cmd_vartype is a boost::variant type-enforcing discriminated
+ * type, so the monitor is expected to know the type of each argument.
+ * See cmdparse.cc/h for more details.
+ *
+ * The flag parameter for COMMAND_WITH_FLAGS macro may be:
+ *
+ *  NOFORWARD - command may not be forwarded
+ */
 
 /*
  * pg commands PgMonitor.cc
@@ -127,6 +131,24 @@ COMMAND("pg dump_stuck " \
 	"name=threshold,type=CephInt,req=false",
 	"show information about stuck pgs",\
 	"pg", "r", "cli,rest")
+COMMAND("pg ls-by-pool " \
+        "name=poolstr,type=CephString " \
+	"name=states,type=CephChoices,strings=active|clean|down|replay|splitting|scrubbing|scrubq|degraded|inconsistent|peering|repair|recovery|backfill_wait|incomplete|stale|remapped|deep_scrub|backfill|backfill_toofull|recovery_wait|undersized,n=N,req=false ", \
+	"list pg with pool = [poolname | poolid]", "pg", "r", "cli,rest")
+COMMAND("pg ls-by-primary " \
+        "name=osd,type=CephOsdName " \
+        "name=pool,type=CephInt,req=false " \
+	"name=states,type=CephChoices,strings=active|clean|down|replay|splitting|scrubbing|scrubq|degraded|inconsistent|peering|repair|recovery|backfill_wait|incomplete|stale|remapped|deep_scrub|backfill|backfill_toofull|recovery_wait|undersized,n=N,req=false ", \
+	"list pg with primary = [osd]", "pg", "r", "cli,rest")
+COMMAND("pg ls-by-osd " \
+        "name=osd,type=CephOsdName " \
+        "name=pool,type=CephInt,req=false " \
+	"name=states,type=CephChoices,strings=active|clean|down|replay|splitting|scrubbing|scrubq|degraded|inconsistent|peering|repair|recovery|backfill_wait|incomplete|stale|remapped|deep_scrub|backfill|backfill_toofull|recovery_wait|undersized,n=N,req=false ", \
+	"list pg on osd [osd]", "pg", "r", "cli,rest")
+COMMAND("pg ls " \
+        "name=pool,type=CephInt,req=false " \
+	"name=states,type=CephChoices,strings=active|clean|down|replay|splitting|scrubbing|scrubq|degraded|inconsistent|peering|repair|recovery|backfill_wait|incomplete|stale|remapped|deep_scrub|backfill|backfill_toofull|recovery_wait|undersized,n=N,req=false ", \
+	"list pg with specific pool, osd, state", "pg", "r", "cli,rest")
 COMMAND("pg map name=pgid,type=CephPgid", "show mapping of pg to osds", \
 	"pg", "r", "cli,rest")
 COMMAND("pg scrub name=pgid,type=CephPgid", "start scrub on <pgid>", \
@@ -193,15 +215,16 @@ COMMAND("auth del " \
 /*
  * Monitor commands (Monitor.cc)
  */
-COMMAND("compact", "cause compaction of monitor's leveldb storage", \
-	"mon", "rw", "cli,rest")
+COMMAND_WITH_FLAG("compact", "cause compaction of monitor's leveldb storage", \
+	     "mon", "rw", "cli,rest", NOFORWARD)
 COMMAND("scrub", "scrub the monitor stores", "mon", "rw", "cli,rest")
 COMMAND("fsid", "show cluster FSID/UUID", "mon", "r", "cli,rest")
 COMMAND("log name=logtext,type=CephString,n=N", \
 	"log supplied text to the monitor log", "mon", "rw", "cli,rest")
-COMMAND("injectargs " \
-	"name=injected_args,type=CephString,n=N", \
-	"inject config arguments into monitor", "mon", "rw", "cli,rest")
+COMMAND_WITH_FLAG("injectargs " \
+	     "name=injected_args,type=CephString,n=N",			\
+	     "inject config arguments into monitor", "mon", "rw", "cli,rest",
+	     NOFORWARD)
 COMMAND("status", "show cluster status", "mon", "r", "cli,rest")
 COMMAND("health name=detail,type=CephChoices,strings=detail,req=false", \
 	"show cluster health", "mon", "r", "cli,rest")
@@ -212,22 +235,24 @@ COMMAND("report name=tags,type=CephString,n=N,req=false", \
 	"mon", "r", "cli,rest")
 COMMAND("quorum_status", "report status of monitor quorum", \
 	"mon", "r", "cli,rest")
-COMMAND("mon_status", "report status of monitors", "mon", "r", "cli,rest")
+COMMAND_WITH_FLAG("mon_status", "report status of monitors", "mon", "r", "cli,rest",
+	     NOFORWARD)
 COMMAND("sync force " \
 	"name=validate1,type=CephChoices,strings=--yes-i-really-mean-it,req=false " \
 	"name=validate2,type=CephChoices,strings=--i-know-what-i-am-doing,req=false", \
 	"force sync of and clear monitor store", "mon", "rw", "cli,rest")
-COMMAND("heap " \
-	"name=heapcmd,type=CephChoices,strings=dump|start_profiler|stop_profiler|release|stats", \
-	"show heap usage info (available only if compiled with tcmalloc)", \
-	"mon", "rw", "cli,rest")
+COMMAND_WITH_FLAG("heap " \
+	     "name=heapcmd,type=CephChoices,strings=dump|start_profiler|stop_profiler|release|stats", \
+	     "show heap usage info (available only if compiled with tcmalloc)", \
+	     "mon", "rw", "cli,rest", NOFORWARD)
 COMMAND("quorum name=quorumcmd,type=CephChoices,strings=enter|exit,n=1", \
 	"enter or exit quorum", "mon", "rw", "cli,rest")
 COMMAND("tell " \
 	"name=target,type=CephName " \
 	"name=args,type=CephString,n=N", \
 	"send a command to a specific daemon", "mon", "rw", "cli,rest")
-COMMAND("version", "show mon daemon version", "mon", "r", "cli,rest")
+COMMAND_WITH_FLAG("version", "show mon daemon version", "mon", "r", "cli,rest",
+	     NOFORWARD)
 
 /*
  * MDS commands (MDSMonitor.cc)
@@ -518,10 +543,10 @@ COMMAND("osd erasure-code-profile ls", \
 	"list all erasure code profiles", \
 	"osd", "r", "cli,rest")
 COMMAND("osd set " \
-	"name=key,type=CephChoices,strings=full|pause|noup|nodown|noout|noin|nobackfill|norecover|noscrub|nodeep-scrub|notieragent", \
+	"name=key,type=CephChoices,strings=full|pause|noup|nodown|noout|noin|nobackfill|norebalance|norecover|noscrub|nodeep-scrub|notieragent", \
 	"set <key>", "osd", "rw", "cli,rest")
 COMMAND("osd unset " \
-	"name=key,type=CephChoices,strings=full|pause|noup|nodown|noout|noin|nobackfill|norecover|noscrub|nodeep-scrub|notieragent", \
+	"name=key,type=CephChoices,strings=full|pause|noup|nodown|noout|noin|nobackfill|norebalance|norecover|noscrub|nodeep-scrub|notieragent", \
 	"unset <key>", "osd", "rw", "cli,rest")
 COMMAND("osd cluster_snap", "take cluster snapshot (disabled)", \
 	"osd", "r", "")

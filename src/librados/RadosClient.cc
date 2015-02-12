@@ -18,6 +18,7 @@
 
 #include <iostream>
 #include <string>
+#include <sstream>
 #include <pthread.h>
 #include <errno.h>
 
@@ -221,7 +222,7 @@ int librados::RadosClient::connect()
   ldout(cct, 1) << "starting objecter" << dendl;
 
   err = -ENOMEM;
-  objecter = new Objecter(cct, messenger, &monclient,
+  objecter = new (std::nothrow) Objecter(cct, messenger, &monclient,
 			  &finisher,
 			  cct->_conf->rados_mon_op_timeout,
 			  cct->_conf->rados_osd_op_timeout);
@@ -274,8 +275,19 @@ int librados::RadosClient::connect()
   err = 0;
 
  out:
-  if (err)
+  if (err) {
     state = DISCONNECTED;
+
+    if (objecter) {
+      delete objecter;
+      objecter = NULL;
+    }
+    if (messenger) {
+      delete messenger;
+      messenger = NULL;
+    }
+  }
+
   return err;
 }
 
@@ -348,20 +360,13 @@ int librados::RadosClient::create_ioctx(const char *name, IoCtxImpl **io)
     }
   }
 
-  *io = new librados::IoCtxImpl(this, objecter, poolid, name, CEPH_NOSNAP);
+  *io = new librados::IoCtxImpl(this, objecter, poolid, CEPH_NOSNAP);
   return 0;
 }
 
 int librados::RadosClient::create_ioctx(int64_t pool_id, IoCtxImpl **io)
 {
-  std::string pool_name;
-  int r = pool_get_name(pool_id, &pool_name);
-  if (r < 0) {
-    return r;
-  }
-
-  *io = new librados::IoCtxImpl(this, objecter, pool_id, pool_name.c_str(),
-                                CEPH_NOSNAP);
+  *io = new librados::IoCtxImpl(this, objecter, pool_id, CEPH_NOSNAP);
   return 0;
 }
 
@@ -423,7 +428,7 @@ int librados::RadosClient::wait_for_osdmap()
 {
   assert(!lock.is_locked_by_me());
 
-  if (objecter == NULL) {
+  if (state != CONNECTED) {
     return -ENOTCONN;
   }
 
@@ -654,6 +659,32 @@ int librados::RadosClient::pool_delete_async(const char *name, PoolAsyncCompleti
 void librados::RadosClient::blacklist_self(bool set) {
   Mutex::Locker l(lock);
   objecter->blacklist_self(set);
+}
+
+int librados::RadosClient::blacklist_add(const string& client_address,
+					 uint32_t expire_seconds)
+{
+  entity_addr_t addr;
+  if (!addr.parse(client_address.c_str(), 0)) {
+    lderr(cct) << "unable to parse address " << client_address << dendl;
+    return -EINVAL;
+  }
+
+  std::stringstream cmd;
+  cmd << "{"
+      << "\"prefix\": \"osd blacklist\", "
+      << "\"blacklistop\": \"add\", "
+      << "\"addr\": \"" << client_address << "\"";
+  if (expire_seconds != 0) {
+    cmd << ", \"expire\": " << expire_seconds << ".0";
+  }
+  cmd << "}";
+
+  std::vector<std::string> cmds;
+  cmds.push_back(cmd.str());
+  bufferlist inbl;
+  int r = mon_command(cmds, inbl, NULL, NULL);
+  return r;
 }
 
 int librados::RadosClient::mon_command(const vector<string>& cmd,

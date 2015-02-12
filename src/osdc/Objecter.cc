@@ -658,7 +658,7 @@ Objecter::LingerOp *Objecter::linger_register(const object_t& oid,
   info->target.flags = flags;
   info->watch_valid_thru = ceph_clock_now(NULL);
 
-  RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
+  RWLock::WLocker l(rwlock);
 
   // Acquire linger ID
   info->linger_id = ++max_linger_id;
@@ -1970,9 +1970,12 @@ class C_CancelOp : public Context
   ceph_tid_t tid;
   Objecter *objecter;
 public:
-  C_CancelOp(ceph_tid_t t, Objecter *objecter) : tid(t), objecter(objecter) {}
+  C_CancelOp(Objecter *objecter) : objecter(objecter) {}
   void finish(int r) {
     objecter->op_cancel(tid, -ETIMEDOUT);
+  }
+  void set_tid(ceph_tid_t _tid) {
+    tid = _tid;
   }
 };
 
@@ -2002,11 +2005,17 @@ ceph_tid_t Objecter::_op_submit_with_budget(Op *op, RWLock::Context& lc, int *ct
     }
   }
 
+  C_CancelOp *cb = NULL;
+  if (osd_timeout > 0) {
+    cb = new C_CancelOp(this);
+    op->ontimeout = cb;
+  }
+
   ceph_tid_t tid = _op_submit(op, lc);
 
-  if (osd_timeout > 0) {
+  if (cb) {
+    cb->set_tid(tid);
     Mutex::Locker l(timer_lock);
-    op->ontimeout = new C_CancelOp(tid, this);
     timer.add_event_after(osd_timeout, op->ontimeout);
   }
 

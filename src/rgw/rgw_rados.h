@@ -1555,8 +1555,9 @@ public:
         uint64_t olh_epoch;
         string marker_version_id;
         uint32_t bilog_flags;
+        list<rgw_obj_key> *remove_objs;
 
-        DeleteParams() : versioning_status(0), olh_epoch(0), bilog_flags(0) {}
+        DeleteParams() : versioning_status(0), olh_epoch(0), bilog_flags(0), remove_objs(NULL) {}
       } params;
 
       struct DeleteResult {
@@ -1616,7 +1617,8 @@ public:
                    utime_t& ut, string& etag, string& content_type,
                    bufferlist *acl_bl, RGWObjCategory category,
 		   list<rgw_obj_key> *remove_objs);
-      int complete_del(int64_t poolid, uint64_t epoch);
+      int complete_del(int64_t poolid, uint64_t epoch,
+                       list<rgw_obj_key> *remove_objs);
       int cancel();
     };
 
@@ -1930,7 +1932,8 @@ public:
                           RGWObjEnt& ent, RGWObjCategory category, list<rgw_obj_key> *remove_objs, uint16_t bilog_flags);
   int cls_obj_complete_add(BucketShard& bs, string& tag, int64_t pool, uint64_t epoch, RGWObjEnt& ent,
                            RGWObjCategory category, list<rgw_obj_key> *remove_objs, uint16_t bilog_flags);
-  int cls_obj_complete_del(BucketShard& bs, string& tag, int64_t pool, uint64_t epoch, rgw_obj& obj, uint16_t bilog_flags);
+  int cls_obj_complete_del(BucketShard& bs, string& tag, int64_t pool, uint64_t epoch, rgw_obj& obj,
+                           list<rgw_obj_key> *remove_objs, uint16_t bilog_flags);
   int cls_obj_complete_cancel(BucketShard& bs, string& tag, rgw_obj& obj, uint16_t bilog_flags);
   int cls_obj_set_bucket_tag_timeout(rgw_bucket& bucket, uint64_t timeout);
   int cls_bucket_list(rgw_bucket& bucket, rgw_obj_key& start, const string& prefix,
@@ -1967,6 +1970,8 @@ public:
   int lock_exclusive(rgw_bucket& pool, const string& oid, utime_t& duration, string& zone_id, string& owner_id);
   int unlock(rgw_bucket& pool, const string& oid, string& zone_id, string& owner_id);
 
+  void update_gc_chain(rgw_obj& head_obj, RGWObjManifest& manifest, cls_rgw_obj_chain *chain);
+  int send_chain_to_gc(cls_rgw_obj_chain& chain, const string& tag, bool sync);
   int gc_operate(string& oid, librados::ObjectWriteOperation *op);
   int gc_aio_operate(string& oid, librados::ObjectWriteOperation *op);
   int gc_operate(string& oid, librados::ObjectReadOperation *op, bufferlist *pbl);

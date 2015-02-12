@@ -63,6 +63,11 @@ public:
   virtual int64_t pool_lookup(const std::string &name) = 0;
   virtual int pool_reverse_lookup(int64_t id, std::string *name) = 0;
 
+  virtual int watch_flush() = 0;
+
+  virtual int blacklist_add(const std::string& client_address,
+			    uint32_t expire_seconds) = 0;
+
   TestWatchNotify &get_watch_notify() {
     return m_watch_notify;
   }

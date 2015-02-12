@@ -639,8 +639,9 @@ xio_place_buffers(buffer::list& bl, XioMsg *xmsg, struct xio_msg*& req,
 int XioMessenger::bind(const entity_addr_t& addr)
 {
   const entity_addr_t *a = &addr;
+  struct entity_addr_t _addr = *a;
+
   if (a->is_blank_ip()) {
-    struct entity_addr_t _addr = *a;
     a = &_addr;
     std::vector <std::string> my_sections;
     g_conf->get_my_sections(my_sections);
@@ -717,7 +718,7 @@ static inline XioMsg* pool_alloc_xio_msg(Message *m, XioConnection *xcon,
   int e = xpool_alloc(xio_msgr_noreg_mpool, sizeof(XioMsg), &mp_mem);
   if (!!e)
     return NULL;
-  XioMsg *xmsg = (XioMsg*) mp_mem.addr;
+  XioMsg *xmsg = reinterpret_cast<XioMsg*>(mp_mem.addr);
   assert(!!xmsg);
   new (xmsg) XioMsg(m, xcon, mp_mem, ex_cnt);
   return xmsg;
@@ -755,6 +756,7 @@ int XioMessenger::_send_message_impl(Message* m, XioConnection* xcon)
   int code = 0;
 
   static uint32_t nreqs;
+  Mutex::Locker l(xcon->lock);
   if (unlikely(XioPool::trace_mempool)) {
     if (unlikely((++nreqs % 65536) == 0)) {
       xp_stats.dump(__func__, nreqs);

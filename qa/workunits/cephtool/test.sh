@@ -183,7 +183,12 @@ function ceph_watch_wait()
     done
 
     kill $CEPH_WATCH_PID
-    grep "$regexp" $CEPH_WATCH_FILE
+
+    if ! grep "$regexp" $CEPH_WATCH_FILE; then
+	echo "pattern ${regexp} not found in watch file. Full watch file content:" >&2
+	cat $CEPH_WATCH_FILE >&2
+	return 1
+    fi
 }
 
 function test_mon_injectargs()
@@ -879,7 +884,7 @@ function test_mon_osd()
   ceph osd deep-scrub 0
   ceph osd repair 0
 
-  for f in noup nodown noin noout noscrub nodeep-scrub nobackfill norecover notieragent full
+  for f in noup nodown noin noout noscrub nodeep-scrub nobackfill norebalance norecover notieragent full
   do
     ceph osd set $f
     ceph osd unset $f
@@ -917,6 +922,7 @@ function test_mon_osd()
   f=$TMPDIR/map.$$
   ceph osd getcrushmap -o $f
   [ -s $f ]
+  ceph osd setcrushmap -i $f
   rm $f
   ceph osd getmap -o $f
   [ -s $f ]
@@ -1058,6 +1064,24 @@ function test_mon_pg()
   ceph pg dump_stuck stale
   ceph pg dump_stuck undersized
   ceph pg dump_stuck degraded
+  ceph pg ls
+  ceph pg ls 0
+  ceph pg ls stale
+  ceph pg ls active stale
+  ceph pg ls 0 active
+  ceph pg ls 0 active stale
+  ceph pg ls-by-primary osd.0
+  ceph pg ls-by-primary osd.0 0
+  ceph pg ls-by-primary osd.0 active
+  ceph pg ls-by-primary osd.0 active stale
+  ceph pg ls-by-primary osd.0 0 active stale
+  ceph pg ls-by-osd osd.0
+  ceph pg ls-by-osd osd.0 0
+  ceph pg ls-by-osd osd.0 active
+  ceph pg ls-by-osd osd.0 active stale
+  ceph pg ls-by-osd osd.0 0 active stale
+  ceph pg ls-by-pool rbd
+  ceph pg ls-by-pool rbd active stale
   # can't test this...
   # ceph pg force_create_pg
   ceph pg getmap -o $TMPDIR/map.$$

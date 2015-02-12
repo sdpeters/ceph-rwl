@@ -27,13 +27,19 @@ bool AsyncResizeRequest::should_complete(int r)
     if (m_image_ctx.size == m_new_size) {
       m_image_ctx.size = m_original_size;
     }
+
+    RWLock::WLocker l2(m_image_ctx.parent_lock);
+    if (m_image_ctx.parent != NULL &&
+	m_image_ctx.parent_md.overlap == m_new_parent_overlap) {
+      m_image_ctx.parent_md.overlap = m_original_parent_overlap;
+    }
     return true;
   }
 
   switch (m_state) {
   case STATE_TRIM_IMAGE:
     ldout(cct, 5) << "TRIM_IMAGE" << dendl;
-    send_grow_object_map();
+    send_update_header();
     break;
 
   case STATE_GROW_OBJECT_MAP:
@@ -92,6 +98,13 @@ void AsyncResizeRequest::send_trim_image() {
     // update in-memory size to clip concurrent IO operations
     RWLock::WLocker l(m_image_ctx.md_lock);
     m_image_ctx.size = m_new_size;
+
+    RWLock::WLocker l2(m_image_ctx.parent_lock);
+    if (m_image_ctx.parent != NULL) {
+      m_original_parent_overlap = m_image_ctx.parent_md.overlap;
+      m_new_parent_overlap = MIN(m_new_size, m_original_parent_overlap);
+      m_image_ctx.parent_md.overlap = m_new_parent_overlap;
+    }
   }
 
   AsyncTrimRequest *req = new AsyncTrimRequest(m_image_ctx,
@@ -127,10 +140,10 @@ void AsyncResizeRequest::send_grow_object_map() {
     }
   }
 
+  // avoid possible recursive lock attempts
   if (!object_map_enabled) {
     send_update_header();
   } else if (lost_exclusive_lock) {
-    // only complete when not holding locks
     complete(-ERESTART);
   }
 }
@@ -160,8 +173,8 @@ bool AsyncResizeRequest::send_shrink_object_map() {
     }
   }
 
+  // avoid possible recursive lock attempts
   if (lost_exclusive_lock) {
-    // only complete when not holding locks
     complete(-ERESTART);
   }
   return false;
@@ -207,8 +220,8 @@ void AsyncResizeRequest::send_update_header() {
     }
   }
 
+  // avoid possible recursive lock attempts
   if (lost_exclusive_lock) {
-    // only complete when not holding locks
     complete(-ERESTART);
   }
 }

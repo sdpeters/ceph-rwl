@@ -251,6 +251,7 @@ check_SCRIPTS += \
 	test/mon/osd-crush.sh \
 	test/mon/osd-erasure-code-profile.sh \
 	test/mon/mkfs.sh \
+	test/osd/osd-scrub-repair.sh \
 	test/osd/osd-config.sh \
 	test/osd/osd-bench.sh \
 	test/osd/osd-copy-from.sh \
@@ -263,12 +264,18 @@ check_SCRIPTS += test/ceph-disk.sh
 endif
 
 EXTRA_DIST += \
-	$(srcdir)/test/ubuntu/Dockerfile.in \
-	$(srcdir)/test/ubuntu/install-deps.sh \
-	$(srcdir)/test/ubuntu/debian \
-	$(srcdir)/test/centos/Dockerfile.in \
-	$(srcdir)/test/centos/install-deps.sh \
-	$(srcdir)/test/centos/ceph.spec.in \
+	$(srcdir)/test/ubuntu-12.04/Dockerfile.in \
+	$(srcdir)/test/ubuntu-12.04/install-deps.sh \
+	$(srcdir)/test/ubuntu-12.04/debian \
+	$(srcdir)/test/ubuntu-14.04/Dockerfile.in \
+	$(srcdir)/test/ubuntu-14.04/install-deps.sh \
+	$(srcdir)/test/ubuntu-14.04/debian \
+	$(srcdir)/test/centos-6/Dockerfile.in \
+	$(srcdir)/test/centos-6/install-deps.sh \
+	$(srcdir)/test/centos-6/ceph.spec.in \
+	$(srcdir)/test/centos-7/Dockerfile.in \
+	$(srcdir)/test/centos-7/install-deps.sh \
+	$(srcdir)/test/centos-7/ceph.spec.in \
 	$(srcdir)/test/mon/mon-test-helpers.sh \
 	$(srcdir)/test/osd/osd-test-helpers.sh \
         $(srcdir)/test/coverage.sh \

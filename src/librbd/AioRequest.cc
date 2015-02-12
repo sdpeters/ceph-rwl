@@ -259,8 +259,6 @@ namespace librbd {
       m_state = LIBRBD_AIO_WRITE_GUARD;
       m_write.assert_exists();
       ldout(m_ictx->cct, 20) << __func__ << " guarding write" << dendl;
-    } else {
-      m_state = LIBRBD_AIO_WRITE_FLAT;
     }
   }
 
@@ -440,8 +438,11 @@ namespace librbd {
         m_state = LIBRBD_AIO_WRITE_PRE; 
         FunctionContext *ctx = new FunctionContext(
           boost::bind(&AioRequest::complete, this, _1));
-        m_ictx->object_map->aio_update(m_object_no, new_state,
-				       current_state, ctx);
+        if (!m_ictx->object_map->aio_update(m_object_no, new_state,
+					    current_state, ctx)) {
+	  // no object map update required
+	  return false;
+	}
       }
     }
     
@@ -471,8 +472,11 @@ namespace librbd {
     m_state = LIBRBD_AIO_WRITE_POST;
     FunctionContext *ctx = new FunctionContext(
       boost::bind(&AioRequest::complete, this, _1));
-    m_ictx->object_map->aio_update(m_object_no, OBJECT_NONEXISTENT,
-                                   OBJECT_PENDING, ctx);
+    if (!m_ictx->object_map->aio_update(m_object_no, OBJECT_NONEXISTENT,
+					OBJECT_PENDING, ctx)) {
+      // no object map update required
+      return true;
+    }
     return false;  
   } 
 
@@ -480,6 +484,7 @@ namespace librbd {
     ldout(m_ictx->cct, 20) << "send_write " << this << " " << m_oid << " "
 			   << m_object_off << "~" << m_object_len << dendl;
 
+    m_state = LIBRBD_AIO_WRITE_FLAT;
     guard_write();
     add_write_ops(&m_write);
     assert(m_write.size() != 0);

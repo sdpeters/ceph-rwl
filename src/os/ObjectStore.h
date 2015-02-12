@@ -623,13 +623,13 @@ public:
       list<bufferptr> list = bl.buffers();
       std::list<bufferptr>::iterator p;
 
-      for(p = list.begin(); p != list.end(); p++) {
+      for(p = list.begin(); p != list.end(); ++p) {
         assert(p->length() % sizeof(Op) == 0);
 
         char* raw_p = p->c_str();
         char* raw_end = raw_p + p->length();
         while (raw_p < raw_end) {
-          _update_op((Op*)raw_p, cm, om);
+          _update_op(reinterpret_cast<Op*>(raw_p), cm, om);
           raw_p += sizeof(Op);
         }
       }
@@ -655,7 +655,7 @@ public:
       map<coll_t, __le32>::iterator coll_index_p;
       for (coll_index_p = other.coll_index.begin();
            coll_index_p != other.coll_index.end();
-           coll_index_p++) {
+           ++coll_index_p) {
         cm[coll_index_p->second] = _get_coll_id(coll_index_p->first);
       }
 
@@ -663,7 +663,7 @@ public:
       map<ghobject_t, __le32>::iterator object_index_p;
       for (object_index_p = other.object_index.begin();
            object_index_p != other.object_index.end();
-           object_index_p++) {
+           ++object_index_p) {
         om[object_index_p->second] = _get_object_id(object_index_p->first);
       }      
 
@@ -792,14 +792,14 @@ public:
         map<coll_t, __le32>::iterator coll_index_p;
         for (coll_index_p = t->coll_index.begin();
              coll_index_p != t->coll_index.end();
-             coll_index_p++) {
+             ++coll_index_p) {
           colls[coll_index_p->second] = coll_index_p->first;
         }
 
         map<ghobject_t, __le32>::iterator object_index_p;
         for (object_index_p = t->object_index.begin();
              object_index_p != t->object_index.end();
-             object_index_p++) {
+             ++object_index_p) {
           objects[object_index_p->second] = object_index_p->first;
         }
       }
@@ -814,7 +814,7 @@ public:
       Op* decode_op() {
         assert(ops > 0);
 
-        Op* op =  (Op*)op_buffer_p;
+        Op* op = reinterpret_cast<Op*>(op_buffer_p);
         op_buffer_p += sizeof(Op);
         ops--;
 
@@ -880,7 +880,7 @@ private:
       op_ptr.set_offset(op_ptr.offset() + sizeof(Op));
 
       char* p = ptr.c_str();
-      return (Op*)p;
+      return reinterpret_cast<Op*>(p);
     }
     __le32 _get_coll_id(const coll_t& coll) {
       map<coll_t, __le32>::iterator c = coll_index.find(coll);
@@ -1551,7 +1551,8 @@ public:
         uint32_t largest_data_off = data.largest_data_off;
         uint32_t largest_data_off_in_tbl = data.largest_data_off_in_tbl;
         bool tolerate_collection_add_enoent = false;
-        ENCODE_START(7, 5, bl);
+	uint32_t fadvise_flags = data.fadvise_flags;
+        ENCODE_START(8, 5, bl);
         ::encode(ops, bl);
         ::encode(pad_unused_bytes, bl);
         ::encode(largest_data_len, bl);
@@ -1559,10 +1560,11 @@ public:
         ::encode(largest_data_off_in_tbl, bl);
         ::encode(tbl, bl);
         ::encode(tolerate_collection_add_enoent, bl);
+	::encode(fadvise_flags, bl);
         ENCODE_FINISH(bl);
       } else {
         //layout: data_bl + op_bl + coll_index + object_index + data
-        ENCODE_START(8, 5, bl);
+        ENCODE_START(9, 9, bl);
         ::encode(data_bl, bl);
         ::encode(op_bl, bl);
         ::encode(coll_index, bl);
@@ -1572,9 +1574,29 @@ public:
       }
     }
     void decode(bufferlist::iterator &bl) {
-      DECODE_START_LEGACY_COMPAT_LEN(8, 5, 5, bl);
+      DECODE_START_LEGACY_COMPAT_LEN(9, 5, 5, bl);
       DECODE_OLDEST(2);
-      if (struct_v == 8) {
+
+      bool decoded = false;
+      if (struct_v < 8) {
+	decode8_5(bl, struct_v);
+	use_tbl = true;
+	decoded = true;
+      }	else if (struct_v == 8) {
+	bufferlist::iterator bl2 = bl;
+	try {
+	  decode8_5(bl, struct_v);
+	  use_tbl = true;
+	  decoded = true;
+	} catch (...) {
+	  bl = bl2;
+	  decoded = false;
+	}
+      }
+
+      /* Actual version should be 9, but some version 9
+       * transactions ended up with version 8 */
+      if (!decoded && struct_v >= 8) {
         ::decode(data_bl, bl);
         ::decode(op_bl, bl);
         ::decode(coll_index, bl);
@@ -1583,20 +1605,19 @@ public:
         use_tbl = false;
         coll_id = coll_index.size();
         object_id = object_index.size();
-      } else {
-        decode7_5(bl, struct_v);
-        use_tbl = true;
+	decoded = true;
       }
+
+      assert(decoded);
       DECODE_FINISH(bl);
     }
-    void decode7_5(bufferlist::iterator &bl, __u8 struct_v) {
+    void decode8_5(bufferlist::iterator &bl, __u8 struct_v) {
       uint64_t _ops = 0;
       uint64_t _pad_unused_bytes = 0;
       uint32_t _largest_data_len = 0;
       uint32_t _largest_data_off = 0;
       uint32_t _largest_data_off_in_tbl = 0;
       uint32_t _fadvise_flags = 0;
-      bool tolerate_collection_add_enoent = false;
 
       ::decode(_ops, bl);
       ::decode(_pad_unused_bytes, bl);
@@ -1607,6 +1628,7 @@ public:
       }
       ::decode(tbl, bl);
       if (struct_v >= 7) {
+	bool tolerate_collection_add_enoent = false;
 	::decode(tolerate_collection_add_enoent, bl);
       }
       if (struct_v >= 8) {

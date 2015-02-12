@@ -619,11 +619,14 @@ public:
     osdmap(osdmap_),
     pgm(pgm_),
     tree(tree_),
-    average_util(100.0 * (double)pgm->osd_sum.kb_used / (double)pgm->osd_sum.kb),
+    average_util(0),
     min_var(-1),
     max_var(-1),
     stddev(0),
-    sum(0) {}
+    sum(0) {
+    if (pgm->osd_sum.kb)
+      average_util = 100.0 * (double)pgm->osd_sum.kb_used / (double)pgm->osd_sum.kb;
+  }
 
 protected:
   void dump_stray(F *f) {
@@ -639,8 +642,9 @@ protected:
 
     float reweight = qi.is_bucket() ? -1 : osdmap->get_weightf(qi.id);
     int64_t kb = 0, kb_used = 0, kb_avail = 0;
-    double util = get_bucket_utilization(qi.id, kb, kb_used, kb_avail) ?
-      100.0 * (double)kb_used / (double)kb : 0;
+    double util = 0;
+    if (get_bucket_utilization(qi.id, kb, kb_used, kb_avail) && kb > 0)
+      util = 100.0 * (double)kb_used / (double)kb;
     double var = 1.0;
     if (average_util)
       var = util / average_util;
@@ -679,7 +683,7 @@ protected:
       kb = p->second.kb;
       kb_used = p->second.kb_used;
       kb_avail = p->second.kb_avail;
-      return true;
+      return kb > 0;
     }
 
     kb = 0;
@@ -695,7 +699,7 @@ protected:
       kb_used += kb_used_i;
       kb_avail += kb_avail_i;
     }
-    return true;
+    return kb > 0;
   }
 
 protected:
@@ -1228,8 +1232,9 @@ bool OSDMonitor::preprocess_failure(MOSDFailure *m)
   }
 
   // already reported?
-  if (osdmap.is_down(badboy)) {
-    dout(5) << "preprocess_failure dup: " << m->get_target() << ", from " << m->get_orig_source_inst() << dendl;
+  if (osdmap.is_down(badboy) ||
+      osdmap.get_up_from(badboy) > m->get_epoch()) {
+    dout(5) << "preprocess_failure dup/old: " << m->get_target() << ", from " << m->get_orig_source_inst() << dendl;
     if (m->get_epoch() < osdmap.get_epoch())
       send_incremental(m, m->get_epoch()+1);
     goto didit;
@@ -2473,6 +2478,7 @@ void OSDMonitor::get_health(list<pair<health_status_t,string> >& summary,
 			 CEPH_OSDMAP_NOIN |
 			 CEPH_OSDMAP_NOOUT |
 			 CEPH_OSDMAP_NOBACKFILL |
+			 CEPH_OSDMAP_NOREBALANCE |
 			 CEPH_OSDMAP_NORECOVER |
 			 CEPH_OSDMAP_NOSCRUB |
 			 CEPH_OSDMAP_NODEEP_SCRUB |
@@ -4486,7 +4492,14 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
     dout(10) << " testing map" << dendl;
     stringstream ess;
     CrushTester tester(crush, ess);
-    tester.test();
+    int r = tester.test_with_crushtool();
+    if (r < 0) {
+      derr << "error on crush map: " << ess.str() << dendl;
+      ss << "Failed to parse crushmap: " << ess.str();
+      err = r;
+      goto reply;
+    }
+
     dout(10) << " result " << ess.str() << dendl;
 
     pending_inc.crush = data;
@@ -5279,6 +5292,8 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
       return prepare_set_flag(m, CEPH_OSDMAP_NOIN);
     else if (key == "nobackfill")
       return prepare_set_flag(m, CEPH_OSDMAP_NOBACKFILL);
+    else if (key == "norebalance")
+      return prepare_set_flag(m, CEPH_OSDMAP_NOREBALANCE);
     else if (key == "norecover")
       return prepare_set_flag(m, CEPH_OSDMAP_NORECOVER);
     else if (key == "noscrub")
@@ -5309,6 +5324,8 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
       return prepare_unset_flag(m, CEPH_OSDMAP_NOIN);
     else if (key == "nobackfill")
       return prepare_unset_flag(m, CEPH_OSDMAP_NOBACKFILL);
+    else if (key == "norebalance")
+      return prepare_unset_flag(m, CEPH_OSDMAP_NOREBALANCE);
     else if (key == "norecover")
       return prepare_unset_flag(m, CEPH_OSDMAP_NORECOVER);
     else if (key == "noscrub")

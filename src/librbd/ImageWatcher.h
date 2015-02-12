@@ -3,9 +3,9 @@
 #ifndef CEPH_LIBRBD_IMAGE_WATCHER_H
 #define CEPH_LIBRBD_IMAGE_WATCHER_H
 
-#include "common/Cond.h"
 #include "common/Mutex.h"
 #include "common/RWLock.h"
+#include "include/Context.h"
 #include "include/rados/librados.hpp"
 #include "include/rbd/librbd.hpp"
 #include <set>
@@ -16,7 +16,6 @@
 #include "include/assert.h"
 
 class entity_name_t;
-class Context;
 class Finisher;
 class SafeTimer;
 
@@ -56,10 +55,6 @@ namespace librbd {
 
     int register_watch();
     int unregister_watch();
-    int get_watch_error();
-
-    bool has_pending_aio_operations();
-    void flush_aio_operations();
 
     int try_lock();
     int request_lock(const boost::function<int(AioCompletion*)>& restart_op,
@@ -86,6 +81,12 @@ namespace librbd {
       LOCK_OWNER_STATE_NOT_LOCKED,
       LOCK_OWNER_STATE_LOCKED,
       LOCK_OWNER_STATE_RELEASING
+    };
+
+    enum WatchState {
+      WATCH_STATE_UNREGISTERED,
+      WATCH_STATE_REGISTERED,
+      WATCH_STATE_ERROR
     };
 
     typedef std::pair<Context *, ProgressContext *> AsyncRequest;
@@ -151,8 +152,10 @@ namespace librbd {
 
     ImageCtx &m_image_ctx;
 
+    RWLock m_watch_lock;
     WatchCtx m_watch_ctx;
-    uint64_t m_handle;
+    uint64_t m_watch_handle;
+    WatchState m_watch_state;
 
     LockOwnerState m_lock_owner_state;
 
@@ -161,18 +164,14 @@ namespace librbd {
     Mutex m_timer_lock;
     SafeTimer *m_timer;
 
-    RWLock m_watch_lock;
-    int m_watch_error;
-
     RWLock m_async_request_lock;
     uint64_t m_async_request_id;
     std::map<uint64_t, AsyncRequest> m_async_requests;
     std::set<RemoteAsyncRequest> m_async_progress;
 
     Mutex m_aio_request_lock;
-    Cond m_aio_request_cond;
+    std::list<Context *> m_aio_flush_contexts;
     std::vector<AioRequest> m_aio_requests;
-    bool m_retrying_aio_requests;
     Context *m_retry_aio_context;
 
     std::string encode_lock_cookie() const;
@@ -191,7 +190,6 @@ namespace librbd {
     void finalize_retry_aio_requests();
     void retry_aio_requests();
 
-    void cancel_aio_requests(int result);
     void cancel_async_requests(int result);
 
     uint64_t encode_async_request(bufferlist &bl);

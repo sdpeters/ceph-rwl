@@ -13,7 +13,7 @@
 #
 
 #
-# Return true if the working tree is after the commit that made
+# Return true if the working tree is after the release that made
 # make -j8 check possible
 #
 function can_parallel_make_check() {
@@ -33,9 +33,8 @@ function get_processors() {
     if test -n "$NPROC" ; then
         echo $NPROC
     else
-        local processors=$(grep -c '^processor' /proc/cpuinfo)
-        if test $processors -ge 2 ; then
-            expr $processors / 2
+        if test $(nproc) -ge 2 ; then
+            expr $(nproc) / 2
         else
             echo 1
         fi

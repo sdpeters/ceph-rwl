@@ -760,6 +760,8 @@ std::string pg_state_string(int state)
     oss << "backfill_toofull+";
   if (state & PG_STATE_INCOMPLETE)
     oss << "incomplete+";
+  if (state & PG_STATE_PEERED)
+    oss << "peered+";
   string ret(oss.str());
   if (ret.length() > 0)
     ret.resize(ret.length() - 1);
@@ -768,6 +770,53 @@ std::string pg_state_string(int state)
   return ret;
 }
 
+int pg_string_state(std::string state)
+{
+  int type;
+  if (state == "active")
+    type = PG_STATE_ACTIVE;
+  else if (state == "clean")
+    type = PG_STATE_CLEAN;
+  else if (state == "down")
+    type = PG_STATE_DOWN;
+  else if (state == "replay")
+    type = PG_STATE_REPLAY;
+  else if (state == "splitting")
+    type = PG_STATE_SPLITTING;
+  else if (state == "scrubbing")
+    type = PG_STATE_SCRUBBING;
+  else if (state == "scrubq")
+    type = PG_STATE_SCRUBQ;
+  else if (state == "degraded")
+    type = PG_STATE_DEGRADED;
+  else if (state == "inconsistent")
+    type = PG_STATE_INCONSISTENT;
+  else if (state == "peering")
+    type = PG_STATE_PEERING;
+  else if (state == "recoverying")
+    type = PG_STATE_RECOVERING;
+  else if (state == "backfill_wait")
+    type = PG_STATE_BACKFILL_WAIT;
+  else if (state == "incomplete")
+    type = PG_STATE_INCOMPLETE;
+  else if (state == "remapped")
+    type = PG_STATE_REMAPPED;
+  else if (state == "stale")
+    type = PG_STATE_STALE;
+  else if (state == "deep_scrub")
+    type = PG_STATE_DEEP_SCRUB;
+  else if (state == "backfill")
+    type = PG_STATE_BACKFILL;
+  else if (state == "backfill_toofull")
+    type = PG_STATE_BACKFILL_TOOFULL;
+  else if (state == "recovery_wait")
+    type = PG_STATE_RECOVERY_WAIT;
+  else if (state == "undersized")
+    type = PG_STATE_UNDERSIZED;
+  else
+    type = -1;
+  return type;
+}
 
 // -- eversion_t --
 string eversion_t::get_key_name() const
@@ -1723,6 +1772,21 @@ void object_stat_collection_t::generate_test_instances(list<object_stat_collecti
 
 // -- pg_stat_t --
 
+bool pg_stat_t::is_acting_osd(int32_t osd, bool primary) const
+{
+  if (primary && osd == acting_primary) {
+    return true;
+  } else if (!primary) {
+    for(vector<int32_t>::const_iterator it = acting.begin();
+        it != acting.end(); it++)
+    {
+      if (*it == osd)
+        return true;
+    }
+  }
+  return false;
+}
+
 void pg_stat_t::dump(Formatter *f) const
 {
   f->dump_stream("version") << version;
@@ -1732,8 +1796,10 @@ void pg_stat_t::dump(Formatter *f) const
   f->dump_stream("last_fresh") << last_fresh;
   f->dump_stream("last_change") << last_change;
   f->dump_stream("last_active") << last_active;
+  f->dump_stream("last_peered") << last_peered;
   f->dump_stream("last_clean") << last_clean;
   f->dump_stream("last_became_active") << last_became_active;
+  f->dump_stream("last_became_peered") << last_became_peered;
   f->dump_stream("last_unstale") << last_unstale;
   f->dump_stream("last_undegraded") << last_undegraded;
   f->dump_stream("last_fullsized") << last_fullsized;
@@ -1787,7 +1853,7 @@ void pg_stat_t::dump_brief(Formatter *f) const
 
 void pg_stat_t::encode(bufferlist &bl) const
 {
-  ENCODE_START(20, 8, bl);
+  ENCODE_START(21, 8, bl);
   ::encode(version, bl);
   ::encode(reported_seq, bl);
   ::encode(reported_epoch, bl);
@@ -1825,6 +1891,8 @@ void pg_stat_t::encode(bufferlist &bl) const
   ::encode(last_undegraded, bl);
   ::encode(last_fullsized, bl);
   ::encode(hitset_bytes_stats_invalid, bl);
+  ::encode(last_peered, bl);
+  ::encode(last_became_peered, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -1956,6 +2024,13 @@ void pg_stat_t::decode(bufferlist::iterator &bl)
     // if we are decoding an old encoding of this object, then the
     // encoder may not have supported num_bytes_hit_set_archive accounting.
     hitset_bytes_stats_invalid = true;
+  }
+  if (struct_v >= 21) {
+    ::decode(last_peered, bl);
+    ::decode(last_became_peered, bl);
+  } else {
+    last_peered = last_active;
+    last_became_peered = last_became_active;
   }
   DECODE_FINISH(bl);
 }
@@ -2954,10 +3029,15 @@ void pg_log_entry_t::dump(Formatter *f) const
   f->dump_stream("prior_version") << prior_version;
   f->dump_stream("reqid") << reqid;
   f->open_array_section("extra_reqids");
-  for (vector<osd_reqid_t>::const_iterator p = extra_reqids.begin();
+  for (vector<pair<osd_reqid_t, version_t> >::const_iterator p =
+	 extra_reqids.begin();
        p != extra_reqids.end();
-       ++p)
-    f->dump_stream("reqid") << *p;
+       ++p) {
+    f->open_object_section("extra_reqid");
+    f->dump_stream("reqid") << p->first;
+    f->dump_stream("user_version") << p->second;
+    f->close_section();
+  }
   f->close_section();
   f->dump_stream("mtime") << mtime;
   if (snaps.length() > 0) {
@@ -3576,7 +3656,7 @@ void object_copy_data_t::generate_test_instances(list<object_copy_data_t*>& o)
   o.back()->data.push_back(databp);
   o.back()->omap_header.append("this is an omap header");
   o.back()->snaps.push_back(123);
-  o.back()->reqids.push_back(osd_reqid_t());
+  o.back()->reqids.push_back(make_pair(osd_reqid_t(), version_t()));
 }
 
 void object_copy_data_t::dump(Formatter *f) const
@@ -3601,10 +3681,14 @@ void object_copy_data_t::dump(Formatter *f) const
     f->dump_unsigned("snap", *p);
   f->close_section();
   f->open_array_section("reqids");
-  for (vector<osd_reqid_t>::const_iterator p = reqids.begin();
+  for (vector<pair<osd_reqid_t, version_t> >::const_iterator p = reqids.begin();
        p != reqids.end();
-       ++p)
-    f->dump_stream("reqid") << *p;
+       ++p) {
+    f->open_object_section("extra_reqid");
+    f->dump_stream("reqid") << p->first;
+    f->dump_stream("user_version") << p->second;
+    f->close_section();
+  }
   f->close_section();
 }
 

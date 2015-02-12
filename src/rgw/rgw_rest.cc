@@ -79,10 +79,10 @@ string lowercase_underscore_http_attr(const string& orig)
   for (size_t i = 0; i < orig.size(); ++i, ++s) {
     switch (*s) {
       case '-':
-	buf[i] = '_';
-	break;
+        buf[i] = '_';
+        break;
       default:
-	buf[i] = tolower(*s);
+        buf[i] = tolower(*s);
     }
   }
   return string(buf);
@@ -101,10 +101,32 @@ string uppercase_underscore_http_attr(const string& orig)
   for (size_t i = 0; i < orig.size(); ++i, ++s) {
     switch (*s) {
       case '-':
-	buf[i] = '_';
-	break;
+        buf[i] = '_';
+        break;
       default:
-	buf[i] = toupper(*s);
+        buf[i] = toupper(*s);
+    }
+  }
+  return string(buf);
+}
+
+/*
+ * make attrs look-like-this
+ * converts underscores to dashes
+ */
+string lowercase_dash_http_attr(const string& orig)
+{
+  const char *s = orig.c_str();
+  char buf[orig.size() + 1];
+  buf[orig.size()] = '\0';
+
+  for (size_t i = 0; i < orig.size(); ++i, ++s) {
+    switch (*s) {
+      case '_':
+        buf[i] = '-';
+        break;
+      default:
+        buf[i] = tolower(*s);
     }
   }
   return string(buf);
@@ -125,15 +147,15 @@ string camelcase_dash_http_attr(const string& orig)
   for (size_t i = 0; i < orig.size(); ++i, ++s) {
     switch (*s) {
       case '_':
-	buf[i] = '-';
-	last_sep = true;
-	break;
+        buf[i] = '-';
+        last_sep = true;
+        break;
       default:
-	if (last_sep)
-	  buf[i] = toupper(*s);
-	else
-	  buf[i] = tolower(*s);
-	last_sep = false;
+        if (last_sep)
+          buf[i] = toupper(*s);
+        else
+          buf[i] = tolower(*s);
+        last_sep = false;
     }
   }
   return string(buf);
@@ -1064,6 +1086,21 @@ int RGWHandler_ObjStore::allocate_formatter(struct req_state *s, int default_typ
       s->format = RGW_FORMAT_XML;
     } else if (format_str.compare("json") == 0) {
       s->format = RGW_FORMAT_JSON;
+    } else {
+      const char *accept = s->info.env->get("HTTP_ACCEPT");
+      if (accept) {
+        char format_buf[64];
+        unsigned int i = 0;
+        for (; i < sizeof(format_buf) - 1 && accept[i] && accept[i] != ';'; ++i) {
+          format_buf[i] = accept[i];
+        }
+        format_buf[i] = 0;
+        if ((strcmp(format_buf, "text/xml") == 0) || (strcmp(format_buf, "application/xml") == 0)) {
+          s->format = RGW_FORMAT_XML;
+        } else if (strcmp(format_buf, "application/json") == 0) {
+          s->format = RGW_FORMAT_JSON;
+        }
+      }
     }
   }
 
@@ -1313,7 +1350,7 @@ int RGWREST::preprocess(struct req_state *s, RGWClientIO *cio)
       s->content_length = 0;
     } else {
       string err;
-      s->content_length = strict_strtol(s->length, 10, &err);
+      s->content_length = strict_strtoll(s->length, 10, &err);
       if (!err.empty()) {
         ldout(s->cct, 10) << "bad content length, aborting" << dendl;
         return -EINVAL;

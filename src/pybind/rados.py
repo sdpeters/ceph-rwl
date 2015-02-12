@@ -5,7 +5,7 @@ Copyright 2011, Hannu Valtonen <hannu.valtonen@ormod.com>
 """
 from ctypes import CDLL, c_char_p, c_size_t, c_void_p, c_char, c_int, c_long, \
     c_ulong, create_string_buffer, byref, Structure, c_uint64, c_ubyte, \
-    pointer, CFUNCTYPE, c_int64, c_uint8
+    pointer, CFUNCTYPE, c_int64, c_uint32, c_uint8
 from ctypes.util import find_library
 import ctypes
 import errno
@@ -16,6 +16,12 @@ from datetime import datetime
 ANONYMOUS_AUID = 0xffffffffffffffff
 ADMIN_AUID = 0
 LIBRADOS_ALL_NSPACES = '\001'
+
+LIBRADOS_OP_FLAG_FADVISE_RANDOM	    = 0x4
+LIBRADOS_OP_FLAG_FADVISE_SEQUENTIAL = 0x8
+LIBRADOS_OP_FLAG_FADVISE_WILLNEED   = 0x10
+LIBRADOS_OP_FLAG_FADVISE_DONTNEED   = 0x20
+LIBRADOS_OP_FLAG_FADVISE_NOCACHE    = 0x40
 
 class Error(Exception):
     """ `Error` class, derived from `Exception` """
@@ -203,17 +209,10 @@ Rados object in state %s." % self.state)
 
     def __init__(self, rados_id=None, name=None, clustername=None,
                  conf_defaults=None, conffile=None, conf=None, flags=0):
-        librados_path = find_library('rados')
-        if not librados_path:
-            #maybe find_library can not find it correctly on all platforms.
-            try:
-                self.librados = CDLL('librados.so.2')
-            except OSError as e:
-                    raise EnvironmentError("Unable to load librados: %s" % e)
-            except:
-                raise Error("Unexpected error")
-        else:
-            self.librados = CDLL(librados_path)
+        library_path  = find_library('rados')
+        # maybe find_library can not find it correctly on all platforms,
+        # so fall back to librados.so.2 in such case.
+        self.librados = CDLL(library_path if library_path is not None else 'librados.so.2')
 
         self.parsed_args = []
         self.conf_defaults = conf_defaults
@@ -767,6 +766,24 @@ Rados object in state %s." % self.state)
         self.require_state("connected")
         return run_in_thread(self.librados.rados_wait_for_latest_osdmap, (self.cluster,))
 
+    def blacklist_add(self, client_address, expire_seconds = 0):
+        """
+        Blacklist a client from the OSDs
+
+        :param client_address: client address
+        :type client_address: str
+        :param expire_seconds: number of seconds to blacklist
+        :type expire_seconds: int
+
+        :raises: :class:`Error`
+        """
+        self.require_state("connected")
+        ret = run_in_thread(self.librados.rados_blacklist_add,
+                            (self.cluster, c_char_p(client_address),
+                             c_uint32(expire_seconds)))
+        if ret < 0:
+            raise make_ex(ret, "error blacklisting client '%s'" % client_address)
+
 class ObjectIterator(object):
     """rados.Ioctx Object iterator"""
     def __init__(self, ioctx):
@@ -910,11 +927,14 @@ class Snap(object):
 
 class Completion(object):
     """completion object"""
-    def __init__(self, ioctx, rados_comp, oncomplete, onsafe):
+    def __init__(self, ioctx, rados_comp, oncomplete, onsafe,
+                 complete_cb, safe_cb):
         self.rados_comp = rados_comp
         self.oncomplete = oncomplete
         self.onsafe = onsafe
         self.ioctx = ioctx
+        self.complete_cb = complete_cb
+        self.safe_cb = safe_cb
 
     def is_safe(self):
         """
@@ -998,6 +1018,8 @@ class Completion(object):
         run_in_thread(self.ioctx.librados.rados_aio_release,
                       (self.rados_comp,))
 
+RADOS_CB = CFUNCTYPE(c_int, c_void_p, c_void_p)
+
 class Ioctx(object):
     """rados.Ioctx object"""
     def __init__(self, name, librados, io):
@@ -1009,9 +1031,6 @@ class Ioctx(object):
         self.nspace = ""
         self.safe_cbs = {}
         self.complete_cbs = {}
-        RADOS_CB = CFUNCTYPE(c_int, c_void_p, c_void_p)
-        self.__aio_safe_cb_c = RADOS_CB(self.__aio_safe_cb)
-        self.__aio_complete_cb_c = RADOS_CB(self.__aio_complete_cb)
         self.lock = threading.Lock()
 
     def __enter__(self):
@@ -1064,16 +1083,17 @@ class Ioctx(object):
         complete_cb = None
         safe_cb = None
         if oncomplete:
-            complete_cb = self.__aio_complete_cb_c
+            complete_cb = RADOS_CB(self.__aio_complete_cb)
         if onsafe:
-            safe_cb = self.__aio_safe_cb_c
+            safe_cb = RADOS_CB(self.__aio_safe_cb)
         ret = run_in_thread(self.librados.rados_aio_create_completion,
                             (c_void_p(0), complete_cb, safe_cb,
                             byref(completion)))
         if ret < 0:
             raise make_ex(ret, "error getting a completion")
         with self.lock:
-            completion_obj = Completion(self, completion, oncomplete, onsafe)
+            completion_obj = Completion(self, completion, oncomplete, onsafe,
+                                        complete_cb, safe_cb)
             if oncomplete:
                 self.complete_cbs[completion.value] = completion_obj
             if onsafe:

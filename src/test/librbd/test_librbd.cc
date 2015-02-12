@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "test/librados/test.h"
+#include "test/librbd/test_fixture.h"
 #include "common/errno.h"
 #include "include/interval_set.h"
 #include "include/stringify.h"
@@ -154,6 +155,18 @@ public:
     ASSERT_NE("", m_pool_name = create_pool());
   }
 
+  void validate_object_map(rbd_image_t image, bool *passed) {
+    uint64_t flags;
+    ASSERT_EQ(0, rbd_get_flags(image, &flags));
+    *passed = ((flags & RBD_FLAG_OBJECT_MAP_INVALID) == 0);
+  }
+
+  void validate_object_map(librbd::Image &image, bool *passed) {
+    uint64_t flags;
+    ASSERT_EQ(0, image.get_flags(&flags));
+    *passed = ((flags & RBD_FLAG_OBJECT_MAP_INVALID) == 0);
+  }
+
   std::string get_temp_image_name() {
     ++_image_number;
     return "image" + stringify(_image_number);
@@ -259,7 +272,8 @@ TEST_F(TestLibRBD, ResizeAndStat)
   ASSERT_EQ(0, rbd_resize(image, size / 2));
   ASSERT_EQ(0, rbd_stat(image, &info, sizeof(info)));
   ASSERT_EQ(info.size, size / 2);
-  
+
+  ASSERT_PASSED(validate_object_map, image);
   ASSERT_EQ(0, rbd_close(image));
 
   rados_ioctx_destroy(ioctx);
@@ -288,6 +302,7 @@ TEST_F(TestLibRBD, ResizeAndStatPP)
     ASSERT_EQ(0, image.resize(size / 2));
     ASSERT_EQ(0, image.stat(info, sizeof(info)));
     ASSERT_EQ(info.size, size / 2);
+    ASSERT_PASSED(validate_object_map, image);
   }
 
   ioctx.close();
@@ -322,6 +337,7 @@ int test_ls(rados_ioctx_t io_ctx, size_t num_expected, ...)
       image_names.erase(it);
     } else {
       ADD_FAILURE() << "Unable to find image " << expected;
+      va_end(ap);
       return -ENOENT;
     }
   }
@@ -364,21 +380,22 @@ int test_ls_pp(librbd::RBD& rbd, librados::IoCtx& io_ctx, size_t num_expected, .
   if (r == -ENOENT)
     r = 0;
   EXPECT_TRUE(r >= 0);
-  cout << "num images is: " << names.size() << endl
-	    << "expected: " << num_expected << endl;
+  cout << "num images is: " << names.size() << std::endl
+	    << "expected: " << num_expected << std::endl;
   int num = names.size();
 
   for (i = 0; i < names.size(); i++) {
-    cout << "image: " << names[i] << endl;
+    cout << "image: " << names[i] << std::endl;
   }
 
   va_start(ap, num_expected);
   for (i = num_expected; i > 0; i--) {
     char *expected = va_arg(ap, char *);
-    cout << "expected = " << expected << endl;
+    cout << "expected = " << expected << std::endl;
     vector<string>::iterator listed_name = find(names.begin(), names.end(), string(expected));
     if (listed_name == names.end()) {
       ADD_FAILURE() << "Unable to find image " << expected;
+      va_end(ap);
       return -ENOENT;
     }
     names.erase(listed_name);
@@ -448,7 +465,6 @@ TEST_F(TestLibRBD, TestCopy)
   ASSERT_EQ(3, test_ls(ioctx, 3, name.c_str(), name2.c_str(), name3.c_str()));
 
   ASSERT_EQ(0, rbd_close(image));
-
   rados_ioctx_destroy(ioctx);
 }
 
@@ -568,11 +584,11 @@ int test_ls_snaps(librbd::Image& image, size_t num_expected, ...)
   vector<librbd::snap_info_t> snaps;
   r = image.snap_list(snaps);
   EXPECT_TRUE(r >= 0);
-  cout << "num snaps is: " << snaps.size() << endl
-	    << "expected: " << num_expected << endl;
+  cout << "num snaps is: " << snaps.size() << std::endl
+	    << "expected: " << num_expected << std::endl;
 
   for (i = 0; i < snaps.size(); i++) {
-    cout << "snap: " << snaps[i].name << endl;
+    cout << "snap: " << snaps[i].name << std::endl;
   }
 
   va_start(ap, num_expected);
@@ -584,7 +600,8 @@ int test_ls_snaps(librbd::Image& image, size_t num_expected, ...)
       if (snaps[j].name == "")
 	continue;
       if (strcmp(snaps[j].name.c_str(), expected) == 0) {
-	cout << "found " << snaps[j].name << " with size " << snaps[j].size << endl;
+	cout << "found " << snaps[j].name << " with size " << snaps[j].size
+	     << std::endl;
 	EXPECT_EQ(expected_size, snaps[j].size);
 	snaps[j].name = "";
 	found = 1;
@@ -813,6 +830,7 @@ TEST_F(TestLibRBD, TestIO)
   ASSERT_EQ(-EINVAL, rbd_aio_write(image, info.size, 1, test_data, comp));
   ASSERT_EQ(-EINVAL, rbd_aio_read(image, info.size, 1, test_data, comp));
 
+  ASSERT_PASSED(validate_object_map, image);
   ASSERT_EQ(0, rbd_close(image));
 
   rados_ioctx_destroy(ioctx);
@@ -889,6 +907,7 @@ TEST_F(TestLibRBD, TestIOWithIOHint)
   ASSERT_EQ(-EINVAL, rbd_aio_read2(image, info.size, 1, test_data, comp,
 				    LIBRADOS_OP_FLAG_FADVISE_DONTNEED));
 
+  ASSERT_PASSED(validate_object_map, image);
   ASSERT_EQ(0, rbd_close(image));
 
   rados_ioctx_destroy(ioctx);
@@ -911,6 +930,7 @@ TEST_F(TestLibRBD, TestEmptyDiscard)
   ASSERT_PASSED(aio_discard_test_data, image, 0, 1*1024*1024);
   ASSERT_PASSED(aio_discard_test_data, image, 0, 4*1024*1024);
 
+  ASSERT_PASSED(validate_object_map, image);
   ASSERT_EQ(0, rbd_close(image));
 
   rados_ioctx_destroy(ioctx);
@@ -919,12 +939,12 @@ TEST_F(TestLibRBD, TestEmptyDiscard)
 
 void simple_write_cb_pp(librbd::completion_t cb, void *arg)
 {
-  cout << "write completion cb called!" << endl;
+  cout << "write completion cb called!" << std::endl;
 }
 
 void simple_read_cb_pp(librbd::completion_t cb, void *arg)
 {
-  cout << "read completion cb called!" << endl;
+  cout << "read completion cb called!" << std::endl;
 }
 
 void aio_write_test_data(librbd::Image& image, const char *test_data,
@@ -1070,6 +1090,8 @@ TEST_F(TestLibRBD, TestIOPP)
     ASSERT_PASSED(read_test_data, image, test_data,  TEST_IO_SIZE*2, TEST_IO_SIZE, 0);
     ASSERT_PASSED(read_test_data, image,  zero_data, TEST_IO_SIZE*3, TEST_IO_SIZE, 0);
     ASSERT_PASSED(read_test_data, image, test_data,  TEST_IO_SIZE*4, TEST_IO_SIZE, 0);
+
+    ASSERT_PASSED(validate_object_map, image);
   }
 
   ioctx.close();
@@ -1111,6 +1133,8 @@ TEST_F(TestLibRBD, TestIOPPWithIOHint)
     for (i = 5; i < 10; ++i)
       ASSERT_PASSED(aio_read_test_data, image, test_data, strlen(test_data) * i,
 		    TEST_IO_SIZE, LIBRADOS_OP_FLAG_FADVISE_SEQUENTIAL|LIBRADOS_OP_FLAG_FADVISE_DONTNEED);
+
+    ASSERT_PASSED(validate_object_map, image);
   }
 
   ioctx.close();
@@ -1200,6 +1224,7 @@ TEST_F(TestLibRBD, TestIOToSnapshot)
   ASSERT_EQ(0, rbd_snap_remove(image, "orig"));
   ASSERT_EQ(0, test_ls_snaps(image, 0));
 
+  ASSERT_PASSED(validate_object_map, image);
   ASSERT_EQ(0, rbd_close(image));
 
   rados_ioctx_destroy(ioctx);
@@ -1304,8 +1329,10 @@ TEST_F(TestLibRBD, TestClone)
   ASSERT_EQ(pinfo.size, 4UL<<20);
   printf("sized up clone, changed size but not overlap or parent's size\n");
   
+  ASSERT_PASSED(validate_object_map, child);
   ASSERT_EQ(0, rbd_close(child));
 
+  ASSERT_PASSED(validate_object_map, parent);
   ASSERT_EQ(-EBUSY, rbd_snap_remove(parent, "parent_snap"));
   printf("can't remove parent while child still exists\n");
   ASSERT_EQ(0, rbd_remove(ioctx, child_name.c_str()));
@@ -1389,6 +1416,9 @@ TEST_F(TestLibRBD, TestClone2)
   // all parent
   ASSERT_EQ((ssize_t)sizeof(test), rbd_read(child, 0, sizeof(test), test));
   ASSERT_EQ(0, memcmp(test, data, strlen(data)));
+
+  ASSERT_PASSED(validate_object_map, child);
+  ASSERT_PASSED(validate_object_map, parent);
 
   ASSERT_EQ(0, rbd_close(child));
   ASSERT_EQ(0, rbd_close(parent));
@@ -1479,6 +1509,7 @@ TEST_F(TestLibRBD, TestCoR)
   ASSERT_EQ(0, rbd_close(parent));
   ASSERT_EQ(0, rbd_open(ioctx, "parent", &parent, "parent_snap"));
   ASSERT_EQ(0, rbd_snap_protect(parent, "parent_snap"));
+  ASSERT_PASSED(validate_object_map, parent);
   ASSERT_EQ(0, rbd_close(parent));
   printf("made snapshot \"parent@parent_snap\" and protect it\n");
 
@@ -1525,6 +1556,7 @@ TEST_F(TestLibRBD, TestCoR)
   }
   rados_nobjects_list_close(list_ctx);
   ASSERT_TRUE(obj_checker.empty());
+  ASSERT_PASSED(validate_object_map, child);
   ASSERT_EQ(0, rbd_close(child));
 
   rados_ioctx_destroy(ioctx);
@@ -1886,6 +1918,7 @@ TEST_F(TestLibRBD, FlushAio)
     rbd_aio_release(write_comps[i]);
   }
 
+  ASSERT_PASSED(validate_object_map, image);
   ASSERT_EQ(0, rbd_close(image));
   ASSERT_EQ(0, rbd_remove(ioctx, name.c_str()));
   rados_ioctx_destroy(ioctx);
@@ -1935,6 +1968,7 @@ TEST_F(TestLibRBD, FlushAioPP)
       ASSERT_EQ(1, comp->is_complete());
       delete comp;
     }
+    ASSERT_PASSED(validate_object_map, image);
   }
 
   ioctx.close();
@@ -2116,6 +2150,7 @@ TEST_F(TestLibRBD, DiffIterateDiscard)
       			    vector_iterate_cb, (void *) &extents));
   ASSERT_EQ(1u, extents.size());
   ASSERT_EQ(diff_extent(0, 256, false), extents[0]);
+  ASSERT_PASSED(validate_object_map, image);
   ioctx.close();
 }
 
@@ -2175,6 +2210,7 @@ TEST_F(TestLibRBD, DiffIterateStress)
     }
   }
 
+  ASSERT_PASSED(validate_object_map, image);
   ioctx.close();
 }
 
@@ -2237,6 +2273,7 @@ TEST_F(TestLibRBD, ZeroLengthWrite)
   ASSERT_EQ(1, rbd_read(image, 0, 1, read_data));
   ASSERT_EQ('\0', read_data[0]);
 
+  ASSERT_PASSED(validate_object_map, image);
   ASSERT_EQ(0, rbd_close(image));
 
   rados_ioctx_destroy(ioctx);
@@ -2263,6 +2300,7 @@ TEST_F(TestLibRBD, ZeroLengthDiscard)
   ASSERT_EQ((int)strlen(data), rbd_read(image, 0, strlen(data), read_data));
   ASSERT_EQ(0, memcmp(data, read_data, strlen(data)));
 
+  ASSERT_PASSED(validate_object_map, image);
   ASSERT_EQ(0, rbd_close(image));
 
   rados_ioctx_destroy(ioctx);
@@ -2373,6 +2411,7 @@ TEST_F(TestLibRBD, TestPendingAio)
                               comps[i]));
   }
 
+  ASSERT_PASSED(validate_object_map, image);
   ASSERT_EQ(0, rbd_close(image));
   for (size_t i = 0; i < num_aios; ++i) {
     ASSERT_EQ(1, rbd_aio_is_complete(comps[i]));
@@ -2381,3 +2420,125 @@ TEST_F(TestLibRBD, TestPendingAio)
 
   rados_ioctx_destroy(ioctx);
 }
+
+TEST_F(TestLibRBD, SnapCreateViaLockOwner)
+{
+  REQUIRE_FEATURE(RBD_FEATURE_LAYERING | RBD_FEATURE_EXCLUSIVE_LOCK);
+
+  librados::IoCtx ioctx;
+  ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
+
+  librbd::RBD rbd;
+  std::string name = get_temp_image_name();
+  uint64_t size = 2 << 20;
+  int order = 0;
+  ASSERT_EQ(0, create_image_pp(rbd, ioctx, name.c_str(), size, &order));
+
+  librbd::Image image1;
+  ASSERT_EQ(0, rbd.open(ioctx, image1, name.c_str(), NULL));
+
+  bufferlist bl;
+  ASSERT_EQ(0, image1.write(0, 0, bl));
+
+  bool lock_owner;
+  ASSERT_EQ(0, image1.is_exclusive_lock_owner(&lock_owner));
+  ASSERT_TRUE(lock_owner);
+
+  librbd::Image image2;
+  ASSERT_EQ(0, rbd.open(ioctx, image2, name.c_str(), NULL));
+
+  ASSERT_EQ(0, image2.is_exclusive_lock_owner(&lock_owner));
+  ASSERT_FALSE(lock_owner);
+
+  ASSERT_EQ(0, image2.snap_create("snap1"));
+  ASSERT_TRUE(image1.snap_exists("snap1"));
+  ASSERT_TRUE(image2.snap_exists("snap1"));
+
+  ASSERT_EQ(0, image1.is_exclusive_lock_owner(&lock_owner));
+  ASSERT_TRUE(lock_owner);
+}
+
+TEST_F(TestLibRBD, FlattenViaLockOwner)
+{
+  REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK);
+
+  librados::IoCtx ioctx;
+  ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
+
+  librbd::RBD rbd;
+  std::string parent_name = get_temp_image_name();
+  uint64_t size = 2 << 20;
+  int order = 0;
+  ASSERT_EQ(0, create_image_pp(rbd, ioctx, parent_name.c_str(), size, &order));
+
+  librbd::Image parent_image;
+  ASSERT_EQ(0, rbd.open(ioctx, parent_image, parent_name.c_str(), NULL));
+  ASSERT_EQ(0, parent_image.snap_create("snap1"));
+  ASSERT_EQ(0, parent_image.snap_protect("snap1"));
+
+  uint64_t features;
+  ASSERT_EQ(0, parent_image.features(&features));
+
+  std::string name = get_temp_image_name();
+  EXPECT_EQ(0, rbd.clone(ioctx, parent_name.c_str(), "snap1", ioctx,
+			 name.c_str(), features, &order));
+
+  librbd::Image image1;
+  ASSERT_EQ(0, rbd.open(ioctx, image1, name.c_str(), NULL));
+
+  bufferlist bl;
+  ASSERT_EQ(0, image1.write(0, 0, bl));
+
+  bool lock_owner;
+  ASSERT_EQ(0, image1.is_exclusive_lock_owner(&lock_owner));
+  ASSERT_TRUE(lock_owner);
+
+  librbd::Image image2;
+  ASSERT_EQ(0, rbd.open(ioctx, image2, name.c_str(), NULL));
+
+  ASSERT_EQ(0, image2.is_exclusive_lock_owner(&lock_owner));
+  ASSERT_FALSE(lock_owner);
+
+  ASSERT_EQ(0, image2.flatten());
+
+  ASSERT_EQ(0, image1.is_exclusive_lock_owner(&lock_owner));
+  ASSERT_TRUE(lock_owner);
+  ASSERT_PASSED(validate_object_map, image1);
+}
+
+TEST_F(TestLibRBD, ResizeViaLockOwner)
+{
+  REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK);
+
+  librados::IoCtx ioctx;
+  ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
+
+  librbd::RBD rbd;
+  std::string name = get_temp_image_name();
+  uint64_t size = 2 << 20;
+  int order = 0;
+  ASSERT_EQ(0, create_image_pp(rbd, ioctx, name.c_str(), size, &order));
+
+  librbd::Image image1;
+  ASSERT_EQ(0, rbd.open(ioctx, image1, name.c_str(), NULL));
+
+  bufferlist bl;
+  ASSERT_EQ(0, image1.write(0, 0, bl));
+
+  bool lock_owner;
+  ASSERT_EQ(0, image1.is_exclusive_lock_owner(&lock_owner));
+  ASSERT_TRUE(lock_owner);
+
+  librbd::Image image2;
+  ASSERT_EQ(0, rbd.open(ioctx, image2, name.c_str(), NULL));
+
+  ASSERT_EQ(0, image2.is_exclusive_lock_owner(&lock_owner));
+  ASSERT_FALSE(lock_owner);
+
+  ASSERT_EQ(0, image2.resize(0));
+
+  ASSERT_EQ(0, image1.is_exclusive_lock_owner(&lock_owner));
+  ASSERT_TRUE(lock_owner);
+  ASSERT_PASSED(validate_object_map, image1);
+}
+
