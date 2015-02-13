@@ -1784,8 +1784,8 @@ void Pipe::writer()
 	blist.append(m->get_middle());
 	blist.append(m->get_data());
 
-	if (cct->_conf->ms_dump_on_send) {
-	  ldout(cct, 0) << __func__ << " " << *m << "\n";
+	if (msgr->cct->_conf->ms_dump_on_send) {
+	  ldout(msgr->cct, 0) << __func__ << " " << *m << "\n";
 	  m->get_payload().hexdump(*_dout);
 	  if (m->get_middle().length() > 0) {
 	    *_dout << " middle:\n";
