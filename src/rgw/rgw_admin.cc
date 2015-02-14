@@ -1378,7 +1378,11 @@ int main(int argc, char **argv)
         cerr << "failed to read region info (name=" << *iter << "): " << cpp_strerror(-ret) << std::endl;
 	return -ret;
         }
-        regionmap.update(region);
+        ret = regionmap.update(region);
+        if (ret < 0) {
+          cerr << "failed to update region map with region info (name=" << *iter << "): " << cpp_strerror(-ret) << std::endl;
+          return -ret;
+        }
       }
 
       ret = regionmap.store(g_ceph_context, store);
