@@ -27,6 +27,9 @@
 #include "include/rados/rados_types.h"
 #include "include/rados/rados_types.hpp"
 
+#include "common/dout.h"
+#include "common/debug.h"
+
 #include <list>
 #include <map>
 #include <memory>
@@ -618,6 +621,7 @@ struct ObjectOperation {
   }
 
   struct C_ObjectOperation_copyget : public Context {
+    CephContext *cct;
     bufferlist bl;
     object_copy_cursor_t *cursor;
     uint64_t *out_size;
@@ -629,7 +633,8 @@ struct ObjectOperation {
     vector<snapid_t> *out_snaps;
     snapid_t *out_snap_seq;
     int *prval;
-    C_ObjectOperation_copyget(object_copy_cursor_t *c,
+    C_ObjectOperation_copyget(CephContext *cc,
+			      object_copy_cursor_t *c,
 			      uint64_t *s,
 			      utime_t *m,
 			      string *cat,
@@ -639,7 +644,7 @@ struct ObjectOperation {
 			      std::vector<snapid_t> *osnaps,
 			      snapid_t *osnap_seq,
 			      int *r)
-      : cursor(c),
+      : cct(cc), cursor(c),
 	out_size(s), out_mtime(m), out_category(cat),
 	out_attrs(a), out_data(d), out_omap_header(oh),
 	out_omap(o), out_snaps(osnaps), out_snap_seq(osnap_seq),
@@ -671,13 +676,18 @@ struct ObjectOperation {
 	  *out_snap_seq = copy_reply.snap_seq;
 	*cursor = copy_reply.cursor;
       } catch (buffer::error& e) {
+	if (cct) {
+	  lgeneric_dout(cct,0) << "ugh:\n";
+	  bl.hexdump(*_dout);
+	  *_dout << dendl;
+	}
 	if (prval)
 	  *prval = -EIO;
       }
     }
   };
 
-  void copy_get(object_copy_cursor_t *cursor,
+  void copy_get(CephContext *cct, object_copy_cursor_t *cursor,
 		uint64_t max,
 		uint64_t *out_size,
 		utime_t *out_mtime,
@@ -696,7 +706,8 @@ struct ObjectOperation {
     unsigned p = ops.size() - 1;
     out_rval[p] = prval;
     C_ObjectOperation_copyget *h =
-      new C_ObjectOperation_copyget(cursor, out_size, out_mtime, out_category,
+      new C_ObjectOperation_copyget(cct,
+				    cursor, out_size, out_mtime, out_category,
                                     out_attrs, out_data, out_omap_header,
 				    out_omap, out_snaps, out_snap_seq, prval);
     out_bl[p] = &h->bl;

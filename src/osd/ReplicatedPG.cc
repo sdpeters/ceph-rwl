@@ -5828,7 +5828,7 @@ void ReplicatedPG::_copy_some(ObjectContextRef obc, CopyOpRef cop)
     // it already!
     assert(cop->cursor.is_initial());
   }
-  op.copy_get(&cop->cursor, get_copy_chunk_size(),
+  op.copy_get(g_ceph_context, &cop->cursor, get_copy_chunk_size(),
 	      &cop->results.object_size, &cop->results.mtime,
 	      &cop->results.category,
 	      &cop->attrs, &cop->data, &cop->omap_header, &cop->omap,
