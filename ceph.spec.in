@@ -550,6 +550,8 @@ fi
 #################################################################################
 %files
 %defattr(-,root,root,-)
+%{!?_licensedir:%global license %%doc}
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %docdir %{_docdir}
 %dir %{_docdir}/ceph
 %{_docdir}/ceph/sample.ceph.conf
@@ -637,6 +639,7 @@ fi
 #################################################################################
 %files -n ceph-common
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_bindir}/ceph
 %{_bindir}/ceph-authtool
 %{_bindir}/ceph-conf
@@ -683,6 +686,7 @@ fi
 #################################################################################
 %files fuse
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_bindir}/ceph-fuse
 %{_mandir}/man8/ceph-fuse.8*
 %if 0%{?rhel} >= 7 || 0%{?fedora}
@@ -694,12 +698,14 @@ fi
 #################################################################################
 %files -n rbd-fuse
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_bindir}/rbd-fuse
 %{_mandir}/man8/rbd-fuse.8*
 
 #################################################################################
 %files radosgw
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_initrddir}/ceph-radosgw
 %{_bindir}/radosgw
 %{_bindir}/radosgw-admin
@@ -737,6 +743,7 @@ fi
 %if %{with ocf}
 %files resource-agents
 %defattr(0755,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %dir /usr/lib/ocf
 %dir /usr/lib/ocf/resource.d
 %dir /usr/lib/ocf/resource.d/ceph
@@ -746,6 +753,7 @@ fi
 #################################################################################
 %files -n librados2
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_libdir}/librados.so.*
 
 %post -n librados2
@@ -757,6 +765,7 @@ fi
 #################################################################################
 %files -n librados2-devel
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %dir %{_includedir}/rados
 %{_includedir}/rados/librados.h
 %{_includedir}/rados/librados.hpp
@@ -771,11 +780,13 @@ fi
 #################################################################################
 %files -n python-rados
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{python_sitelib}/rados.py*
 
 #################################################################################
 %files -n libradosstriper1
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_libdir}/libradosstriper.so.*
 
 %post -n libradosstriper1
@@ -787,6 +798,7 @@ fi
 #################################################################################
 %files -n libradosstriper1-devel
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %dir %{_includedir}/radosstriper
 %{_includedir}/radosstriper/libradosstriper.h
 %{_includedir}/radosstriper/libradosstriper.hpp
@@ -795,6 +807,7 @@ fi
 #################################################################################
 %files -n librbd1
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_libdir}/librbd.so.*
 
 %post -n librbd1
@@ -808,6 +821,7 @@ ln -sf %{_libdir}/librbd.so.1 /usr/lib64/qemu/librbd.so.1
 #################################################################################
 %files -n librbd1-devel
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %dir %{_includedir}/rbd
 %{_includedir}/rbd/librbd.h
 %{_includedir}/rbd/librbd.hpp
@@ -817,11 +831,13 @@ ln -sf %{_libdir}/librbd.so.1 /usr/lib64/qemu/librbd.so.1
 #################################################################################
 %files -n python-rbd
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{python_sitelib}/rbd.py*
 
 #################################################################################
 %files -n libcephfs1
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_libdir}/libcephfs.so.*
 
 %post -n libcephfs1
@@ -833,6 +849,7 @@ ln -sf %{_libdir}/librbd.so.1 /usr/lib64/qemu/librbd.so.1
 #################################################################################
 %files -n libcephfs1-devel
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %dir %{_includedir}/cephfs
 %{_includedir}/cephfs/libcephfs.h
 %{_libdir}/libcephfs.so
@@ -840,16 +857,19 @@ ln -sf %{_libdir}/librbd.so.1 /usr/lib64/qemu/librbd.so.1
 #################################################################################
 %files -n python-cephfs
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{python_sitelib}/cephfs.py*
 
 #################################################################################
 %files -n rest-bench
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_bindir}/rest-bench
 
 #################################################################################
 %files -n ceph-test
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_bindir}/ceph_bench_log
 %{_bindir}/ceph_kvstorebench
 %{_bindir}/ceph_multi_stress_watch
@@ -886,16 +906,19 @@ ln -sf %{_libdir}/librbd.so.1 /usr/lib64/qemu/librbd.so.1
 #################################################################################
 %files -n libcephfs_jni1
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_libdir}/libcephfs_jni.so.*
 
 #################################################################################
 %files -n libcephfs_jni1-devel
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_libdir}/libcephfs_jni.so
 
 #################################################################################
 %files -n cephfs-java
 %defattr(-,root,root,-)
+%license COPYING COPYING-LGPL2.1 COPYING-GPL2
 %{_javadir}/libcephfs.jar
 %{_javadir}/libcephfs-test.jar
 
