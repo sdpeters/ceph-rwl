@@ -213,7 +213,8 @@ int RGWReplicaBucketLogger::update_bound(const rgw_bucket& bucket, int shard_id,
 
   map<int, string>::iterator iter;
   for (iter = vals.begin(); iter != vals.end(); ++iter) {
-    ldout(cct, 20) << "updating bound: bucket=" << bucket << " shard=" << iter->first << " marker=" << marker << dendl;
+    const string& shard_marker = iter->second;
+    ldout(cct, 20) << "updating bound: bucket=" << bucket << " shard=" << iter->first << " marker=" << shard_marker << dendl;
     int r = RGWReplicaLogger::update_bound(obj_name(bucket, iter->first, true), pool,
                                           daemon_id, iter->second, time, entries,
                                           true /* need to exist */);
@@ -225,10 +226,10 @@ int RGWReplicaBucketLogger::update_bound(const rgw_bucket& bucket, int shard_id,
         return r;
       }
       r = RGWReplicaLogger::update_bound(obj_name(bucket, iter->first, true), pool,
-                                         daemon_id, marker, time, entries, false);
+                                         daemon_id, shard_marker, time, entries, false);
     }
     if (r < 0) {
-      ldout(cct, 0) << "failed to update bound: bucket=" << bucket << " shard=" << iter->first << " marker=" << marker << dendl;
+      ldout(cct, 0) << "failed to update bound: bucket=" << bucket << " shard=" << iter->first << " marker=" << shard_marker << dendl;
       ret = r;
     }
   }
