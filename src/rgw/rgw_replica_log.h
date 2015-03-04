@@ -103,6 +103,7 @@ class RGWReplicaBucketLogger : private RGWReplicaLogger {
   string prefix;
 
   string obj_name(const rgw_bucket& bucket, int shard_id, bool index_by_instance);
+  int extract_shard_marker(string& marker, int shard_id);
 
 public:
   RGWReplicaBucketLogger(RGWRados *_store);

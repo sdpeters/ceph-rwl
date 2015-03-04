@@ -255,8 +255,50 @@ int RGWReplicaBucketLogger::delete_bound(const rgw_bucket& bucket, int shard_id,
   return RGWReplicaLogger::delete_bound(obj_name(bucket, shard_id, true), pool, daemon_id, purge_all, false);
 }
 
+int RGWReplicaBucketLogger::extract_shard_marker(string& marker, int shard_id)
+{
+  if (!BucketIndexShardsManager::is_shards_marker(marker)) {
+    return 0;
+  }
+
+  BucketIndexShardsManager sm;
+  int ret = sm.from_string(marker, -1); /* parse as a multi-shard string */
+  if (ret < 0) {
+    ldout(cct, 0) << "ERROR: could not parse shards marker: " << marker << dendl;
+    return ret;
+  }
+
+  map<int, string>& vals = sm.get();
+  map<int, string>::iterator iter = vals.find(shard_id);
+  if (iter != vals.end()) {
+    marker = iter->second;
+  } else {
+    marker.clear();
+  }
+
+  return 0;
+}
+
 int RGWReplicaBucketLogger::get_bounds(const rgw_bucket& bucket, int shard_id, RGWReplicaBounds& bounds) {
   int r = RGWReplicaLogger::get_bounds(obj_name(bucket, shard_id, true), pool, bounds);
+  if (r == 0 && shard_id >= 0) {
+    /* sharded markers might have been represented as non sharded markers, adjust these, only return
+     * the relevant shard data
+     */
+    r = extract_shard_marker(bounds.marker, shard_id);
+    if (r < 0) {
+      return r;
+    }
+    list<RGWReplicaProgressMarker>& progress = bounds.markers;
+    for (list<RGWReplicaProgressMarker>::iterator iter = progress.begin(); iter != progress.end(); ++iter) {
+      r = extract_shard_marker(iter->position_marker, shard_id);
+      if (r < 0) {
+        return r;
+      }
+    }
+
+    return 0;
+  }
   if (r != -ENOENT) {
     return r;
   }
