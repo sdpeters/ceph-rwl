@@ -15,6 +15,8 @@
 #ifndef WBTHROTTLE_H
 #define WBTHROTTLE_H
 
+#include <set>
+
 #include "include/unordered_map.h"
 #include <boost/tuple/tuple.hpp>
 #include "include/memory.h"
@@ -43,8 +45,8 @@ enum {
  *
  * Tracks, throttles, and flushes outstanding IO
  */
-class WBThrottle : Thread, public md_config_obs_t {
-  ghobject_t clearing;
+class WBThrottle : public md_config_obs_t {
+  std::multiset<ghobject_t> clearing_in_progress;
   /* *_limits.first is the start_flusher limit and
    * *_limits.second is the hard limit
    */
@@ -60,6 +62,8 @@ class WBThrottle : Thread, public md_config_obs_t {
 
   uint64_t cur_ios;  /// Currently unflushed IOs
   uint64_t cur_size; /// Currently unflushed bytes
+  uint64_t cur_ios_pre_fsync;  /// Currently unflushed IOs
+  uint64_t cur_size_pre_fsync; /// Currently unflushed bytes
 
   /**
    * PendingWB tracks the ios pending on an object.
@@ -119,6 +123,16 @@ class WBThrottle : Thread, public md_config_obs_t {
   bool get_next_should_flush(
     boost::tuple<ghobject_t, FDRef, PendingWB> *next ///< [out] next to flush
     ); ///< @return false if we are shutting down
+
+
+  /// Thread
+  class FlusherThread : public Thread {
+    WBThrottle *parent;
+  public:
+    FlusherThread(WBThrottle *parent) : parent(parent) {}
+    void *entry();
+  };
+  vector<FlusherThread*> flusher_threads;
 public:
   enum FS {
     BTRFS,
@@ -165,8 +179,6 @@ public:
   void handle_conf_change(const md_config_t *conf,
 			  const std::set<std::string> &changed);
 
-  /// Thread
-  void *entry();
 };
 
 #endif
