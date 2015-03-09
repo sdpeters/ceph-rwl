@@ -242,7 +242,7 @@ gateway configuration as discussed in the following text.
 
 #. Replace the ``/{path}/{socket-name}`` entry with path to the socket and
    the socket name. For example, 
-   ``/var/run/ceph/client.radosgw.us-east-1.sock``. Ensure that you use the 
+   ``/var/run/radosgw/client.radosgw.us-east-1.sock``. Ensure that you use the
    same path and socket name in your ``ceph.conf`` entry.
 
 #. Replace the ``{fqdn}`` entry with the fully-qualified domain name of the 
@@ -350,7 +350,7 @@ for your Ceph Storage Cluster(s). For example::
 	rgw zone root pool = .us-east.rgw.root
 	keyring = /etc/ceph/ceph.client.radosgw.keyring
 	rgw dns name = {hostname}
-	rgw socket path = /var/run/ceph/$name.sock
+	rgw socket path = /var/run/radosgw/$name.sock
 	host = {host-name}
 	
 	[client.radosgw.us-west-1]
@@ -360,7 +360,7 @@ for your Ceph Storage Cluster(s). For example::
 	rgw zone root pool = .us-west.rgw.root
 	keyring = /etc/ceph/ceph.client.radosgw.keyring
 	rgw dns name = {hostname}
-	rgw socket path = /var/run/ceph/$name.sock
+	rgw socket path = /var/run/radosgw/$name.sock
 	host = {host-name}
 
 

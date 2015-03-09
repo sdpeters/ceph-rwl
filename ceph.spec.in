@@ -504,6 +504,7 @@ mv $RPM_BUILD_ROOT/sbin/mount.fuse.ceph $RPM_BUILD_ROOT/usr/sbin/mount.fuse.ceph
 #set up placeholder directories
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/ceph
 mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/run/ceph
+mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/run/radosgw
 mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/log/ceph
 mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/lib/ceph/tmp
 mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/lib/ceph/mon
@@ -708,6 +709,7 @@ fi
 %config(noreplace) %{_sysconfdir}/logrotate.d/radosgw
 %config %{_sysconfdir}/bash_completion.d/radosgw-admin
 %dir %{_localstatedir}/log/radosgw/
+%dir %attr(775,apache,apache) %{_localstatedir}/run/radosgw/
 
 %post radosgw
 /sbin/ldconfig

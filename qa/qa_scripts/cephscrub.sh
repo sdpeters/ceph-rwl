@@ -3,6 +3,7 @@ sudo rm -rf /var/log/ceph
 sudo rm -rf /var/lib/ceph
 sudo rm -rf /etc/ceph
 sudo rm -rf /var/run/ceph
+sudo rm -rf /var/run/radosgw
 # remove the ceph packages
 sudo apt-get -y  purge ceph
 sudo apt-get -y  purge ceph-dbg

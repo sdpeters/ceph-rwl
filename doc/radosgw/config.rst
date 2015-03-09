@@ -137,7 +137,7 @@ FastCGI and a log file. For example::
 	[client.radosgw.{instance-name}]
 	host = {host-name}
 	keyring = /etc/ceph/ceph.client.radosgw.keyring
-	rgw socket path = /var/run/ceph/ceph.radosgw.{instance-name}.fastcgi.sock
+	rgw socket path = /var/run/radosgw/ceph.radosgw.{instance-name}.fastcgi.sock
 	log file = /var/log/radosgw/client.radosgw.{instance-name}.log
 
 The ``[client.radosgw.*]`` portion of the gateway instance identifies this
@@ -148,7 +148,7 @@ instance name follows. For example::
 	[client.radosgw.gateway]
 	host = ceph-gateway
 	keyring = /etc/ceph/ceph.client.radosgw.keyring
-	rgw socket path = /var/run/ceph/ceph.radosgw.gateway.fastcgi.sock
+	rgw socket path = /var/run/radosgw/ceph.radosgw.gateway.fastcgi.sock
 	log file = /var/log/radosgw/client.radosgw.gateway.log
 
 .. note:: The ``host`` must be your machine hostname, not the FQDN. Make sure 
@@ -306,7 +306,7 @@ of a gateway configuration for Debian/Ubuntu and CentOS/RHEL.
 
 #. Replace the ``/{path}/{socket-name}`` entry with path to the socket and
    the socket name. For example, 
-   ``/var/run/ceph/ceph.radosgw.gateway.fastcgi.sock``. Ensure that you use the 
+   ``/var/run/radosgw/ceph.radosgw.gateway.fastcgi.sock``. Ensure that you use the 
    same path and socket name in your ``ceph.conf`` entry.
 
 #. Replace the ``{fqdn}`` entry with the fully-qualified domain name of the 
@@ -348,13 +348,8 @@ Then, disable the default site. ::
 	sudo a2dissite default
 	
 
-Adjust Path Ownership/Permissions
+Adjust SELinux
 =================================
-
-On some distributions, you must change ownership for ``/var/run/ceph`` to
-ensure that Apache has permissions to create a socket ::
-
-	sudo chown apache:apache /path/to/file   
 
 On some systems, you may need to set SELinux to ``Permissive``. If you are
 unable to communicate with the gateway after attempting to start it, try 
