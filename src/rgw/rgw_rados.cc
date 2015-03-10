@@ -1290,7 +1290,10 @@ public:
     lderr(rados->ctx()) << "RGWWatcher::handle_error cookie " << cookie
 			<< " err " << cpp_strerror(err) << dendl;
     rados->remove_watcher(index);
-    rados->schedule_context(new C_ReinitWatch(this));
+    Mutex::Locker l(rados->finisher_lock);
+    if (!rados->finisher_going_down) {
+        rados->schedule_context(new C_ReinitWatch(this));
+    }
   }
 
   void reinit() {
@@ -1398,6 +1401,8 @@ int RGWRados::get_max_chunk_size(rgw_bucket& bucket, uint64_t *max_chunk_size)
 void RGWRados::finalize()
 {
   if (finisher) {
+    Mutex::Locker l(finisher_lock);
+    finisher_going_down = true;
     finisher->stop();
   }
   if (need_watch_notify()) {

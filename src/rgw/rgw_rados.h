@@ -1247,6 +1247,8 @@ protected:
   RGWQuotaHandler *quota_handler;
 
   Finisher *finisher;
+  Mutex finisher_lock;
+  bool finisher_going_down;
 
 public:
   RGWRados() : lock("rados_timer_lock"), watchers_lock("watchers_lock"), timer(NULL),
@@ -1260,6 +1262,8 @@ public:
                pools_initialized(false),
                quota_handler(NULL),
                finisher(NULL),
+               finisher_lock("finisher_lock"),
+               finisher_going_down(false),
                rest_master_conn(NULL),
                meta_mgr(NULL), data_log(NULL) {}
 
