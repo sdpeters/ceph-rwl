@@ -1399,11 +1399,11 @@ void RGWRados::finalize()
 {
   if (finisher) {
     finisher->stop();
-    delete finisher;
   }
   if (need_watch_notify()) {
     finalize_watch();
   }
+  delete finisher;
   delete meta_mgr;
   delete data_log;
   if (use_gc_thread) {
