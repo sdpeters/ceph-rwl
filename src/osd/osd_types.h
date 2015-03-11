@@ -1234,6 +1234,7 @@ struct object_stat_sum_t {
   int64_t num_objects_omap;
   int64_t num_objects_hit_set_archive;
   int64_t num_bytes_hit_set_archive;
+  int64_t num_objects_pinned;
 
   object_stat_sum_t()
     : num_bytes(0),
@@ -1251,7 +1252,8 @@ struct object_stat_sum_t {
       num_whiteouts(0),
       num_objects_omap(0),
       num_objects_hit_set_archive(0),
-      num_bytes_hit_set_archive(0)
+      num_bytes_hit_set_archive(0),
+      num_objects_pinned(0)
   {}
 
   void floor(int64_t f) {
@@ -1279,6 +1281,7 @@ struct object_stat_sum_t {
     FLOOR(num_objects_omap);
     FLOOR(num_objects_hit_set_archive);
     FLOOR(num_bytes_hit_set_archive);
+    FLOOR(num_objects_pinned);
 #undef FLOOR
   }
 
@@ -1314,6 +1317,7 @@ struct object_stat_sum_t {
     SPLIT(num_objects_omap);
     SPLIT(num_objects_hit_set_archive);
     SPLIT(num_bytes_hit_set_archive);
+    SPLIT(num_objects_pinned);
 #undef SPLIT
   }
 
@@ -1447,6 +1451,7 @@ struct pg_stat_t {
   bool omap_stats_invalid;
   bool hitset_stats_invalid;
   bool hitset_bytes_stats_invalid;
+  bool pin_stats_invalid;
 
   /// up, acting primaries
   int32_t up_primary;
@@ -1465,6 +1470,7 @@ struct pg_stat_t {
       omap_stats_invalid(false),
       hitset_stats_invalid(false),
       hitset_bytes_stats_invalid(false),
+      pin_stats_invalid(false),
       up_primary(-1),
       acting_primary(-1)
   { }
