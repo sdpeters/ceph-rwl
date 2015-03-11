@@ -8703,6 +8703,11 @@ int OSD::init_op_flags(OpRequestRef& op)
 	op->set_skip_promote();
       }
 
+    // force promotion when pin an object in cache tier
+    case CEPH_OSD_OP_CACHE_PIN:
+      op->set_promote();
+      break;
+
     default:
       break;
     }
