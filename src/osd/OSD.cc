@@ -224,6 +224,8 @@ OSDService::OSDService(OSD *osd) :
   next_notif_id(0),
   backfill_request_lock("OSD::backfill_request_lock"),
   backfill_request_timer(cct, backfill_request_lock, false),
+  debug_peering_delay_lock("OSD::debug_peering_delay_lock"),
+  debug_peering_delay_timer(cct, debug_peering_delay_lock, false),
   last_tid(0),
   tid_lock("OSDService::tid_lock"),
   reserver_finisher(cct),
@@ -457,6 +459,10 @@ void OSDService::shutdown()
   {
     Mutex::Locker l(backfill_request_lock);
     backfill_request_timer.shutdown();
+  }
+  {
+    Mutex::Locker l(debug_peering_delay_lock);
+    debug_peering_delay_timer.shutdown();
   }
   osdmap = OSDMapRef();
   next_osdmap = OSDMapRef();
@@ -1759,6 +1765,7 @@ int OSD::init()
 
   tick_timer.init();
   service.backfill_request_timer.init();
+  service.debug_peering_delay_timer.init();
 
   // mount.
   dout(2) << "mounting " << dev_path << " "

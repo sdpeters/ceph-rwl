@@ -1973,6 +1973,7 @@ public:
     struct WaitUpThru : boost::statechart::state< WaitUpThru, Peering >, NamedState {
       WaitUpThru(my_context ctx);
       void exit();
+      bool delayed_activation;
 
       typedef boost::mpl::list <
 	boost::statechart::custom_reaction< QueryState >,
