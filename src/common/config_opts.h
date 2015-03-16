@@ -635,6 +635,7 @@ OPTION(osd_op_log_threshold, OPT_INT, 5) // how many op log messages to show in 
 OPTION(osd_verify_sparse_read_holes, OPT_BOOL, false)  // read fiemap-reported holes and verify they are zeros
 OPTION(osd_debug_delay_activate, OPT_U64, 0)
 OPTION(osd_debug_delay_activate_prob, OPT_U64, 0) // percent chance to delay by above
+OPTION(osd_debug_find_best_info_ignore_primary, OPT_BOOL, false) // don't favor current primary
 OPTION(osd_debug_drop_ping_probability, OPT_DOUBLE, 0)
 OPTION(osd_debug_drop_ping_duration, OPT_INT, 0)
 OPTION(osd_debug_drop_pg_create_probability, OPT_DOUBLE, 0)

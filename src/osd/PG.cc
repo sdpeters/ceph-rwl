@@ -953,7 +953,8 @@ map<pg_shard_t, pg_info_t>::const_iterator PG::find_best_info(
     }
 
     // prefer current primary (usually the caller), all things being equal
-    if (p->first == pg_whoami) {
+    if (p->first == pg_whoami &&
+	!cct->_conf->osd_debug_find_best_info_ignore_primary) {
       dout(10) << "calc_acting prefer osd." << p->first
 	       << " because it is current primary" << dendl;
       best = p;
