@@ -30,7 +30,8 @@ rbd_replay_SOURCES = rbd_replay/rbd-replay.cc
 rbd_replay_LDADD = $(LIBRBD) \
 	$(LIBRADOS) \
 	$(CEPH_GLOBAL) \
-	librbd_replay.la
+	librbd_replay.la \
+	@EXTRALIBS@
 
 if LINUX
 bin_PROGRAMS += rbd-replay

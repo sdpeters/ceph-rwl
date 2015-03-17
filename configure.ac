@@ -634,8 +634,7 @@ AC_ARG_ENABLE(xio,
 AM_CONDITIONAL(ENABLE_XIO, [test "x$enable_xio" = "xyes"])
 
 if test "x$enable_xio" = x"yes"; then
-   AC_CHECK_HEADER([libxio.h], [], AC_MSG_ERROR([Cannot find header 'libxio.h'.]))
-   AC_CHECK_LIB([xio], [xio_init], [], AC_MSG_FAILURE([Accelio libxio not found]))
+   # Require OpenFabrics
    AC_CHECK_LIB([ibverbs], [ibv_query_device], [], AC_MSG_FAILURE([libibverbs not found]))
    AC_CHECK_LIB([rdmacm], [rdma_connect], [], AC_MSG_FAILURE([librdmacm not found]))
 
@@ -644,9 +643,15 @@ if test "x$enable_xio" = x"yes"; then
       AC_MSG_FAILURE(["Boost regex library not found."]))
 
    AC_DEFINE([HAVE_XIO], [1], [Accelio conditional compilation])
+   TOP_SRCDIR=`pwd`
+   CXXFLAGS="${CXXFLAGS} -I${TOP_SRCDIR}/src/accelio/include"
+   LDFLAGS="${LDFLAGS} -L${TOP_SRCDIR}/src/accelio/src/usr/.libs"
+   EXTRALIBS="${EXTRALIBS} -lxio"
+   AC_SUBST(EXTRALIBS)
 
-   XIO_LIBS="-lxio -libverbs -lrdmacm"
-   AC_SUBST(XIO_LIBS)
+   # Upstream has resisted a fix for this
+   `sed -i bak -e s/\-Wpadded//g src/accelio/configure.ac`
+   AC_CONFIG_SUBDIRS([src/accelio])
 fi
 
 #
@@ -1103,7 +1108,7 @@ AM_COND_IF([WITH_BABELTRACE], [
     AC_MSG_ERROR([babeltrace/ctf/events.h not found (libbabeltrace-ctf-dev, libbabeltrace-devel)]))
 ])
 
-
+AC_SUBST(EXTRALIBS)
 
 # Checks for typedefs, structures, and compiler characteristics.
 #AC_HEADER_STDBOOL

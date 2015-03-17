@@ -91,7 +91,7 @@ unittest_librados_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 check_PROGRAMS += unittest_librados
 
 unittest_librados_config_SOURCES = test/librados/librados_config.cc
-unittest_librados_config_LDADD = $(LIBRADOS) $(CEPH_GLOBAL) $(UNITTEST_LDADD)
+unittest_librados_config_LDADD = $(LIBRADOS) $(CEPH_GLOBAL) $(UNITTEST_LDADD) @EXTRALIBS@
 unittest_librados_config_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 check_PROGRAMS += unittest_librados_config
 

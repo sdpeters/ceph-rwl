@@ -11,7 +11,7 @@ python_PYTHON += \
 
 ceph_syn_SOURCES = ceph_syn.cc
 ceph_syn_SOURCES += client/SyntheticClient.cc # uses g_conf.. needs cleanup
-ceph_syn_LDADD = $(LIBCLIENT) $(CEPH_GLOBAL)
+ceph_syn_LDADD = $(LIBCLIENT) $(CEPH_GLOBAL) @EXTRALIBS@
 bin_PROGRAMS += ceph-syn
 
 # assemble Python script with global version variables
@@ -39,7 +39,7 @@ bash_completion_DATA += \
 python_PYTHON += pybind/rados.py
 
 librados_config_SOURCES = librados-config.cc
-librados_config_LDADD = $(LIBRADOS) $(CEPH_GLOBAL)
+librados_config_LDADD = $(LIBRADOS) $(CEPH_GLOBAL) @EXTRALIBS@
 bin_PROGRAMS += librados-config
 
 if WITH_RBD
@@ -60,7 +60,7 @@ noinst_LTLIBRARIES += libkrbd.la
 endif # LINUX
 
 rbd_SOURCES = rbd.cc
-rbd_LDADD = $(LIBKRBD) $(LIBRBD) $(LIBRADOS) $(CEPH_GLOBAL)
+rbd_LDADD = $(LIBKRBD) $(LIBRBD) $(LIBRADOS) $(CEPH_GLOBAL) @EXTRALIBS@
 if LINUX
 bin_PROGRAMS += rbd
 endif # LINUX
@@ -71,11 +71,11 @@ endif # WITH_RBD
 
 if WITH_FUSE
 ceph_fuse_SOURCES = ceph_fuse.cc
-ceph_fuse_LDADD = $(LIBCLIENT_FUSE) $(CEPH_GLOBAL)
+ceph_fuse_LDADD = $(LIBCLIENT_FUSE) $(CEPH_GLOBAL) @EXTRALIBS@
 bin_PROGRAMS += ceph-fuse
 
 rbd_fuse_SOURCES = rbd_fuse/rbd-fuse.cc
-rbd_fuse_LDADD = -lfuse $(LIBRBD) $(LIBRADOS) $(CEPH_GLOBAL)
+rbd_fuse_LDADD = -lfuse $(LIBRBD) $(LIBRADOS) $(CEPH_GLOBAL) @EXTRALIBS@
 bin_PROGRAMS += rbd-fuse
 endif # WITH_FUSE
 

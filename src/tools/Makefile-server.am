@@ -15,7 +15,7 @@ bin_DEBUGPROGRAMS += ceph-kvstore-tool
 if WITH_OSD
 
 ceph_objectstore_tool_SOURCES = tools/ceph_objectstore_tool.cc
-ceph_objectstore_tool_LDADD = $(LIBOSD) $(LIBOS) $(CEPH_GLOBAL) $(BOOST_PROGRAM_OPTIONS_LIBS) $(LIBRADOS)
+ceph_objectstore_tool_LDADD = $(LIBOSD) $(LIBOS) $(CEPH_GLOBAL) $(BOOST_PROGRAM_OPTIONS_LIBS) $(LIBRADOS) @EXTRALIBS@
 if LINUX
 ceph_objectstore_tool_LDADD += -ldl
 endif # LINUX
@@ -37,14 +37,14 @@ cephfs_journal_tool_SOURCES = \
 	tools/cephfs/Dumper.cc \
 	tools/cephfs/Resetter.cc \
 	tools/cephfs/MDSUtility.cc
-cephfs_journal_tool_LDADD = $(LIBMDS) $(LIBRADOS) $(CEPH_GLOBAL)
+cephfs_journal_tool_LDADD = $(LIBMDS) $(LIBRADOS) $(CEPH_GLOBAL) @EXTRALIBS@
 bin_PROGRAMS += cephfs-journal-tool
 
 cephfs_table_tool_SOURCES = \
 	tools/cephfs/cephfs-table-tool.cc \
 	tools/cephfs/TableTool.cc \
 	tools/cephfs/MDSUtility.cc
-cephfs_table_tool_LDADD = $(LIBMDS) $(LIBRADOS) $(CEPH_GLOBAL)
+cephfs_table_tool_LDADD = $(LIBMDS) $(LIBRADOS) $(CEPH_GLOBAL) @EXTRALIBS@
 bin_PROGRAMS += cephfs-table-tool
 
 endif # WITH_RADOS

@@ -1,5 +1,9 @@
 include Makefile-env.am
 
+if ENABLE_XIO
+SUBDIRS += accelio
+endif
+
 SUBDIRS += ocf java tracing
 DIST_SUBDIRS += gmock ocf libs3 java tracing
 
@@ -38,7 +42,6 @@ include rbd_replay/Makefile.am
 include test/Makefile.am
 include tools/Makefile.am
 include Makefile-rocksdb.am
-
 
 # shell scripts
 

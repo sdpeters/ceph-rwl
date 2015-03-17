@@ -20,7 +20,7 @@ noinst_HEADERS += \
 
 ceph_erasure_code_non_regression_SOURCES = \
 	test/erasure-code/ceph_erasure_code_non_regression.cc
-ceph_erasure_code_non_regression_LDADD = $(LIBOSD) $(LIBCOMMON) $(BOOST_PROGRAM_OPTIONS_LIBS) $(CEPH_GLOBAL)
+ceph_erasure_code_non_regression_LDADD = $(LIBOSD) $(LIBCOMMON) $(BOOST_PROGRAM_OPTIONS_LIBS) $(CEPH_GLOBAL) @EXTRALIBS@
 if LINUX
 ceph_erasure_code_non_regression_LDADD += -ldl
 endif

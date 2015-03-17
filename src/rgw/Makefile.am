@@ -88,11 +88,11 @@ radosgw_SOURCES = \
 	rgw/rgw_loadgen.cc \
 	rgw/rgw_main.cc
 radosgw_CFLAGS = -I$(srcdir)/civetweb/include
-radosgw_LDADD = $(LIBRGW) $(LIBCIVETWEB) $(LIBRGW_DEPS) $(RESOLV_LIBS) $(CEPH_GLOBAL)
+radosgw_LDADD = $(LIBRGW) $(LIBCIVETWEB) $(LIBRGW_DEPS) $(RESOLV_LIBS) $(CEPH_GLOBAL) @EXTRALIBS@
 bin_PROGRAMS += radosgw
 
 radosgw_admin_SOURCES = rgw/rgw_admin.cc
-radosgw_admin_LDADD = $(LIBRGW) $(LIBRGW_DEPS) $(CEPH_GLOBAL)
+radosgw_admin_LDADD = $(LIBRGW) $(LIBRGW_DEPS) $(CEPH_GLOBAL) @EXTRALIBS@
 bin_PROGRAMS += radosgw-admin
 
 ceph_rgw_multiparser_SOURCES = rgw/rgw_multiparser.cc
