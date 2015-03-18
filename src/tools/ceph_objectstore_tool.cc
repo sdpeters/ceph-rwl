@@ -1586,7 +1586,7 @@ int do_import_rados(string pool)
 
   if (!pgid.is_no_shard()) {
     cerr << "Importing Erasure Coded shard is not supported" << std::endl;
-    exit(1);
+    return EOPNOTSUPP;
   }
 
   if (debug) {
@@ -1685,12 +1685,12 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
 
   if (sh.magic != super_header::super_magic) {
     cerr << "Invalid magic number" << std::endl;
-    return EFAULT;
+    return 1;
   }
 
   if (sh.version > super_header::super_ver) {
     cerr << "Can't handle export format version=" << sh.version << std::endl;
-    return EINVAL;
+    return 1;
   }
 
   //First section must be TYPE_PG_BEGIN
@@ -1699,7 +1699,7 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
   if (ret)
     return ret;
   if (type != TYPE_PG_BEGIN) {
-    return EFAULT;
+    return 1;
   }
 
   bufferlist::iterator ebliter = ebl.begin();
@@ -1747,7 +1747,7 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
   if (!curmap.have_pg_pool(pgid.pgid.m_pool)) {
     cerr << "Pool " << pgid.pgid.m_pool << " no longer exists" << std::endl;
     // Special exit code for this error, used by test code
-    return 10;
+    return -10;
   }
 
   log_oid = OSD::make_pg_log_oid(pgid);
@@ -1797,13 +1797,13 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
       done = true;
       break;
     default:
-      return EFAULT;
+      return 1;
     }
   }
 
   if (!found_metadata) {
     cerr << "Missing metadata section" << std::endl;
-    return EFAULT;
+    return 1;
   }
 
   t = new ObjectStore::Transaction;
@@ -3081,5 +3081,9 @@ out:
     return 1;
   }
 
-  return ret;
+  // Setting ret negative means that is the requested exit status
+  // Exit status 1 for any other error
+  if (ret < 0)
+    return -ret;
+  return ret != 0;
 }
