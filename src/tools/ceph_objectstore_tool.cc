@@ -1734,7 +1734,8 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
       cerr << std::endl;
       cerr << "If you wish to import, first do 'ceph-objectstore-tool...--op set-allow-sharded-objects'" << std::endl;
     }
-    return 1;
+    // Special exit code for this error, used by test code
+    return -11;
   }
 
   // Don't import if pool no longer exists
