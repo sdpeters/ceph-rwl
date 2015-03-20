@@ -281,6 +281,7 @@ int main(int argc, char **argv)
   string pool_name = "rbd";
   bool ec_pool = false;
   bool no_omap = false;
+  bool replica_read_random = false;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--max-ops") == 0)
@@ -305,6 +306,8 @@ int main(int argc, char **argv)
       pool_snaps = true;
     else if (strcmp(argv[i], "--write-fadvise-dontneed") == 0)
       write_fadvise_dontneed = true;
+    else if (strcmp(argv[i], "--replica-read-random") == 0)
+      replica_read_random = true;
     else if (strcmp(argv[i], "--ec-pool") == 0) {
       if (!op_weights.empty()) {
 	cerr << "--ec-pool must be specified prior to any ops" << std::endl;
@@ -401,6 +404,7 @@ int main(int argc, char **argv)
     no_omap,
     pool_snaps,
     write_fadvise_dontneed,
+    replica_read_random,
     id);
 
   TestOpStat stats;
