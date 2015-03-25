@@ -600,6 +600,8 @@ protected:
   string version_id;
   uint64_t olh_epoch;
 
+  bool copy_if_newer;
+
 
   int init_common();
 
@@ -621,6 +623,7 @@ public:
     replace_attrs = false;
     last_ofs = 0;
     olh_epoch = 0;
+    copy_if_newer = false;
   }
 
   static bool parse_copy_location(const string& src, string& bucket_name, rgw_obj_key& object);
