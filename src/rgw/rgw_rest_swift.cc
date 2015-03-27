@@ -396,10 +396,13 @@ void RGWDeleteBucket_ObjStore_SWIFT::send_response()
 
 int RGWPutObj_ObjStore_SWIFT::get_params()
 {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (s->has_bad_meta)
     return -EINVAL;
 
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (!s->length) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     const char *encoding = s->info.env->get("HTTP_TRANSFER_ENCODING");
     if (!encoding || strcmp(encoding, "chunked") != 0)
       return -ERR_LENGTH_REQUIRED;
@@ -410,6 +413,7 @@ int RGWPutObj_ObjStore_SWIFT::get_params()
   supplied_etag = s->info.env->get("HTTP_ETAG");
 
   if (!s->generic_attrs.count(RGW_ATTR_CONTENT_TYPE)) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     dout(5) << "content type wasn't provided, trying to guess" << dendl;
     const char *suffix = strrchr(s->object.name.c_str(), '.');
     if (suffix) {
@@ -428,6 +432,7 @@ int RGWPutObj_ObjStore_SWIFT::get_params()
 
   obj_manifest = s->info.env->get("HTTP_X_OBJECT_MANIFEST");
 
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   return RGWPutObj_ObjStore::get_params();
 }
 

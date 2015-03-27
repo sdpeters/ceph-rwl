@@ -1714,23 +1714,30 @@ void RGWPutObj::execute()
 
   bool need_calc_md5 = (obj_manifest == NULL);
 
-
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   perfcounter->inc(l_rgw_put);
   ret = -EINVAL;
   if (s->object.empty()) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     goto done;
   }
 
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   ret = get_params();
   if (ret < 0)
     goto done;
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
 
   ret = get_system_versioning_params(s, &olh_epoch, &version_id);
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (ret < 0) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     goto done;
   }
 
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (supplied_md5_b64) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     need_calc_md5 = true;
 
     ldout(s->cct, 15) << "supplied_md5_b64=" << supplied_md5_b64 << dendl;
@@ -1738,6 +1745,7 @@ void RGWPutObj::execute()
                        supplied_md5_b64, supplied_md5_b64 + strlen(supplied_md5_b64));
     ldout(s->cct, 15) << "ceph_armor ret=" << ret << dendl;
     if (ret != CEPH_CRYPTO_MD5_DIGESTSIZE) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
       ret = -ERR_INVALID_DIGEST;
       goto done;
     }
@@ -1746,16 +1754,20 @@ void RGWPutObj::execute()
     ldout(s->cct, 15) << "supplied_md5=" << supplied_md5 << dendl;
   }
 
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (!chunked_upload) { /* with chunked upload we don't know how big is the upload.
                             we also check sizes at the end anyway */
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     ret = store->check_quota(s->bucket_owner.get_id(), s->bucket,
                              user_quota, bucket_quota, s->content_length);
     if (ret < 0) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
       goto done;
     }
   }
 
   if (supplied_etag) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     strncpy(supplied_md5, supplied_etag, sizeof(supplied_md5) - 1);
     supplied_md5[sizeof(supplied_md5) - 1] = '\0';
   }
@@ -1763,18 +1775,22 @@ void RGWPutObj::execute()
   processor = select_processor(*(RGWObjectCtx *)s->obj_ctx, &multipart);
 
   ret = processor->prepare(store, NULL);
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (ret < 0)
     goto done;
 
   do {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     bufferlist data;
     len = get_data(data);
     if (len < 0) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
       ret = len;
       goto done;
     }
     if (!len)
       break;
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
 
     /* do we need this operation to be synchronous? if we're dealing with an object with immutable
      * head, e.g., multipart object we need to make sure we're the first one writing to this object
@@ -1782,8 +1798,11 @@ void RGWPutObj::execute()
     bool need_to_wait = (ofs == 0) && multipart;
 
     ret = put_data_and_throttle(processor, data, ofs, (need_calc_md5 ? &hash : NULL), need_to_wait);
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     if (ret < 0) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
       if (!need_to_wait || ret != -EEXIST) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
         ldout(s->cct, 20) << "processor->thottle_data() returned ret=" << ret << dendl;
         goto done;
       }
@@ -1802,20 +1821,24 @@ void RGWPutObj::execute()
 
       ret = processor->prepare(store, &oid_rand);
       if (ret < 0) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
         ldout(s->cct, 0) << "ERROR: processor->prepare() returned " << ret << dendl;
         goto done;
       }
 
       ret = put_data_and_throttle(processor, data, ofs, NULL, false);
       if (ret < 0) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
         goto done;
       }
     }
 
     ofs += len;
   } while (len > 0);
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
 
   if (!chunked_upload && ofs != s->content_length) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     ret = -ERR_REQUEST_TIMEOUT;
     goto done;
   }
@@ -1824,11 +1847,14 @@ void RGWPutObj::execute()
 
   ret = store->check_quota(s->bucket_owner.get_id(), s->bucket,
                            user_quota, bucket_quota, s->obj_size);
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (ret < 0) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     goto done;
   }
 
   if (need_calc_md5) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     processor->complete_hash(&hash);
     hash.Final(m);
 
@@ -1836,6 +1862,7 @@ void RGWPutObj::execute()
     etag = calc_md5;
 
     if (supplied_md5_b64 && strcmp(calc_md5, supplied_md5)) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
       ret = -ERR_BAD_DIGEST;
       goto done;
     }
@@ -1845,6 +1872,7 @@ void RGWPutObj::execute()
 
   attrs[RGW_ATTR_ACL] = aclbl;
   if (obj_manifest) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     bufferlist manifest_bl;
     string manifest_obj_prefix;
     string manifest_bucket;
@@ -1858,6 +1886,7 @@ void RGWPutObj::execute()
     string prefix_str = obj_manifest;
     int pos = prefix_str.find('/');
     if (pos < 0) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
       ldout(s->cct, 0) << "bad user manifest, missing slash separator: " << obj_manifest << dendl;
       goto done;
     }
@@ -1873,6 +1902,7 @@ void RGWPutObj::execute()
     etag = etag_buf_str;
   }
   if (supplied_etag && etag.compare(supplied_etag) != 0) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     ret = -ERR_UNPROCESSABLE_ENTITY;
     goto done;
   }
@@ -1880,6 +1910,7 @@ void RGWPutObj::execute()
   attrs[RGW_ATTR_ETAG] = bl;
 
   for (iter = s->generic_attrs.begin(); iter != s->generic_attrs.end(); ++iter) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     bufferlist& attrbl = attrs[iter->first];
     const string& val = iter->second;
     attrbl.append(val.c_str(), val.size() + 1);
@@ -1889,9 +1920,11 @@ void RGWPutObj::execute()
 
   ret = processor->complete(etag, &mtime, 0, attrs, if_match, if_nomatch);
 done:
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   dispose_processor(processor);
   perfcounter->tinc(l_rgw_put_lat,
                    (ceph_clock_now(s->cct) - s->time));
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
 }
 
 int RGWPostObj::verify_permission()

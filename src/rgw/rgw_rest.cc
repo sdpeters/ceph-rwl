@@ -785,9 +785,12 @@ void RGWRESTFlusher::do_flush()
 
 int RGWPutObj_ObjStore::verify_params()
 {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (s->length) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     off_t len = atoll(s->length);
     if (len > (off_t)RGW_MAX_PUT_SIZE) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
       return -ERR_TOO_LARGE;
     }
   }
@@ -799,6 +802,7 @@ int RGWPutObj_ObjStore::get_params()
 {
   supplied_md5_b64 = s->info.env->get("HTTP_CONTENT_MD5");
 
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   return 0;
 }
 
@@ -806,6 +810,7 @@ int RGWPutObj_ObjStore::get_data(bufferlist& bl)
 {
   size_t cl;
   uint64_t chunk_size = s->cct->_conf->rgw_max_chunk_size;
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (s->length) {
     cl = atoll(s->length) - ofs;
     if (cl > chunk_size)
@@ -814,22 +819,27 @@ int RGWPutObj_ObjStore::get_data(bufferlist& bl)
     cl = chunk_size;
   }
 
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   int len = 0;
   if (cl) {
     bufferptr bp(cl);
 
     int read_len; /* cio->read() expects int * */
     int r = s->cio->read(bp.c_str(), cl, &read_len);
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     len = read_len;
     if (r < 0)
       return r;
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     bl.append(bp, 0, len);
   }
 
   if ((uint64_t)ofs + len > RGW_MAX_PUT_SIZE) {
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
     return -ERR_TOO_LARGE;
   }
 
+ldout(s->cct, 0) << __FILE__ << ":" << __LINE__ << dendl;
   if (!ofs)
     supplied_md5_b64 = s->info.env->get("HTTP_CONTENT_MD5");
 
