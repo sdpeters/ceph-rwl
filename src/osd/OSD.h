@@ -668,6 +668,9 @@ public:
   Mutex backfill_request_lock;
   SafeTimer backfill_request_timer;
 
+  Mutex debug_peering_delay_lock;
+  SafeTimer debug_peering_delay_timer;
+
   // -- tids --
   // for ops i issue
   ceph_tid_t last_tid;
