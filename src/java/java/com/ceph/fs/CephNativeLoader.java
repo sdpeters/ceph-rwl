@@ -19,17 +19,75 @@
  */
 package com.ceph.fs;
 
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+
+/*
+ * There are several examples of embedding native bits in a JAR out in the
+ * wild. Many are complicated because they try to cover a wide variety of
+ * platforms. RocksDB Java covers Linux and MacOS and is easy to grok. Our
+ * approach is a simplified version of the RocksDB loader. Additionally, we
+ * only need Linux support right now.
+ *
+ * The basic idea is to first try the normal java.library.path, and then
+ * fallback to the JAR file.
+ */
 class CephNativeLoader {
 
-  private static boolean loaded = false;
+  private static final CephNativeLoader instance = new CephNativeLoader();
+  private static boolean initialized = false;
 
-  static {
-    if (!loaded) {
-      System.loadLibrary("cephfs_jni");
-      CephMount.native_initialize();
-      loaded = true;
-    }
+  // Linux specific
+  private static final String sharedLibraryName = "cephfs_jni";
+  private static final String jniLibraryFilename = "libcephfs_jni.so";
+  private static final String tempFilePrefix = "libcephfsjni";
+  private static final String tempFileSuffix = ".so";
+
+  static CephNativeLoader getInstance() {
+    return instance;
   }
 
-  static void checkLoaded() { assert(loaded); }
+  /**
+   * Try default path, and then fallback to jar.
+   */
+  synchronized void loadLibrary() throws IOException {
+    try {
+      System.loadLibrary(sharedLibraryName);
+    } catch (final UnsatisfiedLinkError ule1) {
+      loadLibraryFromJar();
+    }
+    CephMount.native_initialize();
+    initialized = true;
+  }
+
+  /**
+   * Extract the JNI bits to a temp file and load that.
+   */
+  private synchronized void loadLibraryFromJar() throws IOException {
+    if (!initialized) {
+      // where we will stash the extracted library bits
+      final File temp = File.createTempFile(tempFilePrefix, tempFileSuffix);
+      if (!temp.exists()) {
+        throw new RuntimeException("File " + temp.getAbsolutePath() + " does not exist.");
+      } else {
+        temp.deleteOnExit();
+      }
+
+      // look inside the jar and grab the library
+      InputStream is = null;
+      try {
+        is = getClass().getClassLoader().getResourceAsStream(jniLibraryFilename);
+        if (is == null) {
+          throw new RuntimeException(jniLibraryFilename + " was not found inside the jar");
+        } else {
+          Files.copy(is, temp.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+      } finally {
+        if (is != null)
+          is.close();
+      }
+      System.load(temp.getAbsolutePath());
+    }
+  }
 }

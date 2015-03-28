@@ -94,7 +94,11 @@ public class CephMount {
    * finding or linking in the shared JNI library.
    */
   static {
-    CephNativeLoader.checkLoaded();
+    try {
+      CephNativeLoader.getInstance().loadLibrary();
+    } catch (IOException e) {
+      throw new RuntimeException("Unable to load the CephFS JNI library: " + e);
+    }
   }
 
   /*
