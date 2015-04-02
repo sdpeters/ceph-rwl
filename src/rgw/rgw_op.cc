@@ -2177,6 +2177,9 @@ void RGWDeleteObj::execute()
       delete_marker = del_op.result.delete_marker;
       version_id = del_op.result.version_id;
     }
+    if (ret == -ERR_PRECONDITION_FAILED && no_precondition_error) {
+      ret = 0;
+    }
   } else {
     ret = -EINVAL;
   }
