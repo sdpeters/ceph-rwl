@@ -4337,6 +4337,14 @@ void Monitor::tick()
 {
   // ok go.
   dout(11) << "tick" << dendl;
+
+  for (std::vector<ProgressEventRef>::iterator i = progress_events.begin();
+       i != progress_events.end(); ++i) {
+    ProgressEventRef prr = *i;
+    prr->tick(osdmon()->osdmap, pgmon()->pg_map);
+    derr << "ProgressEvent: " << prr->progress(osdmon()->osdmap, pgmon()->pg_map)
+         << " '" << prr->get_description() << "'" << dendl;
+  }
   
   for (vector<PaxosService*>::iterator p = paxos_service.begin(); p != paxos_service.end(); ++p) {
     (*p)->tick();
@@ -4681,3 +4689,10 @@ bool Monitor::ms_verify_authorizer(Connection *con, int peer_type,
   }
   return true;
 }
+
+void Monitor::start_progress_event(ProgressEventRef prr)
+{
+  progress_events.push_back(prr);
+  prr->init(osdmon()->osdmap, pgmon()->pg_map);
+}
+

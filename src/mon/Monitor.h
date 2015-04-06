@@ -49,6 +49,7 @@
 #include "messages/MPing.h"
 #include "mon/MonitorStore.h"
 #include "mon/MonitorDBStore.h"
+#include "ProgressEvent.h"
 
 #include <memory>
 #include "include/memory.h"
@@ -916,6 +917,12 @@ public:
   /// the Monitor owns this pointer once you pass it in
   void set_leader_supported_commands(const MonCommand *cmds, int size);
   static bool is_keyring_required();
+
+  protected:
+  std::vector<ProgressEventRef> progress_events;
+
+  public:
+  void start_progress_event(ProgressEventRef prr);
 };
 
 #define CEPH_MON_FEATURE_INCOMPAT_BASE CompatSet::Feature (1, "initial feature set (~v.18)")
