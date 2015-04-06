@@ -75,4 +75,16 @@ struct ceph_data_stats
 typedef struct ceph_data_stats ceph_data_stats_t;
 
 int get_fs_stats(ceph_data_stats_t &stats, const char *path);
+
+/**
+ * Format a floating point fraction as a percentage with two
+ * digits of precision.
+ *
+ * e.g. 0.123455 -> 12
+ *      0.002345 -> 0.23
+ *
+ * @param a a real number between 0 and 1
+ */
+std::string percentify(const float& a);
+
 #endif /* CEPH_UTIL_H */

@@ -126,3 +126,14 @@ int get_fs_stats(ceph_data_stats_t &stats, const char *path)
   stats.avail_percent = (((float)stats.byte_avail/stats.byte_total)*100);
   return 0;
 }
+
+std::string percentify(const float& a) {
+  stringstream ss;
+  if (a < 0.0001) {
+    ss << "0";
+  } else {
+    ss << std::fixed << std::setprecision(2) << a * 100;
+  }
+  return ss.str();
+}
+
