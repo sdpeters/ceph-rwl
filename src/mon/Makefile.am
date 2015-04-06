@@ -19,6 +19,7 @@ libmon_la_SOURCES = \
 	mon/MonitorStore.cc \
 	mon/HealthMonitor.cc \
 	mon/DataHealthService.cc \
+	mon/ProgressEvent.cc \
 	mon/ConfigKeyService.cc
 libmon_la_LIBADD = $(LIBAUTH) $(LIBCOMMON) $(LIBOS) $(LIBMON_TYPES)
 noinst_LTLIBRARIES += libmon.la
@@ -26,6 +27,7 @@ noinst_LTLIBRARIES += libmon.la
 noinst_HEADERS += \
 	mon/AuthMonitor.h \
 	mon/DataHealthService.h \
+	mon/ProgressEvent.h \
 	mon/Elector.h \
 	mon/LogMonitor.h \
 	mon/ConfigKeyService.h \
