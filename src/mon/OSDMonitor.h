@@ -124,6 +124,17 @@ class OSDMonitor : public PaxosService {
 public:
   OSDMap osdmap;
 
+  OSDMap get_pending_osdmap() const
+  {
+    // Take a copy
+    OSDMap result = osdmap;
+
+    // Apply pending_inc
+    result.apply_incremental(pending_inc);
+
+    return result;
+  }
+
 private:
   // [leader]
   OSDMap::Incremental pending_inc;

@@ -1711,10 +1711,18 @@ bool OSDMonitor::prepare_boot(MOSDBoot *m)
 	(g_conf->mon_osd_auto_mark_new_in && (oldstate & CEPH_OSD_NEW)) ||
 	(g_conf->mon_osd_auto_mark_in)) {
       if (can_mark_in(from)) {
-	if (osdmap.osd_xinfo[from].old_weight > 0)
-	  pending_inc.new_weight[from] = osdmap.osd_xinfo[from].old_weight;
-	else
+	if (osdmap.osd_xinfo[from].old_weight > 0) {
+          pending_inc.new_weight[from] = osdmap.osd_xinfo[from].old_weight;
+        } else {
 	  pending_inc.new_weight[from] = CEPH_OSD_IN;
+        }
+
+        std::ostringstream oss;
+        oss << "Rebalancing after marking OSD " << from << " in due to boot";
+        mon->start_progress_event(ProgressEventRef(new ProgressOsdIn(
+                oss.str(),
+                from
+                )));
       } else {
 	dout(7) << "prepare_boot NOIN set, will not mark in " << m->get_orig_source_addr() << dendl;
       }
@@ -2353,6 +2361,13 @@ void OSDMonitor::tick()
 
 	  do_propose = true;
 
+          std::ostringstream oss;
+          oss << "Rebalancing after marking OSD " << o << " out";
+          mon->start_progress_event(ProgressEventRef(new ProgressOsdOut(
+                  oss.str(),
+                  o
+                  )));
+
 	  mon->clog->info() << "osd." << o << " out (down for " << down << ")\n";
 	} else
 	  continue;
@@ -2909,6 +2924,10 @@ bool OSDMonitor::preprocess_command(MMonCommand *m)
     vector<string> pvec;
     get_str_vec(prefix, pvec);
 
+    std::vector<uint32_t> osd_ids;
+    std::ostringstream progress_desc;
+    const bool is_deep = pvec.back() == "deep-scrub";
+    const std::string verb = is_deep ? "Deep-scrubbing" : "Scrubbing";
     if (whostr == "*") {
       ss << "osds ";
       int c = 0;
@@ -2917,11 +2936,13 @@ bool OSDMonitor::preprocess_command(MMonCommand *m)
 	  ss << (c++ ? "," : "") << i;
 	  mon->try_send_message(new MOSDScrub(osdmap.get_fsid(),
 					      pvec.back() == "repair",
-					      pvec.back() == "deep-scrub"),
+					      is_deep),
 				osdmap.get_inst(i));
+          osd_ids.push_back(i);
 	}
       r = 0;
       ss << " instructed to " << pvec.back();
+      progress_desc << "Scrubbing all OSDs";
     } else {
       long osd = parse_osd_id(whostr.c_str(), &ss);
       if (osd < 0) {
@@ -2929,13 +2950,22 @@ bool OSDMonitor::preprocess_command(MMonCommand *m)
       } else if (osdmap.is_up(osd)) {
 	mon->try_send_message(new MOSDScrub(osdmap.get_fsid(),
 					    pvec.back() == "repair",
-					    pvec.back() == "deep-scrub"),
+					    is_deep),
 			      osdmap.get_inst(osd));
 	ss << "osd." << osd << " instructed to " << pvec.back();
+        osd_ids.push_back(osd);
+        progress_desc << "Scrubbing OSD " << osd;
       } else {
 	ss << "osd." << osd << " is not up";
 	r = -EAGAIN;
       }
+    }
+    if (!osd_ids.empty() && pvec.back() != "repair") {
+      mon->start_progress_event(ProgressEventRef(new ProgressScrub(
+            progress_desc.str(),
+            is_deep,
+            osd_ids
+            )));
     }
   } else if (prefix == "osd lspools") {
     int64_t auid;
@@ -5564,6 +5594,13 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
 	  pending_inc.new_weight[osd] = CEPH_OSD_OUT;
 	  ss << "marked out osd." << osd << ". ";
 	  any = true;
+
+          std::ostringstream oss;
+          oss << "Rebalancing after admin marked OSD " << osd << " out";
+          mon->start_progress_event(ProgressEventRef(new ProgressOsdOut(
+                  oss.str(),
+                  osd
+                  )));
 	}
       } else if (prefix == "osd in") {
 	if (osdmap.is_in(osd)) {
@@ -5572,6 +5609,13 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
 	  pending_inc.new_weight[osd] = CEPH_OSD_IN;
 	  ss << "marked in osd." << osd << ". ";
 	  any = true;
+
+          std::ostringstream oss;
+          oss << "Rebalancing after admin marked OSD " << osd << " in";
+          mon->start_progress_event(ProgressEventRef(new ProgressOsdIn(
+                  oss.str(),
+                  osd
+                  )));
 	}
       } else if (prefix == "osd rm") {
 	if (osdmap.is_up(osd)) {

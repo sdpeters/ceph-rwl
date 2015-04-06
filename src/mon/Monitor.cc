@@ -2365,6 +2365,7 @@ void Monitor::get_cluster_status(stringstream &ss, Formatter *f)
   if (f)
     f->open_object_section("status");
 
+
   // reply with the status for all the components
   list<string> health;
   get_health(health, NULL, f);
@@ -2406,6 +2407,37 @@ void Monitor::get_cluster_status(stringstream &ss, Formatter *f)
       ss << "     mdsmap " << mdsmon()->mdsmap << "\n";
     osdmon()->osdmap.print_summary(NULL, ss);
     pgmon()->pg_map.print_summary(NULL, &ss);
+
+
+    if (!progress_events.empty()) {
+      // Spacing line between main status and progress lines
+      ss << "\n \n";
+    }
+
+    for (std::vector<ProgressEventRef>::iterator i = progress_events.begin();
+         i != progress_events.end(); ++i)
+    {
+      ProgressEventRef prr = *i;
+
+      const float progress = prr->progress(osdmon()->osdmap, pgmon()->pg_map);
+
+      // TODO a two-shade progress bar like linux boot: a light shade
+      // showing the PGs that have started processing, and a more solid
+      // shade showing the PGs that have finished processing.
+
+      ss << "  " << prr->get_description() << ": " << percentify(progress)
+         << "%\n    ";
+      int bar_width = 30;
+      ss << "[";
+      for (int i = 0; i < bar_width; ++i) {
+        if (((float)(i + 1) / (float)bar_width) <= progress) {
+          ss << "#";
+        } else {
+          ss << "-";
+        }
+      }
+      ss << "]" << "\n";
+    }
   }
 }
 
@@ -4693,6 +4725,9 @@ bool Monitor::ms_verify_authorizer(Connection *con, int peer_type,
 void Monitor::start_progress_event(ProgressEventRef prr)
 {
   progress_events.push_back(prr);
-  prr->init(osdmon()->osdmap, pgmon()->pg_map);
+  prr->init(
+      osdmon()->osdmap,
+      osdmon()->get_pending_osdmap(),
+      pgmon()->pg_map);
 }
 
