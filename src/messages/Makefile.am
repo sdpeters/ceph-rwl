@@ -91,6 +91,7 @@ noinst_HEADERS += \
 	messages/MOSDPGQuery.h \
 	messages/MOSDPGRemove.h \
 	messages/MOSDPGScan.h \
+	messages/MOSDPGUpdateLogMissing.h \
 	messages/MOSDECSubOpWrite.h \
 	messages/MOSDECSubOpWriteReply.h \
 	messages/MOSDECSubOpRead.h \

@@ -2163,8 +2163,19 @@ public:
 
   /// share pg info after a pg is active
   void share_pg_info();
+
+
+  void append_log_entries_update_missing(
+    const list<pg_log_entry_t> &entries,
+    Context *on_local_complete);
+
   /// share new pg log entries after a pg is active
-  void share_pg_log();
+  void share_new_log_entries(
+    const list<pg_log_entry_t> &entries,
+    Context *on_local_complete);
+
+  void do_update_log_missing(
+    OpRequestRef &op);
 
   void reset_interval_flush();
   void start_peering_interval(
