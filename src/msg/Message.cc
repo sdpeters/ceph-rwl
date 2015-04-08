@@ -170,6 +170,8 @@ using namespace std;
 #include "messages/MOSDECSubOpRead.h"
 #include "messages/MOSDECSubOpReadReply.h"
 
+#include "messages/MOSDPGUpdateLogMissing.h"
+
 #define DEBUGLVL  10    // debug level of output
 
 #define dout_subsys ceph_subsys_ms
@@ -436,6 +438,9 @@ Message *decode_message(CephContext *cct, int crcflags,
     break;
   case MSG_OSD_REPOPREPLY:
     m = new MOSDRepOpReply();
+    break;
+  case MSG_OSD_PG_UPDATE_LOG_MISSING:
+    m = new MOSDPGUpdateLogMissing();
     break;
 
   case CEPH_MSG_OSD_MAP:
