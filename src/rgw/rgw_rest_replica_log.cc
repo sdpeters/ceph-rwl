@@ -284,6 +284,9 @@ RGWOp *RGWHandler_ReplicaLog::op_get() {
     return new RGWOp_BILog_GetBounds;
   } else if (type.compare("data") == 0) {
     return new RGWOp_OBJLog_GetBounds(DATA_REPLICA_LOG_OBJ_PREFIX, "datalog");
+  } else if (!type.empty()) {
+    string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + type + ".";
+    return new RGWOp_OBJLog_GetBounds(s.c_str(), "generic");
   }
   return NULL;
 }
@@ -302,6 +305,10 @@ RGWOp *RGWHandler_ReplicaLog::op_delete() {
     return new RGWOp_BILog_DeleteBounds;
   else if (type.compare("data") == 0)
     return new RGWOp_OBJLog_DeleteBounds(DATA_REPLICA_LOG_OBJ_PREFIX, "datalog");
+  else if (!type.empty()) {
+    string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + type + ".";
+    return new RGWOp_OBJLog_DeleteBounds(s.c_str(), "generic");
+  }
   
   return NULL;
 }
@@ -320,6 +327,9 @@ RGWOp *RGWHandler_ReplicaLog::op_post() {
     return new RGWOp_BILog_SetBounds;
   } else if (type.compare("data") == 0) {
     return new RGWOp_OBJLog_SetBounds(DATA_REPLICA_LOG_OBJ_PREFIX, "datalog");
+  } else if (!type.empty()) {
+    string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + type + ".";
+    return new RGWOp_OBJLog_SetBounds(s.c_str(), "generic");
   }
   return NULL;
 }

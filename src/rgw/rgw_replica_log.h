@@ -26,6 +26,7 @@ using namespace std;
 
 #define META_REPLICA_LOG_OBJ_PREFIX "meta.replicalog."
 #define DATA_REPLICA_LOG_OBJ_PREFIX "data.replicalog."
+#define GENERIC_REPLICA_LOG_OBJ_PREFIX "generic.replicalog."
 
 typedef cls_replica_log_item_marker RGWReplicaItemMarker;
 typedef cls_replica_log_progress_marker RGWReplicaProgressMarker;

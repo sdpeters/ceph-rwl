@@ -491,6 +491,7 @@ enum ReplicaLogType {
   ReplicaLog_Metadata,
   ReplicaLog_Data,
   ReplicaLog_Bucket,
+  ReplicaLog_Generic,
 };
 
 ReplicaLogType get_replicalog_type(const string& name) {
@@ -500,6 +501,8 @@ ReplicaLogType get_replicalog_type(const string& name) {
     return ReplicaLog_Data;
   if (name == "bucket")
     return ReplicaLog_Bucket;
+  if (!name.empty())
+    return ReplicaLog_Generic;
 
   return ReplicaLog_Invalid;
 }
@@ -2770,7 +2773,7 @@ next:
   if (opt_cmd == OPT_REPLICALOG_GET || opt_cmd == OPT_REPLICALOG_UPDATE ||
       opt_cmd == OPT_REPLICALOG_DELETE) {
     if (replica_log_type_str.empty()) {
-      cerr << "ERROR: need to specify --replica-log-type=<metadata | data | bucket>" << std::endl;
+      cerr << "ERROR: need to specify --replica-log-type=<metadata | data | bucket | ...>" << std::endl;
       return EINVAL;
     }
   }
@@ -2810,6 +2813,16 @@ next:
 
       RGWReplicaBucketLogger logger(store);
       ret = logger.get_bounds(bucket, shard_id, bounds);
+      if (ret < 0)
+        return -ret;
+    } else if (!replica_log_type_str.empty()) {
+      if (!specified_shard_id) {
+        cerr << "ERROR: shard-id must be specified for get operation" << std::endl;
+        return EINVAL;
+      }
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
+      int ret = logger.get_bounds(shard_id, bounds);
       if (ret < 0)
         return -ret;
     } else { // shouldn't get here
@@ -2863,7 +2876,21 @@ next:
       ret = logger.delete_bound(bucket, shard_id, daemon_id, false);
       if (ret < 0)
         return -ret;
-    }
+    } else if (!replica_log_type_str.empty()) {
+      if (!specified_shard_id) {
+        cerr << "ERROR: shard-id must be specified for delete operation" << std::endl;
+        return EINVAL;
+      }
+      if (!specified_daemon_id) {
+        cerr << "ERROR: daemon-id must be specified for delete operation" << std::endl;
+        return EINVAL;
+      }
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
+      int ret = logger.delete_bound(shard_id, daemon_id, false);
+      if (ret < 0)
+        return -ret;
+    } 
   }
 
   if (opt_cmd == OPT_REPLICALOG_UPDATE) {
@@ -2927,7 +2954,19 @@ next:
         cerr << "ERROR: failed to update bounds: " << cpp_strerror(-ret) << std::endl;
         return -ret;
       }
-    }
+    } else if (!replica_log_type_str.empty()) {
+      if (!specified_shard_id) {
+        cerr << "ERROR: shard-id must be specified for get operation" << std::endl;
+        return EINVAL;
+      }
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
+      int ret = logger.update_bound(shard_id, daemon_id, marker, time, &entries);
+      if (ret < 0) {
+        cerr << "ERROR: failed to update bounds: " << cpp_strerror(-ret) << std::endl;
+        return -ret;
+      }
+    } 
   }
 
   bool quota_op = (opt_cmd == OPT_QUOTA_SET || opt_cmd == OPT_QUOTA_ENABLE || opt_cmd == OPT_QUOTA_DISABLE);
