@@ -1210,29 +1210,29 @@ struct object_stat_sum_t {
    * WARNING: be sure to update operator==, floor, and split when
    * adding/removing fields!
    **************************************************************************/
-  int64_t num_bytes;    // in bytes
-  int64_t num_objects;
-  int64_t num_object_clones;
-  int64_t num_object_copies;  // num_objects * num_replicas
-  int64_t num_objects_missing_on_primary;
-  int64_t num_objects_degraded;
-  int64_t num_objects_misplaced;
-  int64_t num_objects_unfound;
-  int64_t num_rd;
-  int64_t num_rd_kb;
-  int64_t num_wr;
-  int64_t num_wr_kb;
-  int64_t num_scrub_errors;	// total deep and shallow scrub errors
-  int64_t num_shallow_scrub_errors;
-  int64_t num_deep_scrub_errors;
-  int64_t num_objects_recovered;
-  int64_t num_bytes_recovered;
-  int64_t num_keys_recovered;
-  int64_t num_objects_dirty;
-  int64_t num_whiteouts;
-  int64_t num_objects_omap;
-  int64_t num_objects_hit_set_archive;
-  int64_t num_bytes_hit_set_archive;
+  uint64_t num_bytes;    // in bytes
+  uint64_t num_objects;
+  uint64_t num_object_clones;
+  uint64_t num_object_copies;  // num_objects * num_replicas
+  uint64_t num_objects_missing_on_primary;
+  uint64_t num_objects_degraded;
+  uint64_t num_objects_misplaced;
+  uint64_t num_objects_unfound;
+  uint64_t num_rd;
+  uint64_t num_rd_kb;
+  uint64_t num_wr;
+  uint64_t num_wr_kb;
+  uint64_t num_scrub_errors;	// total deep and shallow scrub errors
+  uint64_t num_shallow_scrub_errors;
+  uint64_t num_deep_scrub_errors;
+  uint64_t num_objects_recovered;
+  uint64_t num_bytes_recovered;
+  uint64_t num_keys_recovered;
+  uint64_t num_objects_dirty;
+  uint64_t num_whiteouts;
+  uint64_t num_objects_omap;
+  uint64_t num_objects_hit_set_archive;
+  uint64_t num_bytes_hit_set_archive;
 
   object_stat_sum_t()
     : num_bytes(0),
@@ -1253,7 +1253,7 @@ struct object_stat_sum_t {
       num_bytes_hit_set_archive(0)
   {}
 
-  void floor(int64_t f) {
+  void floor(uint64_t f) {
 #define FLOOR(x) if (x < f) x = f
     FLOOR(num_bytes);
     FLOOR(num_objects);
