@@ -53,6 +53,7 @@ void cls_replica_log_extract_marker(const cls_replica_log_progress_marker& progr
  * @param progress The progress marker to send
  */
 void cls_replica_log_update_bound(librados::ObjectWriteOperation& op,
+                                  const string& key,
                                   const cls_replica_log_progress_marker& progress);
 
 /**
@@ -64,6 +65,7 @@ void cls_replica_log_update_bound(librados::ObjectWriteOperation& op,
  * @param entity The entity whose progress should be removed
  */
 void cls_replica_log_delete_bound(librados::ObjectWriteOperation& op,
+                                  const string& key,
                                   const string& entity);
 
 /**
@@ -77,8 +79,9 @@ void cls_replica_log_delete_bound(librados::ObjectWriteOperation& op,
  * @param markers [out] List of progress markers for individual daemons
  */
 int cls_replica_log_get_bounds(librados::IoCtx& io_ctx, const string& oid,
-                                string& position_marker,
-                                utime_t& oldest_time,
-                                list<cls_replica_log_progress_marker>& markers);
+                               const string& key,
+                               string& position_marker,
+                               utime_t& oldest_time,
+                               list<cls_replica_log_progress_marker>& markers);
 
 #endif /* CLS_REPLICA_LOG_CLIENT_H_ */

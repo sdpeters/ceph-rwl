@@ -15,6 +15,7 @@
 void cls_replica_log_delete_marker_op::dump(Formatter *f) const
 {
   f->dump_string("entity_id", entity_id);
+  f->dump_string("key", key);
 }
 
 void cls_replica_log_delete_marker_op::
@@ -28,6 +29,7 @@ generate_test_instances(std::list<cls_replica_log_delete_marker_op*>& ls)
 void cls_replica_log_set_marker_op::dump(Formatter *f) const
 {
   encode_json("marker", marker, f);
+  encode_json("key", key, f);
 }
 
 void cls_replica_log_set_marker_op::
@@ -37,13 +39,14 @@ generate_test_instances(std::list<cls_replica_log_set_marker_op*>& ls)
   cls_replica_log_progress_marker::generate_test_instances(samples);
   std::list<cls_replica_log_progress_marker*>::iterator i;
   for (i = samples.begin(); i != samples.end(); ++i) {
-    ls.push_back(new cls_replica_log_set_marker_op(*(*i)));
+    string k;
+    ls.push_back(new cls_replica_log_set_marker_op(k, *(*i)));
   }
 }
 
 void cls_replica_log_get_bounds_op::dump(Formatter *f) const
 {
-  f->dump_string("contents", "empty");
+  f->dump_string("key", key);
 }
 
 void cls_replica_log_get_bounds_op::

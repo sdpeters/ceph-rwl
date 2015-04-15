@@ -14,19 +14,25 @@
 #include "cls_replica_log_types.h"
 
 struct cls_replica_log_delete_marker_op {
+  string key;
   string entity_id;
+
   cls_replica_log_delete_marker_op() {}
-  cls_replica_log_delete_marker_op(const string& id) : entity_id(id) {}
+  cls_replica_log_delete_marker_op(const string& k, const string& id) : key(k), entity_id(id) {}
 
   void encode(bufferlist& bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(2, 1, bl);
     ::encode(entity_id, bl);
+    ::encode(key, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::iterator& bl) {
-    DECODE_START(1, bl);
+    DECODE_START(2, bl);
     ::decode(entity_id, bl);
+    if (struct_v >= 2) {
+      ::decode(key, bl);
+    }
     DECODE_FINISH(bl);
   }
 
@@ -37,20 +43,25 @@ struct cls_replica_log_delete_marker_op {
 WRITE_CLASS_ENCODER(cls_replica_log_delete_marker_op)
 
 struct cls_replica_log_set_marker_op {
+  string key;
   cls_replica_log_progress_marker marker;
   cls_replica_log_set_marker_op() {}
-  cls_replica_log_set_marker_op(const cls_replica_log_progress_marker& m) :
-    marker(m) {}
+  cls_replica_log_set_marker_op(const string& k, const cls_replica_log_progress_marker& m) :
+    key(k), marker(m) {}
 
   void encode(bufferlist& bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(2, 1, bl);
     ::encode(marker, bl);
+    ::encode(key, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::iterator& bl) {
-    DECODE_START(1, bl);
+    DECODE_START(2, bl);
     ::decode(marker, bl);
+    if (struct_v >= 2) {
+      ::decode(key, bl);
+    }
     DECODE_FINISH(bl);
   }
 
@@ -60,15 +71,21 @@ struct cls_replica_log_set_marker_op {
 WRITE_CLASS_ENCODER(cls_replica_log_set_marker_op)
 
 struct cls_replica_log_get_bounds_op {
+  string key;
+
   cls_replica_log_get_bounds_op() {}
 
   void encode(bufferlist& bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(2, 1, bl);
+    ::encode(key, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::iterator& bl) {
-    DECODE_START(1, bl);
+    DECODE_START(2, bl);
+    if (struct_v >= 2) {
+      ::decode(key, bl);
+    }
     DECODE_FINISH(bl);
   }
 

@@ -46,31 +46,35 @@ void cls_replica_log_extract_marker(const cls_replica_log_progress_marker& progr
 }
 
 void cls_replica_log_update_bound(librados::ObjectWriteOperation& o,
+                                  const string& key,
                                   const cls_replica_log_progress_marker& progress)
 {
-  cls_replica_log_set_marker_op op(progress);
+  cls_replica_log_set_marker_op op(key, progress);
   bufferlist in;
   ::encode(op, in);
   o.exec("replica_log", "set", in);
 }
 
 void cls_replica_log_delete_bound(librados::ObjectWriteOperation& o,
+                                  const string& key,
                                   const string& entity)
 {
-  cls_replica_log_delete_marker_op op(entity);
+  cls_replica_log_delete_marker_op op(key, entity);
   bufferlist in;
   ::encode(op, in);
   o.exec("replica_log", "delete", in);
 }
 
 int cls_replica_log_get_bounds(librados::IoCtx& io_ctx, const string& oid,
-                                string& position_marker,
-                                utime_t& oldest_time,
-                                list<cls_replica_log_progress_marker>& markers)
+                               const string& key,
+                               string& position_marker,
+                               utime_t& oldest_time,
+                               list<cls_replica_log_progress_marker>& markers)
 {
   bufferlist in;
   bufferlist out;
   cls_replica_log_get_bounds_op op;
+  op.key = key;
   ::encode(op, in);
   int r = io_ctx.exec(oid, "replica_log", "get", in, out);
   if (r < 0)

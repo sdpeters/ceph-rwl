@@ -26,10 +26,16 @@ cls_method_handle_t h_replica_log_get;
 static const string replica_log_prefix = "rl_";
 static const string replica_log_bounds = replica_log_prefix + "bounds";
 
-static int get_bounds(cls_method_context_t hctx, cls_replica_log_bound& bound)
+static int get_bounds(cls_method_context_t hctx, const string& key, cls_replica_log_bound& bound)
 {
   bufferlist bounds_bl;
-  int rc = cls_cxx_map_get_val(hctx, replica_log_bounds, &bounds_bl);
+  string k;
+  if (!key.empty()) {
+    k = replica_log_prefix + "." + key;
+  } else {
+    k = replica_log_bounds;
+  }
+  int rc = cls_cxx_map_get_val(hctx, k, &bounds_bl);
   if (rc < 0) {
     return rc;
   }
@@ -47,11 +53,18 @@ static int get_bounds(cls_method_context_t hctx, cls_replica_log_bound& bound)
 }
 
 static int write_bounds(cls_method_context_t hctx,
+                        const string& key,
                         const cls_replica_log_bound& bound)
 {
   bufferlist bounds_bl;
   ::encode(bound, bounds_bl);
-  return cls_cxx_map_set_val(hctx, replica_log_bounds, &bounds_bl);
+  string k;
+  if (!key.empty()) {
+    k = replica_log_prefix + "." + key;
+  } else {
+    k = replica_log_bounds;
+  }
+  return cls_cxx_map_set_val(hctx, k, &bounds_bl);
 }
 
 static int cls_replica_log_set(cls_method_context_t hctx,
@@ -68,7 +81,7 @@ static int cls_replica_log_set(cls_method_context_t hctx,
   }
 
   cls_replica_log_bound bound;
-  int rc = get_bounds(hctx, bound);
+  int rc = get_bounds(hctx, op.key, bound);
   if (rc < 0 && rc != -ENOENT) {
     return rc;
   }
@@ -78,7 +91,7 @@ static int cls_replica_log_set(cls_method_context_t hctx,
     return rc;
   }
 
-  return write_bounds(hctx, bound);
+  return write_bounds(hctx, op.key, bound);
 }
 
 static int cls_replica_log_delete(cls_method_context_t hctx,
@@ -95,7 +108,7 @@ static int cls_replica_log_delete(cls_method_context_t hctx,
   }
 
   cls_replica_log_bound bound;
-  int rc = get_bounds(hctx, bound);
+  int rc = get_bounds(hctx, op.key, bound);
   if (rc < 0 && rc != -ENOENT) {
     return rc;
   }
@@ -105,7 +118,7 @@ static int cls_replica_log_delete(cls_method_context_t hctx,
     return rc;
   }
 
-  return write_bounds(hctx, bound);
+  return write_bounds(hctx, op.key, bound);
 }
 
 static int cls_replica_log_get(cls_method_context_t hctx,
@@ -122,7 +135,7 @@ static int cls_replica_log_get(cls_method_context_t hctx,
   }
 
   cls_replica_log_bound bound;
-  int rc = get_bounds(hctx, bound);
+  int rc = get_bounds(hctx, op.key, bound);
   if (rc < 0) {
     return rc;
   }
