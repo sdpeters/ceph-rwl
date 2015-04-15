@@ -40,6 +40,7 @@ static int parse_to_utime(string& in, utime_t& out) {
 
 void RGWOp_OBJLog_SetBounds::execute() {
   string id_str = s->info.args.get("id"),
+         key = s->info.args.get("key"),
          marker = s->info.args.get("marker"),
          time = s->info.args.get("time"),
          daemon_id = s->info.args.get("daemon_id");
@@ -79,11 +80,12 @@ void RGWOp_OBJLog_SetBounds::execute() {
     return;
   }
 
-  http_ret = rl.update_bound(shard, daemon_id, marker, ut, &markers);
+  http_ret = rl.update_bound(shard, key, daemon_id, marker, ut, &markers);
 }
 
 void RGWOp_OBJLog_GetBounds::execute() {
   string id = s->info.args.get("id");
+  string key = s->info.args.get("key");
 
   if (id.empty()) {
     dout(5) << " Error - invalid parameter list" << dendl;
@@ -103,7 +105,7 @@ void RGWOp_OBJLog_GetBounds::execute() {
  
   string pool;
   RGWReplicaObjectLogger rl(store, pool, prefix);
-  http_ret = rl.get_bounds(shard, bounds);
+  http_ret = rl.get_bounds(shard, key, bounds);
 }
 
 void RGWOp_OBJLog_GetBounds::send_response() {
@@ -120,6 +122,7 @@ void RGWOp_OBJLog_GetBounds::send_response() {
 
 void RGWOp_OBJLog_DeleteBounds::execute() {
   string id = s->info.args.get("id"),
+         key = s->info.args.get("key"),
          daemon_id = s->info.args.get("daemon_id");
   bool purge_all;
 
@@ -143,7 +146,7 @@ void RGWOp_OBJLog_DeleteBounds::execute() {
 
   string pool;
   RGWReplicaObjectLogger rl(store, pool, prefix);
-  http_ret = rl.delete_bound(shard, daemon_id, purge_all);
+  http_ret = rl.delete_bound(shard, key, daemon_id, purge_all);
 }
 
 static int bucket_instance_to_bucket(RGWRados *store, const string& bucket_instance, rgw_bucket& bucket) {
@@ -165,6 +168,7 @@ static int bucket_instance_to_bucket(RGWRados *store, const string& bucket_insta
 
 void RGWOp_BILog_SetBounds::execute() {
   string bucket_instance = s->info.args.get("bucket-instance"),
+         key = s->info.args.get("key"),
          marker = s->info.args.get("marker"),
          time = s->info.args.get("time"),
          daemon_id = s->info.args.get("daemon_id");
@@ -206,11 +210,12 @@ void RGWOp_BILog_SetBounds::execute() {
     return;
   }
 
-  http_ret = rl.update_bound(bucket, shard_id, daemon_id, marker, ut, &markers);
+  http_ret = rl.update_bound(bucket, shard_id, key, daemon_id, marker, ut, &markers);
 }
 
 void RGWOp_BILog_GetBounds::execute() {
   string bucket_instance = s->info.args.get("bucket-instance");
+  string key = s->info.args.get("key");
   rgw_bucket bucket;
 
   int shard_id;
@@ -225,7 +230,7 @@ void RGWOp_BILog_GetBounds::execute() {
     return;
 
   RGWReplicaBucketLogger rl(store);
-  http_ret = rl.get_bounds(bucket, shard_id, bounds);
+  http_ret = rl.get_bounds(bucket, shard_id, key, bounds);
 }
 
 void RGWOp_BILog_GetBounds::send_response() {
@@ -242,6 +247,7 @@ void RGWOp_BILog_GetBounds::send_response() {
 
 void RGWOp_BILog_DeleteBounds::execute() {
   string bucket_instance = s->info.args.get("bucket-instance");
+  string key = s->info.args.get("key");
   string daemon_id = s->info.args.get("daemon_id");
   bool purge_all;
 
@@ -267,7 +273,7 @@ void RGWOp_BILog_DeleteBounds::execute() {
   }
 
   RGWReplicaBucketLogger rl(store);
-  http_ret = rl.delete_bound(bucket, shard_id, daemon_id, purge_all);
+  http_ret = rl.delete_bound(bucket, shard_id, key, daemon_id, purge_all);
 }
 
 RGWOp *RGWHandler_ReplicaLog::op_get() {

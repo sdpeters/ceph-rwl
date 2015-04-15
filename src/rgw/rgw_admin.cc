@@ -161,6 +161,7 @@ void _usage()
   cerr << "   --state=<state string>    specify a state for the opstate set command\n";
   cerr << "   --replica-log-type        replica log type (metadata, data, bucket), required for\n";
   cerr << "                             replica log operations\n";
+  cerr << "   --replica-log-key         replica log key\n";
   cerr << "   --categories=<list>       comma separated list of categories, used in usage show\n";
   cerr << "   --caps=<caps>             list of caps (e.g., \"usage=read, write; user=read\"\n";
   cerr << "   --yes-i-really-mean-it    required for certain operations\n";
@@ -970,6 +971,7 @@ int main(int argc, char **argv)
   string op_id;
   string state_str;
   string replica_log_type_str;
+  string rlkey;
   ReplicaLogType replica_log_type = ReplicaLog_Invalid;
   string op_mask_str;
   string quota_scope;
@@ -1158,6 +1160,8 @@ int main(int argc, char **argv)
         cerr << "ERROR: invalid replica log type" << std::endl;
         return EINVAL;
       }
+    } else if (ceph_argparse_witharg(args, i, &val, "--replica-log-key", (char*)NULL)) {
+      rlkey = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--index-type", (char*)NULL)) {
       string index_type_str = val;
       bi_index_type = get_bi_index_type(index_type_str);
@@ -2787,7 +2791,7 @@ next:
       }
 
       RGWReplicaObjectLogger logger(store, pool_name, META_REPLICA_LOG_OBJ_PREFIX);
-      int ret = logger.get_bounds(shard_id, bounds);
+      int ret = logger.get_bounds(shard_id, rlkey, bounds);
       if (ret < 0)
         return -ret;
     } else if (replica_log_type == ReplicaLog_Data) {
@@ -2796,7 +2800,7 @@ next:
         return EINVAL;
       }
       RGWReplicaObjectLogger logger(store, pool_name, DATA_REPLICA_LOG_OBJ_PREFIX);
-      int ret = logger.get_bounds(shard_id, bounds);
+      int ret = logger.get_bounds(shard_id, rlkey, bounds);
       if (ret < 0)
         return -ret;
     } else if (replica_log_type == ReplicaLog_Bucket) {
@@ -2812,7 +2816,7 @@ next:
       }
 
       RGWReplicaBucketLogger logger(store);
-      ret = logger.get_bounds(bucket, shard_id, bounds);
+      ret = logger.get_bounds(bucket, shard_id, rlkey, bounds);
       if (ret < 0)
         return -ret;
     } else if (!replica_log_type_str.empty()) {
@@ -2822,7 +2826,7 @@ next:
       }
       string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
-      int ret = logger.get_bounds(shard_id, bounds);
+      int ret = logger.get_bounds(shard_id, rlkey, bounds);
       if (ret < 0)
         return -ret;
     } else { // shouldn't get here
@@ -2844,7 +2848,7 @@ next:
         return EINVAL;
       }
       RGWReplicaObjectLogger logger(store, pool_name, META_REPLICA_LOG_OBJ_PREFIX);
-      int ret = logger.delete_bound(shard_id, daemon_id, false);
+      int ret = logger.delete_bound(shard_id, rlkey, daemon_id, false);
       if (ret < 0)
         return -ret;
     } else if (replica_log_type == ReplicaLog_Data) {
@@ -2857,7 +2861,7 @@ next:
         return EINVAL;
       }
       RGWReplicaObjectLogger logger(store, pool_name, DATA_REPLICA_LOG_OBJ_PREFIX);
-      int ret = logger.delete_bound(shard_id, daemon_id, false);
+      int ret = logger.delete_bound(shard_id, rlkey, daemon_id, false);
       if (ret < 0)
         return -ret;
     } else if (replica_log_type == ReplicaLog_Bucket) {
@@ -2873,7 +2877,7 @@ next:
       }
 
       RGWReplicaBucketLogger logger(store);
-      ret = logger.delete_bound(bucket, shard_id, daemon_id, false);
+      ret = logger.delete_bound(bucket, shard_id, rlkey, daemon_id, false);
       if (ret < 0)
         return -ret;
     } else if (!replica_log_type_str.empty()) {
@@ -2887,7 +2891,7 @@ next:
       }
       string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
-      int ret = logger.delete_bound(shard_id, daemon_id, false);
+      int ret = logger.delete_bound(shard_id, rlkey, daemon_id, false);
       if (ret < 0)
         return -ret;
     } 
@@ -2920,7 +2924,7 @@ next:
       }
 
       RGWReplicaObjectLogger logger(store, pool_name, META_REPLICA_LOG_OBJ_PREFIX);
-      int ret = logger.update_bound(shard_id, daemon_id, marker, time, &entries);
+      int ret = logger.update_bound(shard_id, rlkey, daemon_id, marker, time, &entries);
       if (ret < 0) {
         cerr << "ERROR: failed to update bounds: " << cpp_strerror(-ret) << std::endl;
         return -ret;
@@ -2931,7 +2935,7 @@ next:
         return EINVAL;
       }
       RGWReplicaObjectLogger logger(store, pool_name, DATA_REPLICA_LOG_OBJ_PREFIX);
-      int ret = logger.update_bound(shard_id, daemon_id, marker, time, &entries);
+      int ret = logger.update_bound(shard_id, rlkey, daemon_id, marker, time, &entries);
       if (ret < 0) {
         cerr << "ERROR: failed to update bounds: " << cpp_strerror(-ret) << std::endl;
         return -ret;
@@ -2949,7 +2953,7 @@ next:
       }
 
       RGWReplicaBucketLogger logger(store);
-      ret = logger.update_bound(bucket, shard_id, daemon_id, marker, time, &entries);
+      ret = logger.update_bound(bucket, shard_id, rlkey, daemon_id, marker, time, &entries);
       if (ret < 0) {
         cerr << "ERROR: failed to update bounds: " << cpp_strerror(-ret) << std::endl;
         return -ret;
@@ -2961,7 +2965,7 @@ next:
       }
       string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
-      int ret = logger.update_bound(shard_id, daemon_id, marker, time, &entries);
+      int ret = logger.update_bound(shard_id, rlkey, daemon_id, marker, time, &entries);
       if (ret < 0) {
         cerr << "ERROR: failed to update bounds: " << cpp_strerror(-ret) << std::endl;
         return -ret;
