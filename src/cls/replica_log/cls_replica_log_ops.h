@@ -126,4 +126,52 @@ struct cls_replica_log_get_bounds_ret {
 };
 WRITE_CLASS_ENCODER(cls_replica_log_get_bounds_ret)
 
+struct cls_replica_log_list_keys_op {
+  string marker;
+
+  cls_replica_log_list_keys_op() {}
+
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    ::encode(marker, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::iterator& bl) {
+    DECODE_START(1, bl);
+    if (struct_v >= 1) {
+      ::decode(marker, bl);
+    }
+    DECODE_FINISH(bl);
+  }
+
+  void dump(Formatter *f) const;
+  static void generate_test_instances(std::list<cls_replica_log_list_keys_op*>& ls);
+};
+WRITE_CLASS_ENCODER(cls_replica_log_list_keys_op)
+
+struct cls_replica_log_list_keys_ret {
+  std::set<string> keys;
+  bool is_truncated;
+
+  cls_replica_log_list_keys_ret() : is_truncated(false) {}
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    ::encode(keys, bl);
+    ::encode(is_truncated, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::iterator& bl) {
+    DECODE_START(1, bl);
+    ::decode(keys, bl);
+    ::decode(is_truncated, bl);
+    DECODE_FINISH(bl);
+  }
+
+  static void generate_test_instances(std::list<cls_replica_log_list_keys_ret*>& ls);
+};
+WRITE_CLASS_ENCODER(cls_replica_log_list_keys_ret)
+
+
 #endif /* CLS_REPLICA_LOG_OPS_H_ */

@@ -84,4 +84,18 @@ int cls_replica_log_get_bounds(librados::IoCtx& io_ctx, const string& oid,
                                utime_t& oldest_time,
                                list<cls_replica_log_progress_marker>& markers);
 
+/**
+ * List keys in a replica log
+ *
+ * @param io_ctx The IoCtx to use for the read
+ * @param oid The oid to direct the read to
+ * @param marker The lowest key that has been reached
+ * @param keys [out] set of keys
+ * @param is_truncated [out] whether there are more keys
+ */
+int cls_replica_log_list_keys(librados::IoCtx& io_ctx, const string& oid,
+                               const string& marker,
+                               std::set<string>& keys,
+                               bool *is_truncated);
+
 #endif /* CLS_REPLICA_LOG_CLIENT_H_ */

@@ -22,18 +22,19 @@ cls_handle_t h_class;
 cls_method_handle_t h_replica_log_set;
 cls_method_handle_t h_replica_log_delete;
 cls_method_handle_t h_replica_log_get;
+cls_method_handle_t h_replica_log_list;
 
-static const string replica_log_prefix = "rl_";
-static const string replica_log_bounds = replica_log_prefix + "bounds";
+static const string replica_log_prefix = "rl.";
+static const string replica_log_default_bounds = "rl_bounds";
 
 static int get_bounds(cls_method_context_t hctx, const string& key, cls_replica_log_bound& bound)
 {
   bufferlist bounds_bl;
   string k;
   if (!key.empty()) {
-    k = replica_log_prefix + "." + key;
+    k = replica_log_prefix + key;
   } else {
-    k = replica_log_bounds;
+    k = replica_log_default_bounds;
   }
   int rc = cls_cxx_map_get_val(hctx, k, &bounds_bl);
   if (rc < 0) {
@@ -60,9 +61,9 @@ static int write_bounds(cls_method_context_t hctx,
   ::encode(bound, bounds_bl);
   string k;
   if (!key.empty()) {
-    k = replica_log_prefix + "." + key;
+    k = replica_log_prefix + key;
   } else {
-    k = replica_log_bounds;
+    k = replica_log_default_bounds;
   }
   return cls_cxx_map_set_val(hctx, k, &bounds_bl);
 }
@@ -149,6 +150,61 @@ static int cls_replica_log_get(cls_method_context_t hctx,
   return 0;
 }
 
+static int cls_replica_log_list(cls_method_context_t hctx,
+                               bufferlist *in, bufferlist *out)
+{
+  bufferlist::iterator in_iter = in->begin();
+
+  cls_replica_log_list_keys_op op;
+  try {
+    ::decode(op, in_iter);
+  } catch (buffer::error& err) {
+    CLS_LOG(0, "ERROR: cls_replica_log_list(): failed to decode op");
+    return -EINVAL;
+  }
+
+  cls_replica_log_list_keys_ret ret;
+
+  set<string> raw_keys;
+
+#define MAX_KEYS 100
+  string marker;
+  if (!op.marker.empty()) {
+    marker = replica_log_prefix + op.marker;
+  }
+  int rc = cls_cxx_map_get_keys(hctx, marker, MAX_KEYS + 1, &raw_keys);
+  if (rc < 0) {
+    return rc;
+  }
+
+  set<string>::iterator iter = raw_keys.begin();
+  int i;
+  for (i = 0; i < MAX_KEYS && iter != raw_keys.end(); ++i, ++iter) {
+    const string& k = *iter;
+    if (k.size() < 3) {
+      /* should never happen */
+      return -EIO;
+    }
+    if (k[2] == '.') { /* starts with "rl." */
+      ret.keys.insert(k.substr(3));
+    } else {
+      /*
+       * we don't want to list the default bound with the keys. The reason is that the default bound
+       * serves for a different purpose, and it can be accessed when an empty key is specified,
+       * however, this is problematic as it doesn't work well with the marker (an empty marker means
+       * we're at the beginning). We can find some hacky solution for that but there really is no
+       * reason for that.
+       */
+      continue;
+    }
+  }
+
+  ret.is_truncated = (iter != raw_keys.end());
+
+  ::encode(ret, *out);
+  return 0;
+}
+
 void __cls_init()
 {
   CLS_LOG(1, "Loaded replica log class!");
@@ -161,4 +217,6 @@ void __cls_init()
                           cls_replica_log_get, &h_replica_log_get);
   cls_register_cxx_method(h_class, "delete", CLS_METHOD_RD | CLS_METHOD_WR,
                           cls_replica_log_delete, &h_replica_log_delete);
+  cls_register_cxx_method(h_class, "list", CLS_METHOD_RD,
+                          cls_replica_log_list, &h_replica_log_list);
 }

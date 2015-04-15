@@ -82,3 +82,16 @@ generate_test_instances(std::list<cls_replica_log_get_bounds_ret*>& ls)
   ls.back()->oldest_time = samples_whole.back().position_time;
   ls.back()->position_marker = samples_whole.back().position_marker;
 }
+
+void cls_replica_log_list_keys_op::dump(Formatter *f) const
+{
+  ::encode_json("marker", marker, f);
+}
+
+void cls_replica_log_list_keys_op::
+generate_test_instances(std::list<cls_replica_log_list_keys_op*>& ls)
+{
+  ls.push_back(new cls_replica_log_list_keys_op);
+}
+
+

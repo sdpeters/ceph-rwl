@@ -94,3 +94,33 @@ int cls_replica_log_get_bounds(librados::IoCtx& io_ctx, const string& oid,
 
   return 0;
 }
+
+int cls_replica_log_list_keys(librados::IoCtx& io_ctx, const string& oid,
+                               const string& marker,
+                               std::set<string>& keys,
+                               bool *is_truncated)
+{
+  bufferlist in;
+  bufferlist out;
+  cls_replica_log_list_keys_op op;
+  op.marker = marker;
+  ::encode(op, in);
+  int r = io_ctx.exec(oid, "replica_log", "list", in, out);
+  if (r < 0)
+    return r;
+
+  cls_replica_log_list_keys_ret ret;
+  try {
+    bufferlist::iterator i = out.begin();
+    ::decode(ret, i);
+  } catch (buffer::error& err) {
+    return -EIO;
+  }
+
+  keys.swap(ret.keys);
+  if (is_truncated) {
+    *is_truncated = ret.is_truncated;
+  }
+
+  return 0;
+}
