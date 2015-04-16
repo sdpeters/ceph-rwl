@@ -262,6 +262,7 @@ enum {
   OPT_REPLICALOG_GET,
   OPT_REPLICALOG_UPDATE,
   OPT_REPLICALOG_DELETE,
+  OPT_REPLICALOG_LIST,
 };
 
 static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
@@ -482,6 +483,8 @@ static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
       return OPT_REPLICALOG_UPDATE;
     if (strcmp(cmd, "delete") == 0)
       return OPT_REPLICALOG_DELETE;
+    if (strcmp(cmd, "list") == 0)
+      return OPT_REPLICALOG_LIST;
   }
 
   return -EINVAL;
@@ -2775,7 +2778,7 @@ next:
   }
 
   if (opt_cmd == OPT_REPLICALOG_GET || opt_cmd == OPT_REPLICALOG_UPDATE ||
-      opt_cmd == OPT_REPLICALOG_DELETE) {
+      opt_cmd == OPT_REPLICALOG_DELETE || opt_cmd == OPT_REPLICALOG_LIST) {
     if (replica_log_type_str.empty()) {
       cerr << "ERROR: need to specify --replica-log-type=<metadata | data | bucket | ...>" << std::endl;
       return EINVAL;
@@ -2833,6 +2836,65 @@ next:
       assert(0);
     }
     encode_json("bounds", bounds, formatter);
+    formatter->flush(cout);
+    cout << std::endl;
+  }
+
+  if (opt_cmd == OPT_REPLICALOG_LIST) {
+    set<string> keys;
+    bool is_truncated;
+    if (replica_log_type == ReplicaLog_Metadata) {
+      if (!specified_shard_id) {
+        cerr << "ERROR: shard-id must be specified for get operation" << std::endl;
+        return EINVAL;
+      }
+
+      RGWReplicaObjectLogger logger(store, pool_name, META_REPLICA_LOG_OBJ_PREFIX);
+      int ret = logger.list_keys(shard_id, marker, keys, &is_truncated);
+      if (ret < 0)
+        return -ret;
+    } else if (replica_log_type == ReplicaLog_Data) {
+      if (!specified_shard_id) {
+        cerr << "ERROR: shard-id must be specified for get operation" << std::endl;
+        return EINVAL;
+      }
+      RGWReplicaObjectLogger logger(store, pool_name, DATA_REPLICA_LOG_OBJ_PREFIX);
+      int ret = logger.list_keys(shard_id, marker, keys, &is_truncated);
+      if (ret < 0)
+        return -ret;
+    } else if (replica_log_type == ReplicaLog_Bucket) {
+      if (bucket_name.empty()) {
+        cerr << "ERROR: bucket not specified" << std::endl;
+        return -EINVAL;
+      }
+      RGWBucketInfo bucket_info;
+      int ret = init_bucket(bucket_name, bucket_id, bucket_info, bucket);
+      if (ret < 0) {
+        cerr << "ERROR: could not init bucket: " << cpp_strerror(-ret) << std::endl;
+        return -ret;
+      }
+
+      RGWReplicaBucketLogger logger(store);
+      ret = logger.list_keys(bucket, shard_id, marker, keys, &is_truncated);
+      if (ret < 0)
+        return -ret;
+    } else if (!replica_log_type_str.empty()) {
+      if (!specified_shard_id) {
+        cerr << "ERROR: shard-id must be specified for get operation" << std::endl;
+        return EINVAL;
+      }
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
+      int ret = logger.list_keys(shard_id, marker, keys, &is_truncated);
+      if (ret < 0)
+        return -ret;
+    } else { // shouldn't get here
+      assert(0);
+    }
+    formatter->open_object_section("result");
+    encode_json("keys", keys, formatter);
+    encode_json("is_truncated", is_truncated, formatter);
+    formatter->close_section();
     formatter->flush(cout);
     cout << std::endl;
   }
