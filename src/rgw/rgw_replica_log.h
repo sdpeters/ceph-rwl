@@ -64,6 +64,9 @@ protected:
   int get_bounds(const string& oid, const string& pool,
                  const string& key,
                  RGWReplicaBounds& bounds);
+  int list_keys(const string& oid, const string& pool,
+                const string& marker,
+                set<string>& keys, bool *is_truncated);
 };
 
 class RGWReplicaObjectLogger : private RGWReplicaLogger {
@@ -101,6 +104,11 @@ public:
     get_shard_oid(shard, oid);
     return RGWReplicaLogger::get_bounds(oid, pool, key, bounds);
   }
+  int list_keys(int shard, const string& marker, set<string>& keys, bool *is_truncated) {
+    string oid;
+    get_shard_oid(shard, oid);
+    return RGWReplicaLogger::list_keys(oid, pool, marker, keys, is_truncated);
+  }
 };
 
 class RGWReplicaBucketLogger : private RGWReplicaLogger {
@@ -119,6 +127,7 @@ public:
   int delete_bound(const rgw_bucket& bucket, int shard_id, const string& key,
                    const string& daemon_id, bool purge_all);
   int get_bounds(const rgw_bucket& bucket, int shard_id, const string& key, RGWReplicaBounds& bounds);
+  int list_keys(const rgw_bucket& bucket, int shard_id, const string& marker, set<string>& keys, bool *is_truncated);
   int convert_old_bounds(const rgw_bucket& bucket, int shard_id, RGWReplicaBounds& bounds);
 };
 

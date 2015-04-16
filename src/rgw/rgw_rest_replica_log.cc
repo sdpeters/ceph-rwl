@@ -83,6 +83,46 @@ void RGWOp_OBJLog_SetBounds::execute() {
   http_ret = rl.update_bound(shard, key, daemon_id, marker, ut, &markers);
 }
 
+void RGWOp_OBJLog_ListKeys::execute() {
+  string id = s->info.args.get("id");
+  string marker = s->info.args.get("marker");
+
+  if (id.empty()) {
+    dout(5) << " Error - invalid parameter list" << dendl;
+    http_ret = -EINVAL;
+    return;
+  }
+
+  int shard;
+  string err;
+
+  shard = (int)strict_strtol(id.c_str(), 10, &err);
+  if (!err.empty()) {
+    dout(5) << "Error parsing id parameter - " << id << ", err " << err << dendl;
+    http_ret = -EINVAL;
+    return;
+  }
+ 
+  string pool;
+  RGWReplicaObjectLogger rl(store, pool, prefix);
+  http_ret = rl.list_keys(shard, marker, keys, &is_truncated);
+}
+
+void RGWOp_OBJLog_ListKeys::send_response() {
+  set_req_state_err(s, http_ret);
+  dump_errno(s);
+  end_header(s);
+
+  if (http_ret < 0)
+    return;
+
+  s->formatter->open_object_section("response");
+  encode_json("keys", keys, s->formatter);
+  encode_json("is_truncated", is_truncated, s->formatter);
+  s->formatter->close_section();
+  flusher.flush();
+}
+
 void RGWOp_OBJLog_GetBounds::execute() {
   string id = s->info.args.get("id");
   string key = s->info.args.get("key");
@@ -213,6 +253,41 @@ void RGWOp_BILog_SetBounds::execute() {
   http_ret = rl.update_bound(bucket, shard_id, key, daemon_id, marker, ut, &markers);
 }
 
+void RGWOp_BILog_ListKeys::execute() {
+  string bucket_instance = s->info.args.get("bucket-instance");
+  string marker = s->info.args.get("marker");
+  rgw_bucket bucket;
+
+  int shard_id;
+
+  http_ret = rgw_bucket_parse_bucket_instance(bucket_instance, &bucket_instance, &shard_id);
+  if (http_ret < 0) {
+    dout(5) << "failed to parse bucket instance" << dendl;
+    return;
+  }
+
+  if ((http_ret = bucket_instance_to_bucket(store, bucket_instance, bucket)) < 0) 
+    return;
+
+  RGWReplicaBucketLogger rl(store);
+  http_ret = rl.list_keys(bucket, shard_id, marker, keys, &is_truncated);
+}
+
+void RGWOp_BILog_ListKeys::send_response() {
+  set_req_state_err(s, http_ret);
+  dump_errno(s);
+  end_header(s);
+
+  if (http_ret < 0)
+    return;
+
+  s->formatter->open_object_section("response");
+  encode_json("keys", keys, s->formatter);
+  encode_json("is_truncated", is_truncated, s->formatter);
+  s->formatter->close_section();
+  flusher.flush();
+}
+
 void RGWOp_BILog_GetBounds::execute() {
   string bucket_instance = s->info.args.get("bucket-instance");
   string key = s->info.args.get("key");
@@ -280,20 +355,45 @@ RGWOp *RGWHandler_ReplicaLog::op_get() {
   bool exists;
   string type = s->info.args.get("type", &exists);
 
-  if (!exists) {
+  if (!exists || type.empty()) {
     return NULL;
   }
 
+  bool list_keys;
+  s->info.args.get_bool("list-keys", &list_keys, false);
+
+  const char *prefix;
+  const char *type_name;
+
+  string s;
   if (type.compare("metadata") == 0) {
-    return new RGWOp_OBJLog_GetBounds(META_REPLICA_LOG_OBJ_PREFIX, "mdlog");
+    prefix = META_REPLICA_LOG_OBJ_PREFIX;
+    type_name = "mdlog";
   } else if (type.compare("bucket-index") == 0) {
     return new RGWOp_BILog_GetBounds;
   } else if (type.compare("data") == 0) {
-    return new RGWOp_OBJLog_GetBounds(DATA_REPLICA_LOG_OBJ_PREFIX, "datalog");
-  } else if (!type.empty()) {
-    string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + type + ".";
-    return new RGWOp_OBJLog_GetBounds(s.c_str(), "generic");
+    prefix = DATA_REPLICA_LOG_OBJ_PREFIX;
+    type_name = "datalog";
+  } else {
+    s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + type + ".";
+    prefix = s.c_str();
+    type_name = "generic";
   }
+
+  if (list_keys) {
+    if (type.compare("bucket-index") == 0) {
+      return new RGWOp_BILog_ListKeys();
+    } else {
+      return new RGWOp_OBJLog_ListKeys(prefix, type_name);
+    }
+  }
+
+  if (type.compare("bucket-index") == 0) {
+    return new RGWOp_BILog_GetBounds;
+  } else {
+    return new RGWOp_OBJLog_GetBounds(prefix, type_name);
+  }
+  
   return NULL;
 }
 

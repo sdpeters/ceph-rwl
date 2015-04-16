@@ -141,6 +141,19 @@ int RGWReplicaLogger::get_bounds(const string& oid, const string& pool,
   return cls_replica_log_get_bounds(ioctx, oid, key, bounds.marker, bounds.oldest_time, bounds.markers);
 }
 
+int RGWReplicaLogger::list_keys(const string& oid, const string& pool,
+                                const string& marker,
+                                set<string>& keys, bool *is_truncated)
+{
+  librados::IoCtx ioctx;
+  int r = open_ioctx(ioctx, pool);
+  if (r < 0) {
+    return r;
+  }
+
+  return cls_replica_log_list_keys(ioctx, oid, marker, keys, is_truncated);
+}
+
 RGWReplicaObjectLogger::
 RGWReplicaObjectLogger(RGWRados *_store,
                        const string& _pool,
@@ -315,6 +328,10 @@ int RGWReplicaBucketLogger::get_bounds(const rgw_bucket& bucket, int shard_id, c
 
   return RGWReplicaLogger::get_bounds(obj_name(bucket, shard_id, true), pool, key, bounds);
 }
+
+int RGWReplicaBucketLogger::list_keys(const rgw_bucket& bucket, int shard_id, const string& marker, set<string>& keys, bool *is_truncated) {
+  return RGWReplicaLogger::list_keys(obj_name(bucket, shard_id, true), pool, marker, keys, is_truncated);
+};
 
 int RGWReplicaBucketLogger::convert_old_bounds(const rgw_bucket& bucket, int shard_id, RGWReplicaBounds& bounds) {
   string old_key = obj_name(bucket, shard_id, false);

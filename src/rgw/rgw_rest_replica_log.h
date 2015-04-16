@@ -14,6 +14,33 @@
 #ifndef CEPH_RGW_REST_REPLICA_LOG_H
 #define CEPH_RGW_REST_REPLICA_LOG_H
 
+class RGWOp_OBJLog_ListKeys : public RGWRESTOp {
+  string prefix;
+  string obj_type;
+  set<string> keys;
+  bool is_truncated;
+public:
+  RGWOp_OBJLog_ListKeys() : is_truncated(false) {}
+  RGWOp_OBJLog_ListKeys(const char *_prefix, const char *type) 
+    : prefix(_prefix), obj_type(type), is_truncated(false) {}
+  ~RGWOp_OBJLog_ListKeys() {}
+
+  int check_caps(RGWUserCaps& caps) {
+    return caps.check_cap(obj_type.c_str(), RGW_CAP_READ);
+  }
+  int verify_permission() {
+    return check_caps(s->user.caps);
+  }
+  void execute();
+  virtual void send_response();
+  virtual const string name() {
+    string s = "replica";
+    s.append(obj_type);
+    s.append("_listkeys");
+    return s;
+  }
+};
+
 class RGWOp_OBJLog_GetBounds : public RGWRESTOp {
   string prefix;
   string obj_type;
@@ -77,6 +104,26 @@ public:
     s.append(obj_type);
     s.append("_deletebound");
     return s;
+  }
+};
+
+class RGWOp_BILog_ListKeys : public RGWRESTOp {
+  set<string> keys;
+  bool is_truncated;
+public:
+  RGWOp_BILog_ListKeys() : is_truncated(false) {}
+  ~RGWOp_BILog_ListKeys() {}
+
+  int check_caps(RGWUserCaps& caps) {
+    return caps.check_cap("bilog", RGW_CAP_READ);
+  }
+  int verify_permission() {
+    return check_caps(s->user.caps);
+  }
+  void execute();
+  virtual void send_response();
+  virtual const string name() {
+    return "replicabilog_listkeys";
   }
 };
 
