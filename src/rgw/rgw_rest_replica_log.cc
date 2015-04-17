@@ -45,22 +45,23 @@ void RGWOp_OBJLog_SetBounds::execute() {
          time = s->info.args.get("time"),
          daemon_id = s->info.args.get("daemon_id");
 
-  if (id_str.empty() ||
-      daemon_id.empty()) {
+  if (daemon_id.empty()) {
     dout(5) << "Error - invalid parameter list" << dendl;
     http_ret = -EINVAL;
     return;
   }
   
-  int shard;
+  int shard = -1;
   string err;
   utime_t ut;
 
-  shard = (int)strict_strtol(id_str.c_str(), 10, &err);
-  if (!err.empty()) {
-    dout(5) << "Error parsing id parameter - " << id_str << ", err " << err << dendl;
-    http_ret = -EINVAL;
-    return;
+  if (!id_str.empty()) {
+    shard = (int)strict_strtol(id_str.c_str(), 10, &err);
+    if (!err.empty()) {
+      dout(5) << "Error parsing id parameter - " << id_str << ", err " << err << dendl;
+      http_ret = -EINVAL;
+      return;
+    }
   }
 
   if (!time.empty()) {
@@ -88,20 +89,16 @@ void RGWOp_OBJLog_ListKeys::execute() {
   string id = s->info.args.get("id");
   string marker = s->info.args.get("marker");
 
-  if (id.empty()) {
-    dout(5) << " Error - invalid parameter list" << dendl;
-    http_ret = -EINVAL;
-    return;
-  }
-
-  int shard;
+  int shard = -1;
   string err;
 
-  shard = (int)strict_strtol(id.c_str(), 10, &err);
-  if (!err.empty()) {
-    dout(5) << "Error parsing id parameter - " << id << ", err " << err << dendl;
-    http_ret = -EINVAL;
-    return;
+  if (!id.empty()) {
+    shard = (int)strict_strtol(id.c_str(), 10, &err);
+    if (!err.empty()) {
+      dout(5) << "Error parsing id parameter - " << id << ", err " << err << dendl;
+      http_ret = -EINVAL;
+      return;
+    }
   }
  
   string pool;
@@ -128,20 +125,16 @@ void RGWOp_OBJLog_GetBounds::execute() {
   string id = s->info.args.get("id");
   string key = s->info.args.get("key");
 
-  if (id.empty()) {
-    dout(5) << " Error - invalid parameter list" << dendl;
-    http_ret = -EINVAL;
-    return;
-  }
-
-  int shard;
+  int shard = -1;
   string err;
 
-  shard = (int)strict_strtol(id.c_str(), 10, &err);
-  if (!err.empty()) {
-    dout(5) << "Error parsing id parameter - " << id << ", err " << err << dendl;
-    http_ret = -EINVAL;
-    return;
+  if (!id.empty()) {
+    shard = (int)strict_strtol(id.c_str(), 10, &err);
+    if (!err.empty()) {
+      dout(5) << "Error parsing id parameter - " << id << ", err " << err << dendl;
+      http_ret = -EINVAL;
+      return;
+    }
   }
  
   string pool;
@@ -169,20 +162,21 @@ void RGWOp_OBJLog_DeleteBounds::execute() {
 
   s->info.args.get_bool("purge-all", &purge_all, false);
 
-  if (id.empty() ||
-      (!purge_all && daemon_id.empty())) {
+  if (!purge_all && daemon_id.empty()) {
     dout(5) << "Error - invalid parameter list" << dendl;
     http_ret = -EINVAL;
     return;
   }
   
-  int shard;
+  int shard = -1;
   string err;
 
-  shard = (int)strict_strtol(id.c_str(), 10, &err);
-  if (!err.empty()) {
-    dout(5) << "Error parsing id parameter - " << id << ", err " << err << dendl;
-    http_ret = -EINVAL;
+  if (!id.empty()) {
+    shard = (int)strict_strtol(id.c_str(), 10, &err);
+    if (!err.empty()) {
+      dout(5) << "Error parsing id parameter - " << id << ", err " << err << dendl;
+      http_ret = -EINVAL;
+    }
   }
 
   string pool;
@@ -376,7 +370,7 @@ RGWOp *RGWHandler_ReplicaLog::op_get() {
     prefix = DATA_REPLICA_LOG_OBJ_PREFIX;
     type_name = "datalog";
   } else {
-    s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + type + ".";
+    s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + "." + type;
     prefix = s.c_str();
     type_name = "generic";
   }
@@ -413,7 +407,7 @@ RGWOp *RGWHandler_ReplicaLog::op_delete() {
   else if (type.compare("data") == 0)
     return new RGWOp_OBJLog_DeleteBounds(DATA_REPLICA_LOG_OBJ_PREFIX, "datalog");
   else if (!type.empty()) {
-    string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + type + ".";
+    string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + "." + type;
     return new RGWOp_OBJLog_DeleteBounds(s.c_str(), "generic");
   }
   
@@ -435,7 +429,7 @@ RGWOp *RGWHandler_ReplicaLog::op_post() {
   } else if (type.compare("data") == 0) {
     return new RGWOp_OBJLog_SetBounds(DATA_REPLICA_LOG_OBJ_PREFIX, "datalog");
   } else if (!type.empty()) {
-    string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + type + ".";
+    string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + "." + type;
     return new RGWOp_OBJLog_SetBounds(s.c_str(), "generic");
   }
   return NULL;
