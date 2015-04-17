@@ -2827,11 +2827,13 @@ next:
         cerr << "ERROR: shard-id must be specified for get operation" << std::endl;
         return EINVAL;
       }
-      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str + ".";
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
       int ret = logger.get_bounds(shard_id, rlkey, bounds);
-      if (ret < 0)
+      if (ret < 0) {
+        cerr << "ERROR: logger.get_bounds() returned ret=" << ret << std::endl;
         return -ret;
+      }
     } else { // shouldn't get here
       assert(0);
     }
@@ -2883,11 +2885,13 @@ next:
         cerr << "ERROR: shard-id must be specified for get operation" << std::endl;
         return EINVAL;
       }
-      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str + ".";
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
       int ret = logger.list_keys(shard_id, marker, keys, &is_truncated);
-      if (ret < 0)
+      if (ret < 0) {
+        cerr << "ERROR: logger.list_keys() returned ret=" << ret << std::endl;
         return -ret;
+      }
     } else { // shouldn't get here
       assert(0);
     }
@@ -2951,11 +2955,13 @@ next:
         cerr << "ERROR: daemon-id must be specified for delete operation" << std::endl;
         return EINVAL;
       }
-      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str + ".";
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
       int ret = logger.delete_bound(shard_id, rlkey, daemon_id, false);
-      if (ret < 0)
+      if (ret < 0) {
+        cerr << "ERROR: logger.delete_bound() returned ret=" << ret << std::endl;
         return -ret;
+      }
     } 
   }
 
@@ -3029,7 +3035,7 @@ next:
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
       int ret = logger.update_bound(shard_id, rlkey, daemon_id, marker, time, &entries);
       if (ret < 0) {
-        cerr << "ERROR: failed to update bounds: " << cpp_strerror(-ret) << std::endl;
+        cerr << "ERROR: logger.update_bound() returned ret=" << ret << std::endl;
         return -ret;
       }
     } 
