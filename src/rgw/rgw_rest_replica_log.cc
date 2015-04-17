@@ -46,8 +46,6 @@ void RGWOp_OBJLog_SetBounds::execute() {
          daemon_id = s->info.args.get("daemon_id");
 
   if (id_str.empty() ||
-      marker.empty() ||
-      time.empty() ||
       daemon_id.empty()) {
     dout(5) << "Error - invalid parameter list" << dendl;
     http_ret = -EINVAL;
@@ -64,10 +62,13 @@ void RGWOp_OBJLog_SetBounds::execute() {
     http_ret = -EINVAL;
     return;
   }
-  
-  if (parse_to_utime(time, ut) < 0) {
-    http_ret = -EINVAL;
-    return;
+
+  if (!time.empty()) {
+    if (parse_to_utime(time, ut) < 0) {
+      dout(5) << "Error parsing time parameter - " << time << dendl;
+      http_ret = -EINVAL;
+      return;
+    }
   }
 
   string pool;
