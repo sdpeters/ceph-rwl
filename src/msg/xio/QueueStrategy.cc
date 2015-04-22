@@ -71,11 +71,10 @@ void QueueStrategy::entry(QSThread *thrd)
 
 void QueueStrategy::shutdown()
 {
-  QSThread *thrd;
   lock.Lock();
   stop = true;
   while (disp_threads.size()) {
-    thrd = &(disp_threads.front());
+    QSThread *thrd = &(disp_threads.front());
     disp_threads.pop_front();
     thrd->cond.Signal();
   }
@@ -84,17 +83,14 @@ void QueueStrategy::shutdown()
 
 void QueueStrategy::wait()
 {
-  QSThread *thrd;
   lock.Lock();
   assert(stop);
   while (disp_threads.size()) {
-    thrd = &(disp_threads.front());
+    QSThread *thrd = &(disp_threads.front());
     disp_threads.pop_front();
     lock.Unlock();
-
     // join outside of lock
     thrd->join();
-
     lock.Lock();
   }
   lock.Unlock();
@@ -102,11 +98,10 @@ void QueueStrategy::wait()
 
 void QueueStrategy::start()
 {
-  QSThread *thrd;
   assert(!stop);
   lock.Lock();
   for (int ix = 0; ix < n_threads; ++ix) {
-    thrd = new QSThread(this);
+    QSThread *thrd = new QSThread(this);
     thrd->create();
   }
   lock.Unlock();
