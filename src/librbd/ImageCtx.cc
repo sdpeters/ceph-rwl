@@ -842,12 +842,12 @@ namespace librbd {
         "rbd_request_timed_out_seconds", false);
 
     string start = METADATA_CONF_PREFIX;
-    int r = 0, j = 0;
+    int j = 0;
     bool is_continue;
     md_config_t local_config_t;
     do {
       map<string, bufferlist> pairs, res;
-      r = cls_client::metadata_list(&md_ctx, header_oid, start, max_conf_items, &pairs);
+      int r = cls_client::metadata_list(&md_ctx, header_oid, start, max_conf_items, &pairs);
       if (r < 0) {
         lderr(cct) << __func__ << " couldn't list conf metadatas: " << r << dendl;
         break;
