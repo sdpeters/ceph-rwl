@@ -143,7 +143,12 @@ int main(int argc, const char **argv, const char *envp[]) {
 	  char buf[5050];
 	  string mountpoint = cfuse->get_mount_point();
 	  snprintf(buf, 5049, "fusermount -u -z %s", mountpoint.c_str());
-	  system(buf);
+	  int ret = system(buf);
+	  if (ret) {
+	    cerr << "ceph-fuse[" << getpid()
+	         << "]: fuse failed to umount " << mountpoint 
+		 << " with return code " << ret << std::endl;
+	  }
 	}
 	return reinterpret_cast<void*>(tr);
       }
