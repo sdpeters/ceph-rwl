@@ -77,7 +77,7 @@ TEST_F(PrioritizedQueueTest, lowest_among_eligible_otherwise_highest) {
   const unsigned max_tokens_per_subqueue = 100;
   PQ pq(max_tokens_per_subqueue, min_cost);
 
-#define ITEM_TO_COST(item_) (item_ % 5 ? min_cost : max_tokens_per_subqueue)
+#define ITEM_TO_COST(item_) ((item_ % 5) ? min_cost : max_tokens_per_subqueue)
   unsigned num_low_cost = 0, num_high_cost = 0;
   for (int i = 0; i < item_size; i++) {
     const Item& item = items[i];
