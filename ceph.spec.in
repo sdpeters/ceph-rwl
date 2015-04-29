@@ -68,7 +68,7 @@ BuildRequires:	libudev-devel
 BuildRequires:	libtool
 BuildRequires:	leveldb-devel > 1.2
 BuildRequires:	make
-BuildRequires:  openssl-devel
+BuildRequires:  nss_compat_ossl-devel
 BuildRequires:	perl
 BuildRequires:	parted
 BuildRequires:	pkgconfig
