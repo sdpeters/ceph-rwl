@@ -529,7 +529,7 @@ void MDSMap::encode(bufferlist& bl, uint64_t features) const
   ::encode(cas_pool, bl);
 
   // kclient ignores everything from here
-  __u16 ev = 9;
+  __u16 ev = 10;
   ::encode(ev, bl);
   ::encode(compat, bl);
   ::encode(metadata_pool, bl);
@@ -548,6 +548,8 @@ void MDSMap::encode(bufferlist& bl, uint64_t features) const
   ::encode(enabled, bl);
   ::encode(fs_name, bl);
   ::encode(damaged, bl);
+  ::encode(live_query_next, bl);
+  ::encode(live_queries, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -633,5 +635,12 @@ void MDSMap::decode(bufferlist::iterator& p)
   if (ev >= 9) {
     ::decode(damaged, p);
   }
+
+  if (ev >= 10) {
+    ::decode(live_query_next, p);
+    ::decode(live_queries, p);
+  }
+
   DECODE_FINISH(p);
 }
+

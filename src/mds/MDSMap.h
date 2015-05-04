@@ -32,6 +32,7 @@
 #include "include/ceph_features.h"
 #include "common/Formatter.h"
 #include "mds/mdstypes.h"
+#include "mds/LiveQuery.h"
 
 /*
 
@@ -72,6 +73,8 @@ extern CompatSet get_mdsmap_compat_set_base(); // pre v0.20
 #define MDS_FEATURE_INCOMPAT_NOANCHOR CompatSet::Feature(8, "no anchor table")
 
 #define MDS_FS_NAME_DEFAULT "cephfs"
+
+
 
 class MDSMap {
 public:
@@ -209,6 +212,10 @@ protected:
   bool inline_data_enabled;
 
 public:
+  LiveQuery::id_t live_query_next;
+  typedef std::map<LiveQuery::id_t, LiveQuery> QueryMap;
+  QueryMap live_queries;
+
   CompatSet compat;
 
   friend class MDSMonitor;
