@@ -19,6 +19,7 @@ noinst_HEADERS += \
 	mds/Locker.h \
 	mds/LogEvent.h \
 	mds/LogSegment.h \
+	mds/LiveQuery.h \
 	mds/MDBalancer.h \
 	mds/MDCache.h \
 	mds/RecoveryQueue.h \

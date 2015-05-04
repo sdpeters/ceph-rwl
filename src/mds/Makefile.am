@@ -29,6 +29,7 @@ LIBMDS_SOURCES = \
 	mds/MDSContext.cc \
 	mds/MDSAuthCaps.cc \
 	mds/MDLog.cc \
+	mds/LiveQuery.cc \
 	common/TrackedOp.cc
 LIBMDS_DEPS = $(LIBOSDC)
 
