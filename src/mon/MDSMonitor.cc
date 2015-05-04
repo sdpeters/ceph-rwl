@@ -1323,7 +1323,20 @@ int MDSMonitor::management_command(
     // Persist the new MDSMap
     pending_mdsmap = newmap;
     return 0;
+  } else if (prefix == "fs query") {
+    string fs_name;
+    cmd_getval(g_ceph_context, cmdmap, "fs_name", fs_name);
+    string path;
+    cmd_getval(g_ceph_context, cmdmap, "path", fs_name);
 
+    // Generate a unique ID
+    LiveQuery new_q;
+    new_q.id = pending_mdsmap.live_query_next++;
+    // TODO: define query language and parse it
+    new_q.where.parse(path);
+    new_q.group_by.op_type = true;
+    pending_mdsmap.live_queries[new_q.id] = new_q;
+    return 0;
   } else {
     return -ENOSYS;
   }

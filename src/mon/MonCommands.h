@@ -342,6 +342,11 @@ COMMAND("fs reset " \
 COMMAND("fs ls ", \
 	"list filesystems", \
 	"fs", "r", "cli,rest")
+COMMAND("fs query " \
+	"name=fs_name,type=CephString " \
+	"name=path,type=CephString ", \
+        "publish live monitoring query", \
+        "fs", "rw", "cli,rest")
 /*
  * Monmap commands
  */
