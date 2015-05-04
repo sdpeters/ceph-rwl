@@ -1158,6 +1158,35 @@ void Server::reply_client_request(MDRequestRef& mdr, MClientReply *reply)
       tracedn->get_projected_linkage()->is_remote()) {
     mdcache->eval_remote(tracedn);
   }
+
+  
+  for (MDSMap::QueryMap::iterator i = mds->mdsmap->live_queries.begin();
+       i != mds->mdsmap->live_queries.end(); ++i) {
+    const LiveQuery &lq = i->second;
+    if (mdr->get_filepath().get_path().find(lq.where.path_prefix.get_path()) != 0) {
+      // Path match fail
+      dout(20) << __func__ << ": path reject: "
+        << mdr->get_filepath().get_path() << " vs "
+        << lq.where.path_prefix.get_path() << dendl;
+      continue;
+    }
+
+    // All WHEREs match, apply GROUP_BY to generate key
+    std::ostringstream group_key_stream;
+    if (lq.group_by.op_type) {
+      group_key_stream << "_";
+      group_key_stream << ceph_mds_op_name(mdr->client_request->get_op());
+    }
+
+    if (lq.group_by.client_id) {
+      group_key_stream << "_";
+      group_key_stream << mdr->get_client();
+    }
+
+    // Get or create result object, and increment the group result
+    LiveQueryResult &qr = mds->query_results[i->first];
+    qr.data[group_key_stream.str()] += 1;
+  }
 }
 
 
