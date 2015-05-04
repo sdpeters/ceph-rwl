@@ -359,6 +359,19 @@ bool MDS::asok_command(string command, cmdmap_t& cmdmap, string format,
       mds_lock.Lock();
       mdcache->force_readonly();
       mds_lock.Unlock();
+    } else if (command == "query result") {
+      mds_lock.Lock();
+      LiveQuery::id_t query_id;
+      cmd_getval(g_ceph_context, cmdmap, "query_id", query_id);
+      QueryResults::iterator qr_i = query_results.find(query_id);
+      if (qr_i == query_results.end()) {
+        ss << "query not found: " << query_id;
+        delete f;
+        return true;
+      }
+
+      qr_i->second.dump(f);
+      mds_lock.Unlock();
     }
   }
   f->flush(ss);
@@ -663,6 +676,11 @@ void MDS::set_up_admin_socket()
 				     "get subtrees",
 				     asok_hook,
 				     "Return the subtree map");
+  assert(r == 0);
+  r = admin_socket->register_command("query result",
+                                     "query result name=query_id,type=CephInt",
+                                     asok_hook,
+                                     "retrieve live query results");
   assert(r == 0);
 }
 
@@ -1826,6 +1844,23 @@ void MDS::handle_mds_map(MMDSMap *m)
   }
 
   mdcache->notify_mdsmap_changed();
+
+  {
+    std::vector<LiveQuery::id_t> erase_results;
+    for (QueryResults::iterator i = query_results.begin();
+        i != query_results.end(); ++i) {
+      if (mdsmap->live_queries.find(i->first) == mdsmap->live_queries.end()) {
+        dout(10) << __func__ << ": live query " << i->first
+          << " removed from map, purging results" << dendl;
+        erase_results.push_back(i->first);
+      }
+    }
+
+    for (std::vector<LiveQuery::id_t>::iterator i = erase_results.begin();
+        i != erase_results.end(); ++i) {
+      query_results.erase(*i);
+    }
+  }
 
  out:
   beacon.notify_mdsmap(mdsmap);

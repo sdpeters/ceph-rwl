@@ -481,6 +481,10 @@ private:
   void handle_command(class MMonCommand *m);
   void handle_command(class MCommand *m);
   void handle_mds_map(class MMDSMap *m);
+
+  public:  // FIXME hide this
+  typedef std::map<LiveQuery::id_t, LiveQueryResult> QueryResults;
+  QueryResults query_results;
 };
 
 
