@@ -30,3 +30,10 @@ void LiveQueryResult::dump(Formatter *f)
   f->close_section();
 }
 
+void LiveQuery::dump(Formatter *f) const
+{
+  f->open_object_section("live_query");
+  f->dump_int("id", id);
+  f->close_section();
+}
+

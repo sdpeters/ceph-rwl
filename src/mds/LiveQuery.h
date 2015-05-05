@@ -106,6 +106,8 @@ class LiveQuery {
       group_by.decode(p);
       DECODE_FINISH(p);
     }
+
+    void dump(Formatter *f) const;
 };
 
 WRITE_CLASS_ENCODER(LiveQuery)

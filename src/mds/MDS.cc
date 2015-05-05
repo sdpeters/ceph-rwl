@@ -362,7 +362,12 @@ bool MDS::asok_command(string command, cmdmap_t& cmdmap, string format,
     } else if (command == "query result") {
       mds_lock.Lock();
       LiveQuery::id_t query_id;
-      cmd_getval(g_ceph_context, cmdmap, "query_id", query_id);
+      bool got = cmd_getval(g_ceph_context, cmdmap, "query_id", query_id);
+      if (!got) {
+        ss << "missing query ID argument";
+        delete f;
+        return true;
+      }
       QueryResults::iterator qr_i = query_results.find(query_id);
       if (qr_i == query_results.end()) {
         ss << "query not found: " << query_id;

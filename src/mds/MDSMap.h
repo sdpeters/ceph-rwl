@@ -234,7 +234,8 @@ public:
       max_mds(0),
       ever_allowed_snaps(false),
       explicitly_allowed_snaps(false),
-      inline_data_enabled(false)
+      inline_data_enabled(false),
+      live_query_next(1)
   { }
 
   bool get_inline_data_enabled() { return inline_data_enabled; }

@@ -155,6 +155,14 @@ void MDSMap::dump(Formatter *f) const
   f->dump_int("metadata_pool", metadata_pool);
   f->dump_bool("enabled", enabled);
   f->dump_string("fs_name", fs_name);
+
+  f->open_array_section("live_queries");
+  for (QueryMap::const_iterator i = live_queries.begin();
+       i != live_queries.end(); ++i) {
+    i->second.dump(f);
+
+  }
+  f->close_section();
 }
 
 void MDSMap::generate_test_instances(list<MDSMap*>& ls)
