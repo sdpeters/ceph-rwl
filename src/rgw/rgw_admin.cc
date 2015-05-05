@@ -2823,7 +2823,7 @@ next:
       if (ret < 0)
         return -ret;
     } else if (!replica_log_type_str.empty()) {
-      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + "." + replica_log_type_str;
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
       int ret = logger.get_bounds(shard_id, rlkey, bounds);
       if (ret < 0) {
@@ -2877,7 +2877,7 @@ next:
       if (ret < 0)
         return -ret;
     } else if (!replica_log_type_str.empty()) {
-      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + "." + replica_log_type_str;
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
       int ret = logger.list_keys(shard_id, marker, keys, &is_truncated);
       if (ret < 0) {
@@ -2943,7 +2943,7 @@ next:
         cerr << "ERROR: daemon-id must be specified for delete operation" << std::endl;
         return EINVAL;
       }
-      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + "." + replica_log_type_str;
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
       int ret = logger.delete_bound(shard_id, rlkey, daemon_id, false);
       if (ret < 0) {
@@ -3015,7 +3015,7 @@ next:
         return -ret;
       }
     } else if (!replica_log_type_str.empty()) {
-      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + replica_log_type_str;
+      string s = string(GENERIC_REPLICA_LOG_OBJ_PREFIX) + "." + replica_log_type_str;
       RGWReplicaObjectLogger logger(store, pool_name, s.c_str());
       int ret = logger.update_bound(shard_id, rlkey, daemon_id, marker, time, &entries);
       if (ret < 0) {
