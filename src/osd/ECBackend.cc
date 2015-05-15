@@ -1658,10 +1658,8 @@ struct CallClientContexts :
             ++j) {
           bl.append(res.returned.front().get<2>()[j->get<0>()]);
         }
-        i->second.first->substr_of(
-  	  bl,
-  	  i->first.get<0>() % ec->sinfo.get_chunk_size(),
-  	  MIN(i->first.get<1>(), bl.length() - (i->first.get<0>() % ec->sinfo.get_chunk_size())));
+        assert(bl.length() == i->first.get<1>());
+        i->second.first->swap(bl);
       } else {
         pair<uint64_t, uint64_t> adjusted =
   	ec->sinfo.offset_len_to_stripe_bounds(make_pair(i->first.get<0>(), i->first.get<1>()));
@@ -1762,13 +1760,14 @@ void ECBackend::objects_read_async(
       uint64_t len = i->first.get<1>();
       bool partial = true;
       do {
-        uint64_t chunk_offset = offset / sinfo.get_stripe_width() * sinfo.get_chunk_size();
+        uint64_t chunk_offset = offset / sinfo.get_stripe_width() * sinfo.get_chunk_size() +
+                                offset % sinfo.get_chunk_size();
         uint64_t shard = offset % sinfo.get_stripe_width() / sinfo.get_chunk_size();
         shard_id_t shard_map = chunk_mapping.size() > shard ? (shard_id_t)chunk_mapping[shard] : (shard_id_t)shard;
         uint64_t r_len = MIN(len, sinfo.get_chunk_size() - offset % sinfo.get_chunk_size());
         if (health_shards.count(shard_map)) { // shard is a health shard
           dout(20) << __func__ << " shard " << health_shards[shard_map] << " offset " << chunk_offset << " r_len " << r_len << dendl;
-          pg_need.push_back(boost::make_tuple(health_shards[shard_map], chunk_offset, sinfo.get_chunk_size()));
+          pg_need.push_back(boost::make_tuple(health_shards[shard_map], chunk_offset, r_len));
           len -= r_len;
           offset = offset + r_len;
         } else { // return back to normal async read
