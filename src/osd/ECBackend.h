@@ -262,21 +262,25 @@ public:
     list<
       boost::tuple<
 	uint64_t, uint64_t, map<pg_shard_t, bufferlist> > > returned;
+    list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > need;
+    list<bool> partial_read;
     read_result_t() : r(0) {}
   };
   struct read_request_t {
     const list<boost::tuple<uint64_t, uint64_t, uint32_t> > to_read;
-    const set<pg_shard_t> need;
+    const list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > need;
     const bool want_attrs;
     GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb;
+    const list<bool> partial_read;
     read_request_t(
       const hobject_t &hoid,
       const list<boost::tuple<uint64_t, uint64_t, uint32_t> > &to_read,
-      const set<pg_shard_t> &need,
+      const list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > &need,
       bool want_attrs,
-      GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb)
+      GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb,
+      const list<bool> r)
       : to_read(to_read), need(need), want_attrs(want_attrs),
-	cb(cb) {}
+	cb(cb), partial_read(r) {}
   };
   friend ostream &operator<<(ostream &lhs, const read_request_t &rhs);
 
@@ -455,6 +459,12 @@ public:
     bool for_recovery,         ///< [in] true if we may use non-acting replicas
     set<pg_shard_t> *to_read   ///< [out] shards to read
     ); ///< @return error code, 0 on success
+
+  void get_no_missing_read_shards(
+    const hobject_t &hoid,
+    set<int>& have,
+    map<shard_id_t, pg_shard_t>& shards
+  );
 
   int objects_get_attrs(
     const hobject_t &hoid,
