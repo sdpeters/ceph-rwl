@@ -56,25 +56,15 @@ int DataScan::main(const std::vector<const char*> &args)
   dout(4) << "connecting to RADOS..." << dendl;
   rados.connect();
 
-  {
-    int const metadata_pool_id = mdsmap->get_metadata_pool();
-    dout(4) << "resolving metadata pool " << metadata_pool_id << dendl;
-    std::string metadata_pool_name;
-    r = rados.pool_reverse_lookup(metadata_pool_id, &metadata_pool_name);
-    if (r < 0) {
-      derr << "Pool " << metadata_pool_id
-        << " identified in MDS map not found in RADOS!" << dendl;
-      return r;
-    }
-    dout(4) << "found metadata pool '" << metadata_pool_name << "'" << dendl;
-    r = rados.ioctx_create(metadata_pool_name.c_str(), metadata_io);
-    if (r != 0) {
-      return r;
-    }
+  r = driver->init(rados, mdsmap);
+  if (r < 0) {
+    return r;
   }
 
   std::string const &command = args[0];
-  if (command == "scan_inodes" || command == "scan_extents") {
+  if (command == "scan_inodes"
+     || command == "scan_extents"
+     || command == "dump_files") {
     if (args.size() < 2) {
       usage();
       return -EINVAL;
@@ -122,19 +112,22 @@ int DataScan::main(const std::vector<const char*> &args)
       return recover();
     } else if (command == "scan_extents") {
       return recover_extents();
+    } else if (command == "dump_files") {
+      return recover();
+    } else {
+      assert(0);
     }
 
   } else if (command == "init") {
-    return init_metadata();
+    return driver->init_metadata(mdsmap->get_first_data_pool());
   } else {
     std::cerr << "Unknown command '" << command << "'" << std::endl;
     return -EINVAL;
   }
-
-  return recover();
 }
 
-int DataScan::inject_unlinked_inode(inodeno_t inono, int mode)
+int MetadataDriver::inject_unlinked_inode(
+    inodeno_t inono, int mode, int64_t data_pool_id)
 {
   // Compose
   object_t oid = InodeStore::get_object_name(inono, frag_t(), ".inode");
@@ -157,7 +150,7 @@ int DataScan::inject_unlinked_inode(inodeno_t inono, int mode)
   // Force layout to default: should we let users override this so that
   // they don't have to mount the filesystem to correct it?
   inode.inode.layout = g_default_file_layout;
-  inode.inode.layout.fl_pg_pool = mdsmap->get_first_data_pool();
+  inode.inode.layout.fl_pg_pool = data_pool_id;
 
   // Serialize
   bufferlist inode_bl;
@@ -174,7 +167,7 @@ int DataScan::inject_unlinked_inode(inodeno_t inono, int mode)
   return r;
 }
 
-int DataScan::root_exists(inodeno_t ino, bool *result)
+int MetadataDriver::root_exists(inodeno_t ino, bool *result)
 {
   object_t oid = InodeStore::get_object_name(ino, frag_t(), ".inode");
   uint64_t size;
@@ -191,14 +184,14 @@ int DataScan::root_exists(inodeno_t ino, bool *result)
   return 0;
 }
 
-int DataScan::init_metadata()
+int MetadataDriver::init_metadata(int64_t data_pool_id)
 {
   int r = 0;
-  r = inject_unlinked_inode(MDS_INO_ROOT, S_IFDIR|0755);
+  r = inject_unlinked_inode(MDS_INO_ROOT, S_IFDIR|0755, data_pool_id);
   if (r != 0) {
     return r;
   }
-  r = inject_unlinked_inode(MDS_INO_MDSDIR(0), S_IFDIR);
+  r = inject_unlinked_inode(MDS_INO_MDSDIR(0), S_IFDIR, data_pool_id);
   if (r != 0) {
     return r;
   }
@@ -206,7 +199,7 @@ int DataScan::init_metadata()
   return 0;
 }
 
-int DataScan::check_roots(bool *result)
+int MetadataDriver::check_roots(bool *result)
 {
   int r;
   r = root_exists(MDS_INO_ROOT, result);
@@ -362,7 +355,7 @@ int DataScan::recover()
   librados::NObjectIterator i_end = data_io.nobjects_end();
 
   bool roots_present;
-  int r = check_roots(&roots_present);
+  int r = driver->check_roots(&roots_present);
   if (r != 0) {
     derr << "Unexpected error checking roots: '"
       << cpp_strerror(r) << "'" << dendl;
@@ -497,13 +490,15 @@ int DataScan::recover()
     if (have_backtrace) {
       // TODO: inspect backtrace and fall back to lost+found
       // for some or all stray cases.
-      r = inject_with_backtrace(backtrace, file_size, file_mtime, chunk_size);
+      r = driver->inject_with_backtrace(
+          backtrace, file_size, file_mtime, chunk_size, data_pool_id);
       if (r < 0) {
         dout(4) << "Error injecting 0x" << std::hex << backtrace.ino
           << std::dec << " with backtrace: " << cpp_strerror(r) << dendl;
       }
     } else {
-      r = inject_lost_and_found(obj_name_ino, file_size, file_mtime, chunk_size);
+      r = driver->inject_lost_and_found(
+          obj_name_ino, file_size, file_mtime, chunk_size, data_pool_id);
       if (r < 0) {
         dout(4) << "Error injecting 0x" << std::hex << obj_name_ino
           << std::dec << " into lost+found: " << cpp_strerror(r) << dendl;
@@ -514,7 +509,7 @@ int DataScan::recover()
   return 0;
 }
 
-int DataScan::read_fnode(inodeno_t ino, frag_t frag, fnode_t *fnode)
+int MetadataDriver::read_fnode(inodeno_t ino, frag_t frag, fnode_t *fnode)
 {
   assert(fnode != NULL);
 
@@ -536,7 +531,7 @@ int DataScan::read_fnode(inodeno_t ino, frag_t frag, fnode_t *fnode)
   return 0;
 }
 
-int DataScan::read_dentry(inodeno_t parent_ino, frag_t frag,
+int MetadataDriver::read_dentry(inodeno_t parent_ino, frag_t frag,
                 const std::string &dname, InodeStore *inode)
 {
   assert(inode != NULL);
@@ -565,8 +560,9 @@ int DataScan::read_dentry(inodeno_t parent_ino, frag_t frag,
   return 0;
 }
 
-int DataScan::inject_lost_and_found(
-    inodeno_t ino, uint64_t file_size, time_t file_mtime, uint32_t chunk_size)
+int MetadataDriver::inject_lost_and_found(
+    inodeno_t ino, uint64_t file_size, time_t file_mtime, uint32_t chunk_size,
+    int64_t data_pool_id)
 {
   // Create lost+found if doesn't exist
   bool created = false;
@@ -635,9 +631,10 @@ int DataScan::inject_lost_and_found(
   return inject_linkage(lf_ino.inode.ino, dname, recovered_ino);
 }
 
-int DataScan::inject_with_backtrace(
+int MetadataDriver::inject_with_backtrace(
     const inode_backtrace_t &backtrace, uint64_t file_size, time_t file_mtime,
-    uint32_t chunk_size)
+    uint32_t chunk_size, int64_t data_pool_id)
+    
 {
   // My immediate ancestry should be correct, so if we can find that
   // directory's dirfrag then go inject it there
@@ -822,7 +819,7 @@ int DataScan::inject_with_backtrace(
   return 0;
 }
 
-int DataScan::find_or_create_dirfrag(inodeno_t ino, bool *created)
+int MetadataDriver::find_or_create_dirfrag(inodeno_t ino, bool *created)
 {
   assert(created != NULL);
 
@@ -860,7 +857,7 @@ int DataScan::find_or_create_dirfrag(inodeno_t ino, bool *created)
   return 0;
 }
 
-int DataScan::inject_linkage(
+int MetadataDriver::inject_linkage(
     inodeno_t dir_ino, const std::string &dname, const InodeStore &inode)
 {
   // We have no information about snapshots, so everything goes
@@ -894,3 +891,21 @@ int DataScan::inject_linkage(
     return 0;
   }
 }
+
+
+int MetadataDriver::init(librados::Rados &rados, const MDSMap *mdsmap)
+{
+  int const metadata_pool_id = mdsmap->get_metadata_pool();
+
+  dout(4) << "resolving metadata pool " << metadata_pool_id << dendl;
+  std::string metadata_pool_name;
+  int r = rados.pool_reverse_lookup(metadata_pool_id, &metadata_pool_name);
+  if (r < 0) {
+    derr << "Pool " << metadata_pool_id
+      << " identified in MDS map not found in RADOS!" << dendl;
+    return r;
+  }
+  dout(4) << "found metadata pool '" << metadata_pool_name << "'" << dendl;
+  return rados.ioctx_create(metadata_pool_name.c_str(), metadata_io);
+}
+
