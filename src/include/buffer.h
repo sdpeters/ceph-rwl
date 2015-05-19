@@ -582,7 +582,7 @@ inline std::ostream& operator<<(std::ostream& out, const buffer::list& bl) {
   return out;
 }
 
-inline std::ostream& operator<<(std::ostream& out, buffer::error& e)
+inline std::ostream& operator<<(std::ostream& out, const buffer::error& e)
 {
   return out << e.what();
 }
