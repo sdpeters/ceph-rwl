@@ -5741,13 +5741,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 
       if (!ctx->snapset_obc)
 	ctx->snapset_obc = get_object_context(snapoid, true);
-      bool got = false;
-      if (ctx->lock_to_release == OpContext::W_LOCK) {
-	got = ctx->snapset_obc->get_write_greedy(ctx->op);
-      } else {
-	assert(ctx->lock_to_release == OpContext::E_LOCK);
-	got = ctx->snapset_obc->get_excl(ctx->op);
-      }
+      bool got = ctx->snapset_obc->get_write_greedy(ctx->op);
       assert(got);
       dout(20) << " got greedy write on snapset_obc " << *ctx->snapset_obc << dendl;
       ctx->release_snapset_obc = true;
