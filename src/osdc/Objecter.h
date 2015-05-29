@@ -1324,6 +1324,9 @@ public:
     // ...total m workers.  Or m=0 if not using multiple workers.
     uint32_t worker_m;
 
+    uint32_t object_hash_low;
+    uint32_t object_hash_high;
+
     // Lowest PG we will touch (inclusive)
     uint32_t pg_min;
     // Upper limit of PGs we will touch (exclusive)
@@ -2491,9 +2494,11 @@ public:
   void list_objects(ListContext *p, Context *onfinish);
   uint32_t list_objects_seek(ListContext *p, uint32_t pos);
 
+private:
+  void _nlist_recalc_limits(NListContext *list_context);
+
   // -------------------------
   // pool ops
-private:
   void pool_op_submit(PoolOp *op);
   void _pool_op_submit(PoolOp *op);
   void _finish_pool_op(PoolOp *op);
