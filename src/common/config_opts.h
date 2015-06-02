@@ -467,6 +467,9 @@ OPTION(mds_max_purge_ops, OPT_U32, 8192)
 // Maximum number of concurrent RADOS ops to issue in purging, scaled by PG count
 OPTION(mds_max_purge_ops_per_pg, OPT_FLOAT, 0.5)
 
+// Maximum number of damaged frags/dentries before whole MDS rank goes damaged
+OPTION(mds_damage_table_max_entries, OPT_INT, 10000)
+
 // If true, compact leveldb store on mount
 OPTION(osd_compact_leveldb_on_mount, OPT_BOOL, false)
 
