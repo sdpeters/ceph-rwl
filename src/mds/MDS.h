@@ -37,6 +37,7 @@
 
 #include "SessionMap.h"
 #include "Beacon.h"
+#include "DamageTable.h"
 
 
 #define CEPH_MDS_PROTOCOL    25 /* cluster internal */
@@ -465,6 +466,8 @@ private:
     Mutex::Locker l(mds_lock);
     damaged();
   }
+
+  DamageTable damage_table;
 
   /**
    * Terminate this daemon process.

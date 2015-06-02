@@ -112,7 +112,8 @@ MDS::MDS(const std::string &n, Messenger *m, MonClient *mc) :
   osd_epoch_barrier(0),
   sessionmap(this),
   progress_thread(this),
-  asok_hook(NULL)
+  asok_hook(NULL),
+  damage_table(&whoami)
 {
 
   hb = cct->get_heartbeat_map()->add_worker("MDS");
