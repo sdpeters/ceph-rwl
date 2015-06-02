@@ -1631,6 +1631,7 @@ int NewStore::collection_list_partial(
   } else {
     string k;
     get_object_key(start, &k);
+    derr << "start is " << start << " ... k is " << k << dendl;
     if (start.hobj.is_temp()) {
       temp = true;
       assert(k >= temp_start_key && k < temp_end_key);
