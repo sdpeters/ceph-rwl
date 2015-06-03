@@ -635,6 +635,7 @@ struct session_info_t {
   interval_set<inodeno_t> prealloc_inos;   // preallocated, ready to use.
   interval_set<inodeno_t> used_inos;       // journaling use
   std::map<std::string, std::string> client_metadata;
+  std::set<ceph_tid_t> completed_flushes;
 
   client_t get_client() const { return client_t(inst.name.num()); }
 
@@ -642,6 +643,7 @@ struct session_info_t {
     prealloc_inos.clear();
     used_inos.clear();
     completed_requests.clear();
+    completed_flushes.clear();
   }
 
   void encode(bufferlist& bl) const;
