@@ -267,21 +267,31 @@ int parse_oid(const std::string &oid, uint64_t *inode_no, uint64_t *obj_id)
   return 0;
 }
 
+// Pending sharded pgls & add in progress mechanism for that
+#undef SHARDEDPGLS
+
 int DataScan::recover_extents()
 {
+#ifdef SHARDED_PGLS
   float progress = 0.0;
   librados::NObjectIterator i = data_io.nobjects_begin(n, m);
+#else
+  librados::NObjectIterator i = data_io.nobjects_begin();
+#endif
+
   librados::NObjectIterator i_end = data_io.nobjects_end();
   int r = 0;
 
   for (; i != i_end; ++i) {
     const std::string oid = i->get_oid();
+#ifdef SHARDED_PGLS
     if (i.get_progress() != progress) {
       if (int(i.get_progress() * 100) / 5 != int(progress * 100) / 5) {
         std::cerr << percentify(i.get_progress()) << "%" << std::endl;
       }
       progress = i.get_progress();
     }
+#endif
 
     // Read size
     uint64_t size;
@@ -350,8 +360,12 @@ int DataScan::recover_extents()
 
 int DataScan::recover()
 {
+#ifdef SHARDED_PGLS
   float progress = 0.0;
   librados::NObjectIterator i = data_io.nobjects_begin(n, m);
+#else
+  librados::NObjectIterator i = data_io.nobjects_begin();
+#endif
   librados::NObjectIterator i_end = data_io.nobjects_end();
 
   bool roots_present;
@@ -370,12 +384,14 @@ int DataScan::recover()
 
   for (; i != i_end; ++i) {
     const std::string oid = i->get_oid();
+#ifdef SHARDED_PGLS
     if (i.get_progress() != progress) {
       if (int(i.get_progress() * 100) / 5 != int(progress * 100) / 5) {
         std::cerr << percentify(i.get_progress()) << "%" << std::endl;
       }
       progress = i.get_progress();
     }
+#endif
 
     uint64_t obj_name_ino = 0;
     uint64_t obj_name_offset = 0;
