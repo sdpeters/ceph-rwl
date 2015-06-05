@@ -243,6 +243,7 @@ enum {
   CEPH_OSD_RMW_FLAG_CACHE       = (1 << 6),
   CEPH_OSD_RMW_FLAG_FORCE_PROMOTE   = (1 << 7),
   CEPH_OSD_RMW_FLAG_SKIP_PROMOTE    = (1 << 8),
+  CEPH_OSD_RMW_FLAG_READ_ORDERED    = (1 << 9),
 };
 
 
@@ -3008,7 +3009,8 @@ public:
   int unstable_writes, readers, writers_waiting, readers_waiting;
 
   /// in-progress copyfrom ops for this object
-  bool blocked;
+  bool read_blocked;
+  bool write_blocked;
 
   // set if writes for this object are blocked on another objects recovery
   ObjectContextRef blocked_by;      // object blocking our writes
@@ -3259,7 +3261,7 @@ public:
       destructor_callback(0),
       lock("ReplicatedPG::ObjectContext::lock"),
       unstable_writes(0), readers(0), writers_waiting(0), readers_waiting(0),
-      blocked(false), requeue_scrub_on_unblock(false) {}
+      read_blocked(false), write_blocked(false), requeue_scrub_on_unblock(false) {}
 
   ~ObjectContext() {
     assert(rwstate.empty());
@@ -3267,16 +3269,27 @@ public:
       destructor_callback->complete(0);
   }
 
-  void start_block() {
-    assert(!blocked);
-    blocked = true;
+  void start_read_block() {
+    assert(!read_blocked && !write_blocked);
+    read_blocked = true;
+  }
+  void start_write_block() {
+    assert(!read_blocked && !write_blocked);
+    write_blocked = true;
   }
   void stop_block() {
-    assert(blocked);
-    blocked = false;
+    assert(read_blocked || write_blocked);
+    read_blocked = false;
+    write_blocked = false;
   }
   bool is_blocked() const {
-    return blocked;
+    return read_blocked || write_blocked;
+  }
+  bool is_read_blocked() const {
+    return read_blocked;
+  }
+  bool is_write_blocked() const {
+    return write_blocked;
   }
 
   // do simple synchronous mutual exclusion, for now.  now waitqueues or anything fancy.
