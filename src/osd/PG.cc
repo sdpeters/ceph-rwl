@@ -5797,7 +5797,7 @@ PG::RecoveryState::Backfilling::react(const RemoteReservationRejected &)
     ConnectionRef con = pg->osd->get_con_osd_cluster(
       it->osd, pg->get_osdmap()->get_epoch());
     if (con) {
-      if (con->has_feature(CEPH_FEATURE_BACKFILL_RESERVATION)) {
+      if (pg->get_osdmap()->get_xinfo(it->osd).features & CEPH_FEATURE_BACKFILL_RESERVATION) {
         pg->osd->send_message_osd_cluster(
           new MBackfillReserve(
 	    MBackfillReserve::REJECT,
@@ -5852,7 +5852,7 @@ PG::RecoveryState::WaitRemoteBackfillReserved::react(const RemoteBackfillReserve
     ConnectionRef con = pg->osd->get_con_osd_cluster(
       backfill_osd_it->osd, pg->get_osdmap()->get_epoch());
     if (con) {
-      if (con->has_feature(CEPH_FEATURE_BACKFILL_RESERVATION)) {
+      if (pg->get_osdmap()->get_xinfo(backfill_osd_it->osd).features & CEPH_FEATURE_BACKFILL_RESERVATION) {
         pg->osd->send_message_osd_cluster(
           new MBackfillReserve(
 	  MBackfillReserve::REQUEST,
@@ -5896,7 +5896,7 @@ PG::RecoveryState::WaitRemoteBackfillReserved::react(const RemoteReservationReje
     ConnectionRef con = pg->osd->get_con_osd_cluster(
       it->osd, pg->get_osdmap()->get_epoch());
     if (con) {
-      if (con->has_feature(CEPH_FEATURE_BACKFILL_RESERVATION)) {
+      if (pg->get_osdmap()->get_xinfo(it->osd).features & CEPH_FEATURE_BACKFILL_RESERVATION) {
         pg->osd->send_message_osd_cluster(
           new MBackfillReserve(
 	  MBackfillReserve::REJECT,
@@ -6189,7 +6189,7 @@ PG::RecoveryState::WaitRemoteRecoveryReserved::react(const RemoteRecoveryReserve
     ConnectionRef con = pg->osd->get_con_osd_cluster(
       remote_recovery_reservation_it->osd, pg->get_osdmap()->get_epoch());
     if (con) {
-      if (con->has_feature(CEPH_FEATURE_RECOVERY_RESERVATION)) {
+      if (pg->get_osdmap()->get_xinfo(remote_recovery_reservation_it->osd).features & CEPH_FEATURE_RECOVERY_RESERVATION) {
 	pg->osd->send_message_osd_cluster(
           new MRecoveryReserve(
 	    MRecoveryReserve::REQUEST,
@@ -6242,7 +6242,7 @@ void PG::RecoveryState::Recovering::release_reservations()
     ConnectionRef con = pg->osd->get_con_osd_cluster(
       i->osd, pg->get_osdmap()->get_epoch());
     if (con) {
-      if (con->has_feature(CEPH_FEATURE_RECOVERY_RESERVATION)) {
+      if (pg->get_osdmap()->get_xinfo(i->osd).features & CEPH_FEATURE_RECOVERY_RESERVATION) {
 	pg->osd->send_message_osd_cluster(
           new MRecoveryReserve(
 	    MRecoveryReserve::RELEASE,
