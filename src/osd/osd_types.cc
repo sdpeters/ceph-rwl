@@ -3761,7 +3761,7 @@ void pg_create_t::generate_test_instances(list<pg_create_t*>& o)
 
 void pg_hit_set_info_t::encode(bufferlist& bl) const
 {
-  ENCODE_START(1, 1, bl);
+  ENCODE_START(2, 2, bl);
   ::encode(begin, bl);
   ::encode(end, bl);
   ::encode(version, bl);
@@ -3770,11 +3770,14 @@ void pg_hit_set_info_t::encode(bufferlist& bl) const
 
 void pg_hit_set_info_t::decode(bufferlist::iterator& p)
 {
-  DECODE_START(1, p);
+  DECODE_START_LEGACY_COMPAT_LEN(2, 1, 1, p);
   ::decode(begin, p);
   ::decode(end, p);
   ::decode(version, p);
   DECODE_FINISH(p);
+
+  // handle localtime to GMT upgrade
+  using_gmt = (struct_v < 2);
 }
 
 void pg_hit_set_info_t::dump(Formatter *f) const

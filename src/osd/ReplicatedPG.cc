@@ -1139,7 +1139,7 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	       p != info.hit_set.history.end();
 	       ++p) {
 	    if (stamp >= p->begin && stamp <= p->end) {
-	      oid = get_hit_set_archive_object(p->begin, p->end);
+	      oid = get_hit_set_archive_object(p->begin, p->end, p->using_gmt);
 	      break;
 	    }
 	  }
@@ -10156,10 +10156,17 @@ hobject_t ReplicatedPG::get_hit_set_current_object(utime_t stamp)
   return hoid;
 }
 
-hobject_t ReplicatedPG::get_hit_set_archive_object(utime_t start, utime_t end)
+hobject_t ReplicatedPG::get_hit_set_archive_object(utime_t start, utime_t end, bool using_gmt)
 {
   ostringstream ss;
-  ss << "hit_set_" << info.pgid.pgid << "_archive_" << start << "_" << end;
+  ss << "hit_set_" << info.pgid.pgid << "_archive_";
+  if (using_gmt) {
+    start.gmtime(ss) << "_";
+    end.gmtime(ss);
+  } else {
+    start.localtime(ss) << "_";
+    end.localtime(ss);
+  }
   hobject_t hoid(sobject_t(ss.str(), CEPH_NOSNAP), "",
 		 info.pgid.ps(), info.pgid.pool(),
 		 cct->_conf->osd_hit_set_namespace);
@@ -10296,7 +10303,7 @@ void ReplicatedPG::hit_set_persist()
   for (list<pg_hit_set_info_t>::iterator p = info.hit_set.history.begin();
        p != info.hit_set.history.end();
        ++p) {
-    hobject_t aoid = get_hit_set_archive_object(p->begin, p->end);
+    hobject_t aoid = get_hit_set_archive_object(p->begin, p->end, p->using_gmt);
 
     // Once we hit a degraded object just skip further trim
     if (is_degraded_or_backfilling_object(aoid))
@@ -10462,6 +10469,11 @@ void ReplicatedPG::hit_set_trim(RepGather *repop, unsigned max)
   for (unsigned num = updated_hit_set_hist.history.size(); num > max; --num) {
     list<pg_hit_set_info_t>::iterator p = updated_hit_set_hist.history.begin();
     assert(p != updated_hit_set_hist.history.end());
+    if (!p->using_gmt) {
+      // do not delete hit_set using the localtime in case any peer is in a
+      // different timezone
+      continue;
+    }
     hobject_t oid = get_hit_set_archive_object(p->begin, p->end);
 
     assert(!is_degraded_or_backfilling_object(oid));
@@ -10747,7 +10759,7 @@ void ReplicatedPG::agent_load_hit_sets()
 	  continue;
 	}
 
-	hobject_t oid = get_hit_set_archive_object(p->begin, p->end);
+	hobject_t oid = get_hit_set_archive_object(p->begin, p->end, p->using_gmt);
 	if (is_unreadable_object(oid)) {
 	  dout(10) << __func__ << " unreadable " << oid << ", waiting" << dendl;
 	  break;
