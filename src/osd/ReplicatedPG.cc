@@ -3984,6 +3984,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
         if (ssc->snapset.head_exists)
           clonecount++;
         resp.clones.reserve(clonecount);
+	int err = 0;
         for (vector<snapid_t>::const_iterator clone_iter = ssc->snapset.clones.begin();
 	     clone_iter != ssc->snapset.clones.end(); ++clone_iter) {
           clone_info ci;
@@ -4006,7 +4007,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           if (coi == ssc->snapset.clone_overlap.end()) {
             osd->clog->error() << "osd." << osd->whoami << ": inconsistent clone_overlap found for oid "
 			      << soid << " clone " << *clone_iter;
-            result = -EINVAL;
+            err = -EINVAL;
             break;
           }
           const interval_set<uint64_t> &o = coi->second;
@@ -4021,13 +4022,17 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           if (si == ssc->snapset.clone_size.end()) {
             osd->clog->error() << "osd." << osd->whoami << ": inconsistent clone_size found for oid "
 			      << soid << " clone " << *clone_iter;
-            result = -EINVAL;
+            err = -EINVAL;
             break;
           }
           ci.size = si->second;
 
           resp.clones.push_back(ci);
         }
+	if (err < 0) {
+	  result = err;
+	  break;
+	}	  
         if (ssc->snapset.head_exists &&
 	    !ctx->obc->obs.oi.is_whiteout()) {
           assert(obs.exists);
