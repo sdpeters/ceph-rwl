@@ -931,18 +931,54 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	  if (filter && !pgls_filter(filter, candidate, filter_out))
 	    continue;
 
+          dout(20) << "pgnls item 0x" << std::hex
+            << candidate.get_hash() << std::dec << " "
+            << candidate.oid.name << dendl;
+
 	  librados::ListObjectImpl item;
 	  item.nspace = candidate.get_namespace();
 	  item.oid = candidate.oid.name;
 	  item.locator = candidate.get_key();
 	  response.entries.push_back(item);
 	}
+
 	if (next.is_max() &&
 	    missing_iter == pg_log.get_missing().missing.end() &&
 	    ls_iter == sentries.end()) {
 	  result = 1;
-	}
-	response.handle = next;
+
+          // Set response.handle to the hash pos of the start
+          // of the next PG
+          const pg_pool_t &p = pool.info;
+          uint32_t b = p.get_pg_num();
+          uint32_t bmask = p.get_pg_num_mask();
+
+
+          // Work out which PG follows this one in the bit-reversed hash
+          // order.  Complicated by the way we use ceph_stable_mod to
+          // assign hashes to PGs.
+          uint32_t inc = hobject_t::_reverse_nibbles((bmask + 1) >> 1);
+          uint32_t next_pg = info.pgid.pgid.ps();
+          while (next_pg == info.pgid.pgid.ps() || next_pg >= b) {
+            next_pg = hobject_t::_reverse_nibbles(
+              hobject_t::_reverse_nibbles(next_pg) + inc);
+          }
+
+          dout(10) << "pgls next_pg=" << next_pg
+            << " (pg=" << info.pgid.pgid.ps() << " b=" << b
+            << " bmask=" << bmask << ")" << dendl;
+
+          uint32_t next_pg_hash = hobject_t::_reverse_nibbles(next_pg);
+          if (next_pg_hash == 0) {
+            // If we would wrap to PG 0, set to the end of the hash range
+            next_pg_hash = 0xffffffff;
+          }
+          response.handle.set_hash(next_pg_hash);
+	} else {
+          response.handle.set_hash(next.get_hash());
+        }
+        dout(10) << "pgls handle=0x" << std::hex << response.handle.get_hash()
+                 << std::dec << dendl;
 	::encode(response, osd_op.outdata);
 	if (filter)
 	  ::encode(filter_out, osd_op.outdata);
