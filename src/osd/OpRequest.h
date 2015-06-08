@@ -61,6 +61,7 @@ struct OpRequest : public TrackedOp {
   bool may_write();
   bool may_cache();
   bool may_read_ordered();
+  bool may_ignore_cache();
   bool includes_pg_op();
   bool need_read_cap();
   bool need_write_cap();
@@ -77,6 +78,7 @@ struct OpRequest : public TrackedOp {
   void set_promote();
   void set_skip_promote();
   void set_read_ordered();
+  void set_ignore_cache();
 
   void _dump(utime_t now, Formatter *f) const;
 

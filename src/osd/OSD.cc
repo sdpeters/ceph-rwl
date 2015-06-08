@@ -8613,6 +8613,8 @@ int OSD::init_op_flags(OpRequestRef& op)
       op->set_cache();
     if (m->get_flags() & CEPH_OSD_FLAG_RWORDERED)
       op->set_read_ordered();
+    if (m->get_flags() & CEPH_OSD_FLAG_IGNORE_CACHE)
+      op->set_ignore_cache();
 
     switch (iter->op.op) {
     case CEPH_OSD_OP_CALL:

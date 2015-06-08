@@ -490,6 +490,7 @@ bool ReplicatedPG::maybe_await_blocked_snapset(
     op->need_promote() ||
     op->may_write() ||
     op->may_cache() ||
+    op->may_ignore_cache() ||
     op->may_read_ordered();
 
   ObjectContextRef obc;
@@ -6197,7 +6198,8 @@ void ReplicatedPG::start_copy(CopyCallback *cb, ObjectContextRef obc,
 			   dest_obj_fadvise_flags));
   copy_ops[dest] = cop;
   if (!op || (op->may_read() && !op->may_write() &&
-      !op->may_cache() && !op->may_read_ordered()))
+      !op->may_cache() && !op->may_read_ordered() &&
+      !op->may_ignore_cache() && !op->need_promote()))
     obc->start_read_block();
   else
     obc->start_write_block();
