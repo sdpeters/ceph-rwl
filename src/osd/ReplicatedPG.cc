@@ -2108,6 +2108,7 @@ void ReplicatedPG::finish_proxy_read(hobject_t oid, ceph_tid_t tid, int r)
   osd->logger->inc(l_osd_tier_proxy_read);
 
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
+  m->ops = prdop->ops;
   OpContext *ctx = new OpContext(op, m->get_reqid(), prdop->ops, this);
   ctx->reply = new MOSDOpReply(m, 0, get_osdmap()->get_epoch(), 0, false);
   ctx->user_at_version = prdop->user_version;
