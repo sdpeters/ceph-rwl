@@ -1010,8 +1010,8 @@ int do_check_object_locator(const string& bucket_name, bool fix, bool remove_bad
       rgw_obj obj(bucket, key);
 
       if (key.name[0] == '_') {
-        ret = check_obj_locator_underscore(bucket_info, obj, key, fix, remove_bad, f);
-        /* ignore return code, move to the next one */
+        /* ignore return code (cast to void to silence coverity warning), move to the next one */
+        (void) check_obj_locator_underscore(bucket_info, obj, key, fix, remove_bad, f);
       }
     }
     f->flush(cout);
