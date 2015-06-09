@@ -1859,13 +1859,14 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
       return true;
     }
 
-    if (g_conf->osd_hack_promote_probability > 0 &&
-	(rand() % 1000) < g_conf->osd_hack_promote_probability * 1000.0) {
-      dout(10) << __func__ << " doing probabilistic promote" << dendl;
-      promote_object(obc, missing_oid, oloc, promote_op);
+    if (g_conf->osd_hack_promote_probability > 0) {
+      if ((rand() % 1000) < g_conf->osd_hack_promote_probability * 1000.0) {
+	dout(10) << __func__ << " doing probabilistic promote" << dendl;
+	promote_object(obc, missing_oid, oloc, promote_op);
+      } else {
+	dout(10) << __func__ << " NOT doing probabilistic promote" << dendl;
+      }
       return true;
-    } else {
-      dout(10) << __func__ << " NOT doing probabilistic promote" << dendl;
     }
 
     // Promote too?
