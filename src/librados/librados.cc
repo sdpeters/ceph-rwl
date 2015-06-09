@@ -3436,6 +3436,84 @@ extern "C" int rados_exec(rados_ioctx_t io, const char *o, const char *cls, cons
   return ret;
 }
 
+extern "C" rados_enumerate_cursor rados_enumerate_objects_begin(rados_ioctx_t io)
+{
+  librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+
+  return ctx->objecter->enumerate_objects_begin().get_hash();
+}
+
+extern "C" rados_enumerate_cursor rados_enumerate_objects_end(rados_ioctx_t io)
+{
+  librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+  return ctx->objecter->enumerate_objects_end().get_hash();
+}
+
+extern "C" int rados_enumerate_objects(rados_ioctx_t io,
+    const rados_enumerate_cursor start,
+    const rados_enumerate_cursor finish,
+    const size_t result_item_count,
+    rados_enumerate_item *result_items,
+    rados_enumerate_cursor *next)
+{
+  librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+
+  // Zero out items so that they will be safe to free later
+  //memset(result_items, 0, sizeof(rados_enumerate_item) * result_item_count);
+
+  std::list<librados::ListObjectImpl> result;
+  hobject_t start_hash;
+  hobject_t finish_hash;
+  hobject_t next_hash;
+  start_hash.set_hash(start);
+  finish_hash.set_hash(finish);
+
+  C_SaferCond cond;
+  ctx->objecter->enumerate_objects(
+      ctx->poolid,
+      ctx->oloc.nspace,
+      start_hash,
+      finish_hash,
+      result_item_count,
+      &result,
+      &next_hash,
+      &cond);
+
+  int r = cond.wait();
+  if (r < 0) {
+    *next = 0x0;
+    return r;
+  }
+
+  assert(result.size() <= result_item_count);  // Don't overflow!
+
+  int k = 0;
+  for (std::list<librados::ListObjectImpl>::iterator i = result.begin();
+       i != result.end(); ++i) {
+    rados_enumerate_item &item = result_items[k++];
+    do_out_buffer(i->oid, &item.oid, &item.oid_length);
+    do_out_buffer(i->nspace, &item.nspace, &item.nspace_length);
+    do_out_buffer(i->locator, &item.locator, &item.locator_length);
+  }
+
+  *next = next_hash.get_hash();
+
+  return result.size();
+}
+
+extern "C" void rados_enumerate_objects_free(
+    const size_t result_size,
+    rados_enumerate_item *results)
+{
+  assert(results);
+
+  for (unsigned int i = 0; i < result_size; ++i) {
+    rados_buffer_free(results[i].oid);
+    rados_buffer_free(results[i].locator);
+    rados_buffer_free(results[i].nspace);
+  }
+}
+
 /* list objects */
 
 extern "C" int rados_nobjects_list_open(rados_ioctx_t io, rados_list_ctx_t *listh)
@@ -4785,4 +4863,19 @@ std::ostream& librados::operator<<(std::ostream& out, const librados::ListObject
 {
   out << *(lop.impl);
   return out;
+}
+
+CEPH_RADOS_API void rados_enumerate_objects_split(
+    const rados_enumerate_cursor start,
+    const rados_enumerate_cursor finish,
+    const size_t n,
+    const size_t m,
+    rados_enumerate_cursor *split_start,
+    rados_enumerate_cursor *split_finish)
+{
+  *split_start = start + ((finish - start) / m) * n;
+  *split_finish = start + ((finish - start) / m ) * (n + 1);
+  if (n == m - 1) {
+    *split_finish = finish;
+  }
 }
