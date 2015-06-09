@@ -2274,6 +2274,7 @@ int KeyValueStore::collection_getattr(coll_t c, const char *name,
   if (r < 0) {
     dout(10) << __func__ << " could not get key" << string(name) << dendl;
     r = -EINVAL;
+    return r;
   }
 
   if (!out.empty()) {
