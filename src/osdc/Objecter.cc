@@ -4578,3 +4578,196 @@ void Objecter::set_epoch_barrier(epoch_t epoch)
   }
 }
 
+
+
+hobject_t Objecter::enumerate_objects_begin()
+{
+  hobject_t result;
+  result.set_hash(0x0);
+  return result;
+}
+
+hobject_t Objecter::enumerate_objects_end()
+{
+  hobject_t result;
+  result.set_hash(0xffffffff);
+  return result;
+}
+
+struct C_EnumerateReply : public Context {
+  bufferlist bl;
+
+  Objecter *objecter;
+  hobject_t *next;
+  std::list<librados::ListObjectImpl> *result;
+  const hobject_t end;
+  const int64_t pool_id;
+  Context *on_finish;
+
+  epoch_t epoch;
+  int budget;
+
+  C_EnumerateReply(Objecter *objecter_, hobject_t *next_,
+      std::list<librados::ListObjectImpl> *result_,
+      const hobject_t end_, const int64_t pool_id_, Context *on_finish_) :
+    objecter(objecter_), next(next_), result(result_),
+    end(end_), pool_id(pool_id_), on_finish(on_finish_),
+    epoch(0), budget(0)
+  {}
+
+  void finish(int r) {
+    objecter->_enumerate_reply(
+        bl, r, end, pool_id, budget, epoch, result, next, on_finish);
+  }
+};
+
+void Objecter::enumerate_objects(
+    int64_t pool_id,
+    const std::string &ns,
+    const hobject_t &start,
+    const hobject_t &end,
+    const uint32_t max,
+    std::list<librados::ListObjectImpl> *result, 
+    hobject_t *next,
+    Context *on_finish)
+{
+  assert(result);
+
+  if (start.get_hash() > end.get_hash()) {
+    lderr(cct) << __func__ << ": end hash too low" << dendl;
+    on_finish->complete(-EINVAL);
+    return;
+  }
+
+  if (max < 1) {
+    lderr(cct) << __func__ << ": result size may not be zero" << dendl;
+    on_finish->complete(-EINVAL);
+    return;
+  }
+
+  if (start.get_hash() == 0xffffffff) {
+    on_finish->complete(0);
+    return;
+  }
+
+  // `start` is in OSD (bit-reversed) order
+  rwlock.get_read();
+  assert(osdmap->get_epoch());
+  const pg_pool_t *p = osdmap->get_pg_pool(pool_id);
+  if (!p) {
+    lderr(cct) << __func__ << ": pool " << pool_id << " DNE in"
+                     "osd epoch " << osdmap->get_epoch() << dendl;
+    on_finish->complete(-ENOENT);
+  }
+
+  // Map `start` to a PG
+  int64_t pg_num = p->raw_hash_to_pg(hobject_t::_reverse_nibbles(start.get_hash()));
+
+  rwlock.unlock();
+
+  ldout(cct, 20) << __func__ << ": start=0x" << std::hex << start.get_hash()
+                 << std::dec << " pg_num=" << pg_num << dendl;
+
+  // Stash completion state
+  C_EnumerateReply *on_ack = new C_EnumerateReply(
+      this, next, result, end, pool_id, on_finish);
+
+  // Construct pgls operation
+
+  bufferlist filter; // FIXME pass in?
+
+  ObjectOperation op;
+  // OSD wants input hash in non-reversed order.
+  hobject_t osd_start = start;
+  //osd_start.set_hash(hobject_t::_reverse_nibbles(osd_start.get_hash()));
+  op.pg_nls(max, filter, osd_start, 0);
+
+  // Issue.  See you later in _enumerate_reply
+  object_locator_t oloc(pool_id, ns);
+  pg_read(pg_num, oloc, op,
+	  &on_ack->bl, 0, on_ack, &on_ack->epoch, &on_ack->budget);
+}
+
+void Objecter::_enumerate_reply(
+    bufferlist &bl,
+    int r,
+    const hobject_t &end,
+    const int64_t pool_id,
+    int budget,
+    epoch_t reply_epoch,
+    std::list<librados::ListObjectImpl> *result, 
+    hobject_t *next,
+    Context *on_finish)
+{
+  if (budget > 0) {
+    put_op_budget_bytes(budget);
+  }
+
+  if (r < 0) {
+    ldout(cct, 4) << __func__ << ": remote error " << r << dendl;
+    on_finish->complete(r);
+  }
+
+  assert(next != NULL);
+
+  // Decode the results
+  bufferlist::iterator iter = bl.begin();
+  pg_nls_response_t response;
+
+  // XXX extra_info doesn't seem used anywhere?
+  bufferlist extra_info;
+  ::decode(response, iter);
+  if (!iter.end()) {
+    ::decode(extra_info, iter);
+  }
+#if 0
+  list_context->extra_info.append(extra_info);
+#endif
+
+  // We don't use current_pg_epoch but log it anyway
+  ldout(cct, 20) << __func__ << ": reply_epoch " << reply_epoch << dendl;
+
+  ldout(cct, 20) << __func__ << ": response.entries.size "
+                 << response.entries.size() << ", response.entries "
+                 << response.entries << dendl;
+
+  for (std::list<librados::ListObjectImpl>::iterator i = response.entries.begin();
+       i != response.entries.end(); ++i) {
+    std::string nspace = i->get_nspace();
+    std::string oid = i->get_oid();
+    std::string loc = i->get_locator();
+
+    uint32_t hash_pos = get_object_hash_position(
+        pool_id, loc.empty() ? oid : loc,
+        nspace == LIBRADOS_ALL_NSPACES ? "" : nspace);
+
+    hash_pos = hobject_t::_reverse_nibbles(hash_pos);
+    if (hash_pos > end.get_hash()) {
+      ldout(cct, 20) << __func__ << ": truncating at 0x" << std::hex
+        << hash_pos << " vs end pos 0x" << end.get_hash() << std::dec << dendl;
+      response.entries.erase(i, response.entries.end());
+      break;
+    }
+  }
+
+  ldout(cct, 20) << __func__ << ": truncated to response.entries.size "
+                 << response.entries.size() << ", response.entries "
+                 << response.entries << dendl;
+
+  if (!response.entries.empty()) {
+    result->merge(response.entries);
+  }
+
+  ldout(cct, 20) << __func__ << ": response.handle=0x" << std::hex
+                 << response.handle.get_hash() << std::dec << dendl;
+  *next = response.handle;
+
+  // release the listing context's budget once all
+  // OPs (in the session) are finished
+#if 0
+  put_nlist_context_budget(list_context);
+#endif
+  on_finish->complete(r);
+  return;
+}
+
