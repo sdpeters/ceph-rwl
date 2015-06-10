@@ -3515,7 +3515,7 @@ void Monitor::dispatch(MonSession *s, Message *m, const bool src_is_mon)
   /* messages we, the Monitor class, need to deal with
    * but may be sent by clients. */
 
-  if (!s->is_capable("mon", MON_CAP_R)) {
+  if (s && !s->is_capable("mon", MON_CAP_R)) {
     dout(5) << __func__ << " " << m->get_source_inst()
             << " not enough caps for " << *m << " -- dropping"
             << dendl;
