@@ -47,7 +47,7 @@ class RecoveryDriver {
     /**
      * Create any missing roots (i.e. mydir, strays, root inode)
      */
-    virtual int init_metadata(
+    virtual int init_roots(
         int64_t data_pool_id) = 0;
 
     /**
@@ -63,6 +63,17 @@ class RecoveryDriver {
      */
     virtual int check_roots(bool *result) = 0;
 
+    /**
+     * Helper to compose dnames for links to lost+found
+     * inodes.
+     */
+    std::string lost_found_dname(inodeno_t ino)
+    {
+      char s[20];
+      snprintf(s, sizeof(s), "%llx", (unsigned long long)ino);
+      return std::string(s);
+    }
+
     virtual ~RecoveryDriver() {}
 };
 
@@ -72,6 +83,11 @@ class LocalFileDriver : public RecoveryDriver
     const std::string path;
     librados::IoCtx &data_io;
 
+  int inject_data(
+      const std::string &file_path,
+      uint64_t size,
+      uint32_t chunk_size,
+      inodeno_t ino);
   public:
 
     LocalFileDriver(const std::string &path_, librados::IoCtx &data_io_)
@@ -95,7 +111,7 @@ class LocalFileDriver : public RecoveryDriver
         uint32_t chunk_size,
         int64_t data_pool_id);
 
-    int init_metadata(int64_t data_pool_id);
+    int init_roots(int64_t data_pool_id);
 
     int check_roots(bool *result);
 };
@@ -155,7 +171,7 @@ class MetadataDriver : public RecoveryDriver
         uint32_t chunk_size,
         int64_t data_pool_id);
 
-    int init_metadata(int64_t data_pool_id);
+    int init_roots(int64_t data_pool_id);
 
     int check_roots(bool *result);
 };

@@ -137,7 +137,7 @@ int DataScan::main(const std::vector<const char*> &args)
   } else if (command == "scan_extents") {
     return recover_extents();
   } else if (command == "init") {
-    return driver->init_metadata(mdsmap->get_first_data_pool());
+    return driver->init_roots(mdsmap->get_first_data_pool());
   } else {
     std::cerr << "Unknown command '" << command << "'" << std::endl;
     return -EINVAL;
@@ -202,7 +202,7 @@ int MetadataDriver::root_exists(inodeno_t ino, bool *result)
   return 0;
 }
 
-int MetadataDriver::init_metadata(int64_t data_pool_id)
+int MetadataDriver::init_roots(int64_t data_pool_id)
 {
   int r = 0;
   r = inject_unlinked_inode(MDS_INO_ROOT, S_IFDIR|0755, data_pool_id);
@@ -656,10 +656,7 @@ int MetadataDriver::inject_lost_and_found(
   recovered_ino.inode.version = 1;
   recovered_ino.inode.backtrace_version = 1;
 
-
-  char s[20];
-  snprintf(s, sizeof(s), "%llx", (unsigned long long)ino);
-  const std::string dname = s;
+  const std::string dname = lost_found_dname(ino);
 
   // Write dentry into lost+found dirfrag
   return inject_linkage(lf_ino.inode.ino, dname, recovered_ino);
@@ -670,6 +667,11 @@ int MetadataDriver::inject_with_backtrace(
     uint32_t chunk_size, int64_t data_pool_id)
     
 {
+
+  // Handling fragmented directories:
+  //  * First see if we can load 
+  //
+
   // My immediate ancestry should be correct, so if we can find that
   // directory's dirfrag then go inject it there
 
@@ -948,6 +950,49 @@ int LocalFileDriver::init(librados::Rados &rados, const MDSMap *mdsmap)
   return 0;
 }
 
+int LocalFileDriver::inject_data(
+    const std::string &file_path,
+    uint64_t size,
+    uint32_t chunk_size,
+    inodeno_t ino)
+{
+  // Scrape the file contents out of the data pool and into the
+  // local filesystem
+  std::fstream f;
+  f.open(file_path.c_str(), std::fstream::out | std::fstream::binary);
+
+  for (uint64_t offset = 0; offset < size; offset += chunk_size) {
+    bufferlist bl;
+
+    char buf[32];
+    snprintf(buf, sizeof(buf),
+        "%llx.%08llx",
+        (unsigned long long)ino,
+        offset / chunk_size);
+    std::string oid(buf);
+
+    int r = data_io.read(oid, bl, chunk_size, 0);
+
+    std::cerr << "Read " << oid << " -> " << r << std::endl;
+
+    if (r <= 0 && r != -ENOENT) {
+      derr << "error reading data object '" << oid << "': "
+        << cpp_strerror(r) << dendl;
+      f.close();
+      return r;
+    } else if (r >=0) {
+      
+      f.seekp(offset);
+      std::cerr << "wrote " << bl.length() << " at " << offset << std::endl;
+      bl.write_stream(f);
+    }
+  }
+  f.close();
+
+  return 0;
+}
+
+
 int LocalFileDriver::inject_with_backtrace(
     const inode_backtrace_t &bt,
     uint64_t size,
@@ -969,29 +1014,13 @@ int LocalFileDriver::inject_with_backtrace(
     // Last entry is the filename itself
     bool is_file = (i + 1 == bt.ancestors.rend());
     if (is_file) {
-      // Scrape the file contents out of the data pool and into the
-      // local filesystem
-      std::fstream f;
-      f.open(path_builder.c_str(), std::fstream::out | std::fstream::binary);
-      for (uint64_t offset = 0; offset < size; offset += chunk_size) {
-        object_t oid = InodeStore::get_object_name(bt.ino, frag_t(), "");
-        bufferlist bl;
-        int r = data_io.read(oid.name, bl, chunk_size, 0);
-        if (r <= 0 && r != -ENOENT) {
-          derr << "error reading data object '" << oid.name << "': "
-          << cpp_strerror(r) << dendl;
-          return r;
-        } else if (r >=0) {
-          f.seekp(offset);
-          bl.write_stream(f);
-        }
-      }
-      f.close();
+      inject_data(path_builder, size, chunk_size, bt.ino);
     } else {
       int r = mkdir(path_builder.c_str(), 0755);
-      if (r != 0 && r != -EEXIST) {
+      if (r != 0 && r != -EPERM) {
         derr << "error creating directory: '" << path_builder << "': "
           << cpp_strerror(r) << dendl;
+        return r;
       }
     }
   }
@@ -1006,10 +1035,19 @@ int LocalFileDriver::inject_lost_and_found(
     uint32_t chunk_size,
     int64_t data_pool_id)
 {
-  return 0;
+  std::string lf_path = path + "/lost+found";
+  int r = mkdir(lf_path.c_str(), 0755);
+  if (r != 0 && r != -EPERM) {
+    derr << "error creating directory: '" << lf_path << "': "
+      << cpp_strerror(r) << dendl;
+    return r;
+  }
+  
+  std::string file_path = lf_path + "/" + lost_found_dname(ino);
+  return inject_data(file_path, size, chunk_size, ino);
 }
 
-int LocalFileDriver::init_metadata(int64_t data_pool_id)
+int LocalFileDriver::init_roots(int64_t data_pool_id)
 {
   // Ensure that the path exists and is a directory
   bool exists;
@@ -1020,9 +1058,9 @@ int LocalFileDriver::init_metadata(int64_t data_pool_id)
 
   if (exists) {
     return 0;
+  } else {
+    return ::mkdir(path.c_str(), 0755);
   }
-
-  return ::mkdir(path.c_str(), 0755);
 }
 
 int LocalFileDriver::check_roots(bool *result)
