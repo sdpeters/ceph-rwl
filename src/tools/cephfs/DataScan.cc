@@ -14,6 +14,7 @@
 
 #include "common/errno.h"
 #include "common/ceph_argparse.h"
+#include <fstream>
 #include "include/util.h"
 
 #include "mds/CInode.h"
@@ -53,24 +54,60 @@ int DataScan::main(const std::vector<const char*> &args)
     return r;
   }
 
+  // Consume any known key-value arguments
+  for (std::vector<const char *>::const_iterator i = args.begin();
+       i != args.end(); ++i) {
+    const std::string arg(*i);
+
+    if (arg.substr(0, 1) == std::string("-") && (i + 1 != args.end())) {
+      i++;
+      const std::string val(*i);
+      if (arg == std::string("--output-dir")) {
+        driver = new LocalFileDriver(val, data_io);
+      } else if (arg == std::string("-n")) {
+        std::string err;
+        n = strict_strtoll(val.c_str(), 10, &err);
+        if (!err.empty()) {
+          std::cerr << "Invalid worker number '" << val << "'" << std::endl;
+          return -EINVAL;
+        }
+      } else if (arg == std::string("-m")) {
+        std::string err;
+        m = strict_strtoll(val.c_str(), 10, &err);
+        if (!err.empty()) {
+          std::cerr << "Invalid worker count '" << val << "'" << std::endl;
+          return -EINVAL;
+        }
+      } else {
+        std::cerr << "Unknown argument '" << arg << "'" << std::endl;
+        return -EINVAL;
+      }
+    }
+  }
+
+  // Default to output to metadata pool
+  if (driver == NULL) {
+    driver = new MetadataDriver();
+  }
+
   dout(4) << "connecting to RADOS..." << dendl;
   rados.connect();
-
   r = driver->init(rados, mdsmap);
   if (r < 0) {
     return r;
   }
 
   std::string const &command = args[0];
+
+  // Initialize data_io for those commands that need it
   if (command == "scan_inodes"
-     || command == "scan_extents"
-     || command == "dump_files") {
+     || command == "scan_extents") {
     if (args.size() < 2) {
       usage();
       return -EINVAL;
     }
 
-    const std::string data_pool_name = args[1];
+    const std::string data_pool_name = args[args.size() - 1];
     {
       data_pool_id = rados.pool_lookup(data_pool_name.c_str());
       if (data_pool_id < 0) {
@@ -92,32 +129,13 @@ int DataScan::main(const std::vector<const char*> &args)
         return r;
       }
     }
+  }
 
-    // Parse `n` and `m` arguments
-    if (args.size() >= 4) {
-      std::string err;
-      n = strict_strtoll(args[2], 10, &err);
-      if (!err.empty()) {
-        std::cerr << "Invalid worker number '" << args[2] << "'" << std::endl;
-        return -EINVAL;
-      }
-      m = strict_strtoll(args[3], 10, &err);
-      if (!err.empty()) {
-        std::cerr << "Invalid worker count '" << args[3] << "'" << std::endl;
-        return -EINVAL;
-      }
-    }
-
-    if (command == "scan_inodes") {
-      return recover();
-    } else if (command == "scan_extents") {
-      return recover_extents();
-    } else if (command == "dump_files") {
-      return recover();
-    } else {
-      assert(0);
-    }
-
+  // Finally, dispatch command
+  if (command == "scan_inodes") {
+    return recover();
+  } else if (command == "scan_extents") {
+    return recover_extents();
   } else if (command == "init") {
     return driver->init_metadata(mdsmap->get_first_data_pool());
   } else {
@@ -923,5 +941,106 @@ int MetadataDriver::init(librados::Rados &rados, const MDSMap *mdsmap)
   }
   dout(4) << "found metadata pool '" << metadata_pool_name << "'" << dendl;
   return rados.ioctx_create(metadata_pool_name.c_str(), metadata_io);
+}
+
+int LocalFileDriver::init(librados::Rados &rados, const MDSMap *mdsmap)
+{
+  return 0;
+}
+
+int LocalFileDriver::inject_with_backtrace(
+    const inode_backtrace_t &bt,
+    uint64_t size,
+    time_t mtime,
+    uint32_t chunk_size,
+    int64_t data_pool_id)
+{
+  std::string path_builder = path;
+
+  // Iterate through backtrace creating directory parents
+  std::vector<inode_backpointer_t>::const_reverse_iterator i;
+  for (i = bt.ancestors.rbegin();
+      i != bt.ancestors.rend(); ++i) {
+
+    const inode_backpointer_t &backptr = *i;
+    path_builder += "/";
+    path_builder += backptr.dname;
+
+    // Last entry is the filename itself
+    bool is_file = (i + 1 == bt.ancestors.rend());
+    if (is_file) {
+      // Scrape the file contents out of the data pool and into the
+      // local filesystem
+      std::fstream f;
+      f.open(path_builder.c_str(), std::fstream::out | std::fstream::binary);
+      for (uint64_t offset = 0; offset < size; offset += chunk_size) {
+        object_t oid = InodeStore::get_object_name(bt.ino, frag_t(), "");
+        bufferlist bl;
+        int r = data_io.read(oid.name, bl, chunk_size, 0);
+        if (r <= 0 && r != -ENOENT) {
+          derr << "error reading data object '" << oid.name << "': "
+          << cpp_strerror(r) << dendl;
+          return r;
+        } else if (r >=0) {
+          f.seekp(offset);
+          bl.write_stream(f);
+        }
+      }
+      f.close();
+    } else {
+      int r = mkdir(path_builder.c_str(), 0755);
+      if (r != 0 && r != -EEXIST) {
+        derr << "error creating directory: '" << path_builder << "': "
+          << cpp_strerror(r) << dendl;
+      }
+    }
+  }
+
+  return 0;
+}
+
+int LocalFileDriver::inject_lost_and_found(
+    inodeno_t ino,
+    uint64_t size,
+    time_t mtime,
+    uint32_t chunk_size,
+    int64_t data_pool_id)
+{
+  return 0;
+}
+
+int LocalFileDriver::init_metadata(int64_t data_pool_id)
+{
+  // Ensure that the path exists and is a directory
+  bool exists;
+  int r = check_roots(&exists);
+  if (r != 0) {
+    return r;
+  }
+
+  if (exists) {
+    return 0;
+  }
+
+  return ::mkdir(path.c_str(), 0755);
+}
+
+int LocalFileDriver::check_roots(bool *result)
+{
+  // Check if the path exists and is a directory
+  DIR *d = ::opendir(path.c_str());
+  if (d == NULL) {
+    *result = false;
+  } else {
+    int r = closedir(d);
+    if (r != 0) {
+      // Weird, but maybe possible with e.g. stale FD on NFS mount?
+      *result = false;
+    } else {
+      *result = true;
+    }
+  }
+
+  return 0;
 }
 

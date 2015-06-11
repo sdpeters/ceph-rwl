@@ -18,10 +18,92 @@
 
 class InodeStore;
 
+class RecoveryDriver {
+  public:
+    virtual int init(librados::Rados &rados, const MDSMap *mdsmap) = 0;
+
+    /**
+     * Inject an inode + dentry parents into the metadata pool,
+     * based on a backtrace recovered from the data pool
+     */
+    virtual int inject_with_backtrace(
+        const inode_backtrace_t &bt,
+        uint64_t size,
+        time_t mtime,
+        uint32_t chunk_size,
+        int64_t data_pool_id) = 0;
+
+    /**
+     * Inject and inode + dentry into the lost+found directory,
+     * when all wel know about a file is its inode.
+     */
+    virtual int inject_lost_and_found(
+        inodeno_t ino,
+        uint64_t size,
+        time_t mtime,
+        uint32_t chunk_size,
+        int64_t data_pool_id) = 0;
+
+    /**
+     * Create any missing roots (i.e. mydir, strays, root inode)
+     */
+    virtual int init_metadata(
+        int64_t data_pool_id) = 0;
+
+    /**
+     * Pre-injection check that all the roots are present in
+     * the metadata pool.  Used to avoid parallel workers interfering
+     * with one another, by cueing the user to go run 'init' on a
+     * single node before running a parallel scan.
+     *
+     * @param result: set to true if roots are present, else set to false
+     * @returns 0 on no unexpected errors, else error code.  Missing objects
+     *          are not considered an unexpected error: check *result for
+     *          this case.
+     */
+    virtual int check_roots(bool *result) = 0;
+
+    virtual ~RecoveryDriver() {}
+};
+
+class LocalFileDriver : public RecoveryDriver
+{ 
+  protected:
+    const std::string path;
+    librados::IoCtx &data_io;
+
+  public:
+
+    LocalFileDriver(const std::string &path_, librados::IoCtx &data_io_)
+      : path(path_), data_io(data_io_)
+    {}
+
+    // Implement RecoveryDriver interface
+    int init(librados::Rados &rados, const MDSMap *mdsmap);
+
+    int inject_with_backtrace(
+        const inode_backtrace_t &bt,
+        uint64_t size,
+        time_t mtime,
+        uint32_t chunk_size,
+        int64_t data_pool_id);
+
+    int inject_lost_and_found(
+        inodeno_t ino,
+        uint64_t size,
+        time_t mtime,
+        uint32_t chunk_size,
+        int64_t data_pool_id);
+
+    int init_metadata(int64_t data_pool_id);
+
+    int check_roots(bool *result);
+};
+
 /**
  * A class that knows how to manipulate CephFS metadata pools
  */
-class MetadataDriver
+class MetadataDriver : public RecoveryDriver
 {
   protected:
 
@@ -56,12 +138,9 @@ class MetadataDriver
 
   public:
 
+    // Implement RecoveryDriver interface
     int init(librados::Rados &rados, const MDSMap *mdsmap);
-    
-    /**
-     * Inject an inode + dentry parents into the metadata pool,
-     * based on a backtrace recovered from the data pool
-     */
+
     int inject_with_backtrace(
         const inode_backtrace_t &bt,
         uint64_t size,
@@ -69,10 +148,6 @@ class MetadataDriver
         uint32_t chunk_size,
         int64_t data_pool_id);
 
-    /**
-     * Inject and inode + dentry into the lost+found directory,
-     * when all wel know about a file is its inode.
-     */
     int inject_lost_and_found(
         inodeno_t ino,
         uint64_t size,
@@ -80,31 +155,17 @@ class MetadataDriver
         uint32_t chunk_size,
         int64_t data_pool_id);
 
-    /**
-     * Create any missing roots (i.e. mydir, strays, root inode)
-     */
     int init_metadata(int64_t data_pool_id);
 
-    /**
-     * Pre-injection check that all the roots are present in
-     * the metadata pool.  Used to avoid parallel workers interfering
-     * with one another, by cueing the user to go run 'init' on a
-     * single node before running a parallel scan.
-     *
-     * @param result: set to true if roots are present, else set to false
-     * @returns 0 on no unexpected errors, else error code.  Missing objects
-     *          are not considered an unexpected error: check *result for
-     *          this case.
-     */
     int check_roots(bool *result);
 };
 
 class DataScan : public MDSUtility
 {
   protected:
-    MetadataDriver *driver;
+    RecoveryDriver *driver;
 
-    // IoCtx for data pool (where we scrap backtraces from)
+    // IoCtx for data pool (where we scrape backtraces from)
     librados::IoCtx data_io;
     // Remember the data pool ID for use in layouts
     int64_t data_pool_id;
@@ -127,9 +188,13 @@ class DataScan : public MDSUtility
     int main(const std::vector<const char *> &args);
 
     DataScan()
-      : data_pool_id(-1), n(0), m(1)
+      : driver(NULL), data_pool_id(-1), n(0), m(1)
     {
-      driver = new MetadataDriver();
+    }
+
+    ~DataScan()
+    {
+      delete driver;
     }
 };
 
