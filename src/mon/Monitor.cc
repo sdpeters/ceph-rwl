@@ -3382,27 +3382,29 @@ void Monitor::_ms_dispatch(Message *m)
 
     dout(10) << "do not have session, making new one" << dendl;
     s = session_map.new_session(m->get_source_inst(), m->get_connection().get());
-    m->get_connection()->set_priv(s->get());
-    dout(10) << "ms_dispatch new session " << s << " for " << s->inst << dendl;
-
-    logger->set(l_mon_num_sessions, session_map.get_size());
-    logger->inc(l_mon_session_add);
-
-    if (!src_is_mon) {
-      dout(10) << "setting timeout on session" << dendl;
-      // set an initial timeout here, so we will trim this session even if they don't
-      // do anything.
-      s->until = ceph_clock_now(g_ceph_context);
-      s->until += g_conf->mon_subscribe_interval;
-    } else {
-      //give it monitor caps; the peer type has been authenticated
-      reuse_caps = false;
-      dout(5) << "setting monitor caps on this connection" << dendl;
-      if (!s->caps.is_allow_all()) //but no need to repeatedly copy
-        s->caps = *mon_caps;
+    if (s) {
+      m->get_connection()->set_priv(s->get());
+      dout(10) << "ms_dispatch new session " << s << " for " << s->inst << dendl;
+  
+      logger->set(l_mon_num_sessions, session_map.get_size());
+      logger->inc(l_mon_session_add);
+  
+      if (!src_is_mon) {
+        dout(10) << "setting timeout on session" << dendl;
+        // set an initial timeout here, so we will trim this session even if they don't
+        // do anything.
+        s->until = ceph_clock_now(g_ceph_context);
+        s->until += g_conf->mon_subscribe_interval;
+      } else {
+        //give it monitor caps; the peer type has been authenticated
+        reuse_caps = false;
+        dout(5) << "setting monitor caps on this connection" << dendl;
+        if (!s->caps.is_allow_all()) //but no need to repeatedly copy
+          s->caps = *mon_caps;
+      }
+      if (reuse_caps)
+        s->caps = caps;
     }
-    if (reuse_caps)
-      s->caps = caps;
   } else {
     dout(20) << "ms_dispatch existing session " << s << " for " << s->inst << dendl;
   }
