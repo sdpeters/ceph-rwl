@@ -147,10 +147,24 @@ class MetadataDriver : public RecoveryDriver
     int read_dentry(inodeno_t parent_ino, frag_t frag,
         const std::string &dname, InodeStore *inode);
 
-    int find_or_create_dirfrag(inodeno_t ino, bool *created);
+    int find_or_create_dirfrag(
+        inodeno_t ino,
+        frag_t fragment,
+        bool *created);
 
     int inject_linkage(
-        inodeno_t dir_ino, const std::string &dname, const InodeStore &inode);
+        inodeno_t dir_ino, const std::string &dname,
+        const frag_t fragment, const InodeStore &inode);
+
+    /**
+     * Work out which fragment of a directory should contain a named
+     * dentry, recursing up the trace as necessary to retrieve
+     * fragtrees.
+     */
+    int get_frag_of(
+        inodeno_t dirino,
+        const std::string &dname,
+        frag_t *result_ft);
 
   public:
 

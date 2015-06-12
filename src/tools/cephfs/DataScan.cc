@@ -23,7 +23,7 @@
 
 #define dout_subsys ceph_subsys_mds
 #undef dout_prefix
-#define dout_prefix *_dout << __func__ << ": "
+#define dout_prefix *_dout << "datascan." << __func__ << ": "
 
 void DataScan::usage()
 {
@@ -570,6 +570,7 @@ int MetadataDriver::read_dentry(inodeno_t parent_ino, frag_t frag,
 {
   assert(inode != NULL);
 
+
   std::string key;
   dentry_key_t dn_key(CEPH_NOSNAP, dname.c_str());
   dn_key.encode(key);
@@ -579,15 +580,36 @@ int MetadataDriver::read_dentry(inodeno_t parent_ino, frag_t frag,
   std::map<std::string, bufferlist> vals;
   object_t frag_oid = InodeStore::get_object_name(parent_ino, frag, "");
   int r = metadata_io.omap_get_vals_by_keys(frag_oid.name, keys, &vals);  
-  assert (r == 0);  // I assume success because I checked object existed
+  dout(20) << "oid=" << frag_oid.name
+           << " dname=" << dname
+           << " frag=" << frag
+           << ", r=" << r << dendl;
+  if (r < 0) {
+    return r;
+  }
+
   if (vals.find(key) == vals.end()) {
+    dout(20) << key << " not found in result" << dendl;
     return -ENOENT;
   }
 
   try {
     bufferlist::iterator q = vals[key].begin();
-    inode->decode_bare(q);
+    snapid_t dnfirst;
+    ::decode(dnfirst, q);
+    char dentry_type;
+    ::decode(dentry_type, q);
+    if (dentry_type == 'I') {
+      inode->decode_bare(q);
+      return 0;
+    } else {
+      dout(20) << "dentry type '" << dentry_type << "': cannot"
+                  "read an inode out of that" << dendl;
+      return -EINVAL;
+    }
   } catch (const buffer::error &err) {
+    dout(20) << "encoding error in dentry 0x" << std::hex << parent_ino
+             << std::dec << "/" << dname << dendl;
     return -EINVAL;
   }
 
@@ -600,7 +622,7 @@ int MetadataDriver::inject_lost_and_found(
 {
   // Create lost+found if doesn't exist
   bool created = false;
-  int r = find_or_create_dirfrag(CEPH_INO_ROOT, &created);
+  int r = find_or_create_dirfrag(CEPH_INO_ROOT, frag_t(), &created);
   if (r < 0) {
     return r;
   }
@@ -615,7 +637,9 @@ int MetadataDriver::inject_lost_and_found(
     lf_ino.inode.ino = CEPH_INO_LOST_AND_FOUND;
     lf_ino.inode.version = 1;
     lf_ino.inode.backtrace_version = 1;
-    r = inject_linkage(CEPH_INO_ROOT, "lost+found", lf_ino);
+    // TODO: we should probably fragment this by default, as we will
+    // potentially write very many dentries.
+    r = inject_linkage(CEPH_INO_ROOT, "lost+found", frag_t(), lf_ino);
     if (r < 0) {
       return r;
     }
@@ -628,7 +652,7 @@ int MetadataDriver::inject_lost_and_found(
     }
   }
 
-  r = find_or_create_dirfrag(CEPH_INO_LOST_AND_FOUND, &created);
+  r = find_or_create_dirfrag(CEPH_INO_LOST_AND_FOUND, frag_t(), &created);
   if (r < 0) {
     return r;
   }
@@ -659,8 +683,116 @@ int MetadataDriver::inject_lost_and_found(
   const std::string dname = lost_found_dname(ino);
 
   // Write dentry into lost+found dirfrag
-  return inject_linkage(lf_ino.inode.ino, dname, recovered_ino);
+  return inject_linkage(lf_ino.inode.ino, dname, frag_t(), recovered_ino);
 }
+
+
+int MetadataDriver::get_frag_of(
+    inodeno_t dirino,
+    const std::string &target_dname,
+    frag_t *result_ft)
+{
+  object_t root_frag_oid = InodeStore::get_object_name(dirino, frag_t(), "");
+
+  dout(20) << "dirino=" << dirino << " target_dname=" << target_dname << dendl;
+
+  // Find and load fragtree if existing dirfrag
+  // ==========================================
+  bool have_backtrace = false; 
+  bufferlist parent_bl;
+  int r = metadata_io.getxattr(root_frag_oid.name, "parent", parent_bl);
+  if (r == -ENODATA) {
+    dout(10) << "No backtrace on '" << root_frag_oid << "'" << dendl;
+  } else if (r < 0) {
+    dout(4) << "Unexpected error on '" << root_frag_oid << "': "
+      << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  // Deserialize backtrace
+  inode_backtrace_t backtrace;
+  if (parent_bl.length()) {
+    try {
+      bufferlist::iterator q = parent_bl.begin();
+      backtrace.decode(q);
+      have_backtrace = true;
+    } catch (buffer::error &e) {
+      dout(4) << "Corrupt backtrace on '" << root_frag_oid << "': " << e << dendl;
+    }
+  }
+
+  if (!(have_backtrace && backtrace.ancestors.size())) {
+    // Can't work out fragtree without a backtrace
+    dout(4) << "No backtrace on '" << root_frag_oid
+            << "': cannot determine fragtree" << dendl;
+    return -ENOENT;
+  }
+
+  // The parentage of dirino
+  const inode_backpointer_t &bp = *(backtrace.ancestors.begin());
+
+  // The inode of dirino's parent
+  const inodeno_t parent_ino = bp.dirino;
+
+  // The dname of dirino in its parent.
+  const std::string &parent_dname = bp.dname;
+
+  dout(20) << "got backtrace parent " << parent_ino << "/"
+           << parent_dname << dendl;
+
+  // The primary dentry for dirino
+  InodeStore existing_dentry;
+
+  // See if we can find ourselves in dirfrag zero of the parent: this
+  // is a fast path that avoids needing to go further up the tree
+  // if the parent isn't fragmented (worst case we would have to
+  // go all the way to the root)
+  r = read_dentry(parent_ino, frag_t(), parent_dname, &existing_dentry);
+  if (r >= 0) {
+    // Great, fast path: return the fragtree from here
+    if (existing_dentry.inode.ino != dirino) {
+      dout(4) << "Unexpected inode in dentry! 0x" << std::hex
+              << existing_dentry.inode.ino
+              << " vs expected 0x" << dirino << std::dec << dendl;
+      return -ENOENT;
+    }
+    dout(20) << "fast path, fragtree is "
+             << existing_dentry.dirfragtree << dendl;
+    *result_ft = existing_dentry.pick_dirfrag(target_dname);
+    dout(20) << "frag is " << *result_ft << dendl;
+    return 0;
+  } else if (r != -ENOENT) {
+    // Dentry not present in 0th frag, must read parent's fragtree
+    frag_t parent_frag;
+    r = get_frag_of(parent_ino, parent_dname, &parent_frag);
+    if (r == 0) {
+      // We have the parent fragtree, so try again to load our dentry
+      r = read_dentry(parent_ino, parent_frag, parent_dname, &existing_dentry);
+      if (r >= 0) {
+        // Got it!
+        *result_ft = existing_dentry.pick_dirfrag(target_dname);
+        dout(20) << "resolved via parent, frag is " << *result_ft << dendl;
+        return 0;
+      } else {
+        if (r == -EINVAL || r == -ENOENT) {
+          return -ENOENT;  // dentry missing or corrupt, so frag is missing
+        } else {
+          return r;
+        }
+      }
+    } else {
+      // Couldn't resolve parent fragtree, so can't find ours.
+      return r;
+    }
+  } else if (r == -EINVAL) {
+    // Unreadable dentry, can't know the fragtree.
+    return -ENOENT;
+  } else {
+    // Unexpected error, raise it
+    return r;
+  }
+}
+
 
 int MetadataDriver::inject_with_backtrace(
     const inode_backtrace_t &backtrace, uint64_t file_size, time_t file_mtime,
@@ -668,32 +800,61 @@ int MetadataDriver::inject_with_backtrace(
     
 {
 
-  // Handling fragmented directories:
-  //  * First see if we can load 
-  //
+  // On dirfrags
+  // ===========
+  // In order to insert something into a directory, we first (ideally)
+  // need to know the fragtree for the directory.  Sometimes we can't
+  // get that, in which case we just go ahead and insert it into
+  // fragment zero for a good chance of that being the right thing
+  // anyway (most moderate-sized dirs aren't fragmented!)
 
+  // On ancestry
+  // ===========
   // My immediate ancestry should be correct, so if we can find that
-  // directory's dirfrag then go inject it there
+  // directory's dirfrag then go inject it there.  This works well
+  // in the case that this inode's dentry was somehow lost and we
+  // are recreating it, because the rest of the hierarchy
+  // will probably still exist.
+  //
+  // It's more of a "better than nothing" approach when rebuilding
+  // a whole tree, as backtraces will in general not be up to date
+  // beyond the first parent, if anything in the trace was ever
+  // moved after the file was created.
+  //
+  // TODO: it would perhaps be good to have a "soft touch" model
+  // where we only inject a dentry if its immediate parent already
+  // exists, rather than potentially injecting a bunch of bogus
+  // ancestry.
 
-  // There are various strategies here:
-  //   - when a parent dentry doesn't exist, create it with a new inono (i.e.
-  //     don't care about inode numbers for directories at all)
-  //   - when a parent dentry doesn't exist, create it using the inodeno
-  //     from the backtrace: assumes that nothing else in the hierarchy
-  //     exists, so there won't be dupes
-  //   - only insert inodes when their direct parent directory fragment
-  //     already exists: this only risks multiple-linkage of files,
-  //     rather than directories.
+  // On inode numbers
+  // ================
+  // The backtrace tells us inodes for each of the parents.  If we are
+  // creating those parent dirfrags, then there is a risk that somehow
+  // the inode indicated here was also used for data (not a dirfrag) at
+  // some stage.  That would be a zany situation, and we don't check
+  // for it here, because to do so would require extra IOs for everything
+  // we inject, and anyway wouldn't guarantee that the inode number
+  // wasn't in use in some dentry elsewhere in the metadata tree that
+  // just happened not to have any data objects.
 
+  // On multiple workers touching the same traces
+  // ============================================
   // When creating linkage for a directory, *only* create it if we are
   // also creating the object.  That way, we might not manage to get the
   // *right* linkage for a directory, but at least we won't multiply link
   // it.  We assume that if a root dirfrag exists for a directory, then
   // it is linked somewhere (i.e. that the metadata pool is not already
   // inconsistent).
+  //
   // Making sure *that* is true is someone else's job!  Probably someone
   // who is not going to run in parallel, so that they can self-consistently
   // look at versions and move things around as they go.
+  // Note this isn't 100% safe: if we die immediately after creating dirfrag
+  // object, next run will fail to create linkage for the dirfrag object
+  // and leave it orphaned.
+  //
+  // TODO: Tool for linking in orphan dirfrag objects!
+
   inodeno_t ino = backtrace.ino;
   dout(10) << "  inode: 0x" << std::hex << ino << std::dec << dendl;
   for (std::vector<inode_backpointer_t>::const_iterator i = backtrace.ancestors.begin();
@@ -702,25 +863,36 @@ int MetadataDriver::inject_with_backtrace(
     dout(10) << "  backptr: 0x" << std::hex << backptr.dirino << std::dec
       << "/" << backptr.dname << dendl;
 
-    // TODO handle fragmented directories: if there is a root that
-    // contains a valid fragtree, use it to decide where to inject.  Else (the simple
-    // case) just always inject into the root.
-    // TODO: look where the fragtree tells you, not just in the root.
-    //       to get the fragtree we will have to read the backtrace
-    //       on the dirfrag to learn who the immediate parent of
-    //       it is.
-
     // Examine root dirfrag for parent
     const inodeno_t parent_ino = backptr.dirino;
     const std::string dname = backptr.dname;
-    object_t frag_oid = InodeStore::get_object_name(parent_ino, frag_t(), "");
+
+    frag_t fragment;
+    int r = get_frag_of(parent_ino, dname, &fragment);
+    if (r == -ENOENT) {
+      // Don't know fragment, fall back to assuming root
+      dout(20) << "don't know fragment for 0x" << std::hex <<
+        parent_ino << std::dec << "/" << dname << ", will insert to root"
+        << dendl;
+
+      // TODO: if we can't find it by following backtrace back by inos,
+      // we *could* try finding it by following dnames forwards
+      // from the root, but that only works if we're lucky and the
+      // backtrace is up to date.  Might not be worth implementing,
+      // if we can just use live injection (i.e. via a running MDCache)
+      // for that case.
+  
+      // TODO: limited-size cache of directory fragtrees, so that when
+      // injecting lots of files to a dir we don't keep on doing
+      // the lookup process to learn its fragtree
+    }
 
     // Find or create dirfrag
     // ======================
     bool created_dirfrag;
-    int r = find_or_create_dirfrag(parent_ino, &created_dirfrag);
+    r = find_or_create_dirfrag(parent_ino, fragment, &created_dirfrag);
     if (r < 0) {
-      break;
+      return r;
     }
 
     // TODO: if backtrace does not end at root, and the most distance ancestor
@@ -729,7 +901,7 @@ int MetadataDriver::inject_with_backtrace(
     // Check if dentry already exists
     // ==============================
     InodeStore existing_dentry;
-    r = read_dentry(parent_ino, frag_t(), dname, &existing_dentry);
+    r = read_dentry(parent_ino, fragment, dname, &existing_dentry);
     bool write_dentry = false;
     if (r == -ENOENT || r == -EINVAL) {
       // Missing or corrupt dentry
@@ -745,9 +917,9 @@ int MetadataDriver::inject_with_backtrace(
         dout(20) << "Dentry 0x" << std::hex
           << parent_ino << std::dec << "/"
           << dname << " already exists and points to me" << dendl;
-        // TODO: an option to overwrite the size data here with
-        // what we just recovered?  Or another tool that lets you
-        // do that...
+        // TODO: a tool or frag to overwrite the 'size' in the
+        // existing metadata with the one that we have just recovered
+        // from scan_extents phase
       } else {
         // FIXME: at this point we should set a flag to recover
         // this inode in a /_recovery/<inodeno>.data file as we
@@ -803,9 +975,9 @@ int MetadataDriver::inject_with_backtrace(
       dentry.inode.ino = ino;
       dentry.inode.version = 1;
       dentry.inode.backtrace_version = 1;
-      r = inject_linkage(parent_ino, dname, dentry);
+      r = inject_linkage(parent_ino, dname, fragment, dentry);
       if (r < 0) {
-        break;
+        return r;
       }
     }
 
@@ -855,22 +1027,35 @@ int MetadataDriver::inject_with_backtrace(
   return 0;
 }
 
-int MetadataDriver::find_or_create_dirfrag(inodeno_t ino, bool *created)
+int MetadataDriver::find_or_create_dirfrag(
+    inodeno_t ino,
+    frag_t fragment,
+    bool *created)
 {
   assert(created != NULL);
 
   fnode_t existing_fnode;
   *created = false;
 
-  object_t frag_oid = InodeStore::get_object_name(ino, frag_t(), "");
-
-  int r = read_fnode(ino, frag_t(), &existing_fnode);
+  int r = read_fnode(ino, fragment, &existing_fnode);
   if (r == -ENOENT || r == -EINVAL) {
     // Missing or corrupt fnode, create afresh
     bufferlist fnode_bl;
     fnode_t blank_fnode;
     blank_fnode.version = 1;
     blank_fnode.encode(fnode_bl);
+
+    // TODO: for the ENOENT case, do an 'exclusive create' op
+    // at the start of this write op, so that multiple
+    // writers won't both think they did the create.
+    // For the EINVAL case, we don't have a neat way to do
+    // that, so we will potentially have two writers thinking
+    // they both created a dirfrag, and both linking it into
+    // (two different places) in the hierarchy.  But that's not
+    // fatal as a seperate operation to resolve multiple
+    // metadata linkage is needed anyway.
+
+    object_t frag_oid = InodeStore::get_object_name(ino, fragment, "");
     r = metadata_io.omap_set_header(frag_oid.name, fnode_bl);
     if (r < 0) {
       derr << "Failed to create dirfrag 0x" << std::hex
@@ -887,20 +1072,21 @@ int MetadataDriver::find_or_create_dirfrag(inodeno_t ino, bool *created)
     return r;
   } else {
     dout(20) << "Dirfrag already exists: 0x" << std::hex
-      << ino << std::dec << dendl;
+      << ino << " " << fragment << std::dec << dendl;
   }
 
   return 0;
 }
 
 int MetadataDriver::inject_linkage(
-    inodeno_t dir_ino, const std::string &dname, const InodeStore &inode)
+    inodeno_t dir_ino, const std::string &dname,
+    const frag_t fragment, const InodeStore &inode)
 {
   // We have no information about snapshots, so everything goes
   // in as CEPH_NOSNAP
   snapid_t snap = CEPH_NOSNAP;
 
-  object_t frag_oid = InodeStore::get_object_name(dir_ino, frag_t(), "");
+  object_t frag_oid = InodeStore::get_object_name(dir_ino, fragment, "");
 
   std::string key;
   dentry_key_t dn_key(snap, dname.c_str());
@@ -968,12 +1154,10 @@ int LocalFileDriver::inject_data(
     snprintf(buf, sizeof(buf),
         "%llx.%08llx",
         (unsigned long long)ino,
-        offset / chunk_size);
+        (unsigned long long)(offset / chunk_size));
     std::string oid(buf);
 
     int r = data_io.read(oid, bl, chunk_size, 0);
-
-    std::cerr << "Read " << oid << " -> " << r << std::endl;
 
     if (r <= 0 && r != -ENOENT) {
       derr << "error reading data object '" << oid << "': "
@@ -983,7 +1167,6 @@ int LocalFileDriver::inject_data(
     } else if (r >=0) {
       
       f.seekp(offset);
-      std::cerr << "wrote " << bl.length() << " at " << offset << std::endl;
       bl.write_stream(f);
     }
   }
