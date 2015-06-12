@@ -10145,17 +10145,6 @@ void ReplicatedPG::check_local()
 // ===========================
 // hit sets
 
-hobject_t ReplicatedPG::get_hit_set_current_object(utime_t stamp)
-{
-  ostringstream ss;
-  ss << "hit_set_" << info.pgid.pgid << "_current_" << stamp;
-  hobject_t hoid(sobject_t(ss.str(), CEPH_NOSNAP), "",
-		 info.pgid.ps(), info.pgid.pool(),
-		 cct->_conf->osd_hit_set_namespace);
-  dout(20) << __func__ << " " << hoid << dendl;
-  return hoid;
-}
-
 hobject_t ReplicatedPG::get_hit_set_archive_object(utime_t start, utime_t end, bool using_gmt)
 {
   ostringstream ss;
@@ -10365,43 +10354,8 @@ void ReplicatedPG::hit_set_persist()
   ctx->updated_hset_history = info.hit_set;
   pg_hit_set_history_t &updated_hit_set_hist = *(ctx->updated_hset_history);
 
-  if (updated_hit_set_hist.current_last_stamp != utime_t()) {
-    // FIXME: we cheat slightly here by bundling in a remove on a object
-    // other the RepGather object.  we aren't carrying an ObjectContext for
-    // the deleted object over this period.
-    hobject_t old_obj =
-      get_hit_set_current_object(updated_hit_set_hist.current_last_stamp);
-    ctx->log.push_back(
-      pg_log_entry_t(pg_log_entry_t::DELETE,
-		     old_obj,
-		     ctx->at_version,
-		     updated_hit_set_hist.current_last_update,
-		     0,
-		     osd_reqid_t(),
-		     ctx->mtime));
-    if (pool.info.require_rollback()) {
-      if (ctx->log.back().mod_desc.rmobject(ctx->at_version.version)) {
-	ctx->op_t->stash(old_obj, ctx->at_version.version);
-      } else {
-	ctx->op_t->remove(old_obj);
-      }
-    } else {
-      ctx->op_t->remove(old_obj);
-      ctx->log.back().mod_desc.mark_unrollbackable();
-    }
-    ++ctx->at_version.version;
 
-    struct stat st;
-    int r = osd->store->stat(
-      coll,
-      ghobject_t(old_obj, ghobject_t::NO_GEN, pg_whoami.shard),
-      &st);
-    assert(r == 0);
-    --ctx->delta_stats.num_objects;
-    ctx->delta_stats.num_bytes -= st.st_size;
-  }
-
-  updated_hit_set_hist.current_last_update = info.last_update; // *after* above remove!
+  updated_hit_set_hist.current_last_update = info.last_update;
   updated_hit_set_hist.current_info.version = ctx->at_version;
 
   updated_hit_set_hist.history.push_back(updated_hit_set_hist.current_info);
