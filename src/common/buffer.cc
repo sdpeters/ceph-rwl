@@ -1943,7 +1943,7 @@ std::ostream& operator<<(std::ostream& out, const buffer::list& bl) {
   return out;
 }
 
-std::ostream& operator<<(std::ostream& out, buffer::error& e)
+std::ostream& operator<<(std::ostream& out, const buffer::error& e)
 {
   return out << e.what();
 }
