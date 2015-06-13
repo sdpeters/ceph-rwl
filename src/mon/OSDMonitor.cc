@@ -2998,8 +2998,6 @@ bool OSDMonitor::preprocess_command(MMonCommand *m)
   } else if (prefix == "osd crush get-tunable") {
     string tunable;
     cmd_getval(g_ceph_context, cmdmap, "tunable", tunable);
-    int value;
-    cmd_getval(g_ceph_context, cmdmap, "value", value);
     ostringstream rss;
     if (f)
       f->open_object_section("tunable");
@@ -4525,8 +4523,13 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
     // sanity check: test some inputs to make sure this map isn't totally broken
     dout(10) << " testing map" << dendl;
     stringstream ess;
+    // XXX: Use mon_lease as a timeout value for crushtool.
+    // If the crushtool consistently takes longer than 'mon_lease' seconds,
+    // then we would consistently trigger an election before the command
+    // finishes, having a flapping monitor unable to hold quorum.
     CrushTester tester(crush, ess);
     int r = tester.test_with_crushtool(g_conf->crushtool,
+				       osdmap.get_max_osd(),
 				       g_conf->mon_lease);
     if (r < 0) {
       if (r == -EINTR) {
