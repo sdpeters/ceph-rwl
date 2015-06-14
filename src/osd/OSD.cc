@@ -7138,7 +7138,6 @@ void OSD::do_notifies(
       continue;
     }
     service.share_map_peer(it->first, con.get(), curmap);
-    assert(curmap->get_xinfo(it->first).features & CEPH_FEATURE_INDEP_PG_MAP);
     dout(7) << __func__ << " osd " << it->first
 	    << " on " << it->second.size() << " PGs" << dendl;
     MOSDPGNotify *m = new MOSDPGNotify(curmap->get_epoch(),
@@ -7169,7 +7168,6 @@ void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
       continue;
     }
     service.share_map_peer(who, con.get(), curmap);
-    assert(curmap->get_xinfo(who).features & CEPH_FEATURE_INDEP_PG_MAP);
     dout(7) << __func__ << " querying osd." << who
 	    << " on " << pit->second.size() << " PGs" << dendl;
     MOSDPGQuery *m = new MOSDPGQuery(curmap->get_epoch(), pit->second);
@@ -7205,7 +7203,6 @@ void OSD::do_infos(map<int,
       continue;
     }
     service.share_map_peer(p->first, con.get(), curmap);
-    assert(curmap->get_xinfo(p->first).features & CEPH_FEATURE_INDEP_PG_MAP);
     MOSDPGInfo *m = new MOSDPGInfo(curmap->get_epoch());
     m->pg_list = p->second;
     con->send_message(m);
