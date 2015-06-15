@@ -7244,11 +7244,6 @@ void OSD::handle_pg_notify(OpRequestRef op)
       continue;
     }
 
-    uint64_t features;
-    if (from == get_nodeid())	// from myself?
-      features = CEPH_FEATURES_SUPPORTED_DEFAULT;
-    else
-      features = op->get_req()->get_connection()->get_features();
     handle_pg_peering_evt(
       spg_t(it->first.info.pgid.pgid, it->first.to),
       it->first.info, it->second,
@@ -7257,7 +7252,7 @@ void OSD::handle_pg_notify(OpRequestRef op)
 	new PG::CephPeeringEvt(
 	  it->first.epoch_sent, it->first.query_epoch,
 	  PG::MNotifyRec(pg_shard_t(from, it->first.from), it->first,
-          features)))
+          op->get_req()->get_connection()->get_features())))
       );
   }
 }
