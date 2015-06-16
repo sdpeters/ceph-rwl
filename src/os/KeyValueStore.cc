@@ -3107,7 +3107,7 @@ void KeyValueStore::handle_conf_change(const struct md_config_t *conf,
   }
 }
 
-void KeyValueStore::dump_start(const std::string file)
+void KeyValueStore::dump_start(const std::string &file)
 {
   dout(10) << "dump_start " << file << dendl;
   if (m_keyvaluestore_do_dump) {

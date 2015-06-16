@@ -647,7 +647,7 @@ class KeyValueStore : public ObjectStore,
   ObjectMap::ObjectMapIterator get_omap_iterator(coll_t c,
                                                  const ghobject_t &oid);
 
-  void dump_start(const std::string file);
+  void dump_start(const std::string &file);
   void dump_stop();
   void dump_transactions(list<ObjectStore::Transaction*>& ls, uint64_t seq,
                          OpSequencer *osr);
