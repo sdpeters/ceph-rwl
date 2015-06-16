@@ -6965,12 +6965,12 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
       dout(20) << "Adding osd: " << infoevt.from.osd << " acting features: "
 	<< hex << infoevt.features << dec << dendl;
       pg->apply_acting_features(infoevt.features);
+    }
 
-      if (std::find(pg->up.begin(), pg->up.end(), infoevt.from.osd) != pg->up.end()) {
-	dout(20) << "Adding osd: " << infoevt.from.osd << " upacting features: "
-	  << hex << infoevt.features << dec << dendl;
-	pg->apply_upacting_features(infoevt.features);
-      }
+    if (std::find(pg->up.begin(), pg->up.end(), infoevt.from.osd) != pg->up.end()) {
+      dout(20) << "Adding osd: " << infoevt.from.osd << " upacting features: "
+	<< hex << infoevt.features << dec << dendl;
+      pg->apply_upacting_features(infoevt.features);
     }
 
     // are we done getting everything?
