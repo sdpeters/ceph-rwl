@@ -1750,8 +1750,6 @@ void PG::activate(ObjectStore::Transaction& t,
       build_might_have_unfound();
 
       state_set(PG_STATE_DEGRADED);
-      dout(10) << "activate - starting recovery" << dendl;
-      queue_recovery();
       if (have_unfound())
 	discover_all_missing(query_map);
     }
@@ -1972,10 +1970,10 @@ bool PG::requeue_scrub()
 void PG::queue_recovery(bool front)
 {
   if (recovery_queued) {
-    dout(10) << "queue_snap_trim -- already queued" << dendl;
+    dout(10) << "queue_recovery -- already queued" << dendl;
   } else {
-    dout(10) << "queue_snap_trim -- queuing" << dendl;
-    snap_trim_queued = true;
+    dout(10) << "queue_recovery -- queuing" << dendl;
+    recovery_queued = true;
     osd->queue_for_recovery(this, front);
   }
 }
@@ -2106,8 +2104,7 @@ void PG::start_recovery_op(const hobject_t& soid)
   assert(recovering_oids.count(soid) == 0);
   recovering_oids.insert(soid);
 #endif
-  // TODOSAM: osd->osd-> not good
-  osd->osd->start_recovery_op(this, soid);
+  osd->start_recovery_op(this, soid);
 }
 
 void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
@@ -2123,10 +2120,10 @@ void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
   assert(recovering_oids.count(soid));
   recovering_oids.erase(soid);
 #endif
-  // TODOSAM: osd->osd-> not good
-  osd->osd->finish_recovery_op(this, soid, dequeue);
+  osd->finish_recovery_op(this, soid, dequeue);
 
   if (!dequeue) {
+    queue_recovery();
   }
 }
 
@@ -6510,7 +6507,8 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
     pg->queue_snap_trim();
   }
 
-  if (!pg->is_clean() &&
+  if (pg->is_peered() &&
+      !pg->is_clean() &&
       !pg->get_osdmap()->test_flag(CEPH_OSDMAP_NOBACKFILL) &&
       (!pg->get_osdmap()->test_flag(CEPH_OSDMAP_NOREBALANCE) || pg->is_degraded())) {
     pg->queue_recovery();
@@ -6577,7 +6575,8 @@ boost::statechart::result PG::RecoveryState::Active::react(const MLogRec& logevt
     pg->peer_missing[logevt.from],
     logevt.from,
     context< RecoveryMachine >().get_recovery_ctx());
-  if (got_missing)
+  if (pg->is_peered() &&
+      got_missing)
     pg->queue_recovery();
   return discard_event();
 }
