@@ -105,7 +105,7 @@ BuildRequires:	util-linux
 BuildRequires:	xfsprogs
 BuildRequires:	xfsprogs-devel
 BuildRequires:	xmlstarlet
-BuildRequires:	yasm
+#BuildRequires:	yasm
 %if 0%{?rhel} || 0%{?fedora} || 0%{?suse_version}
 BuildRequires:	snappy-devel
 %endif
@@ -379,10 +379,10 @@ Group:		System Environment/Libraries
 License:	LGPL-2.0
 Requires:	ceph-common
 Requires:	xmlstarlet
-%if (0%{?fedora} >= 20 || 0%{?rhel} == 6)
-BuildRequires:	lttng-ust-devel
-BuildRequires:	libbabeltrace-devel
-%endif
+#%if (0%{?fedora} >= 20 || 0%{?rhel} == 6)
+#BuildRequires:	lttng-ust-devel
+#BuildRequires:	libbabeltrace-devel
+#%endif
 %description -n ceph-test
 This package contains Ceph benchmarks and test tools.
 
