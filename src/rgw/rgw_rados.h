@@ -1429,7 +1429,7 @@ public:
         map<string, bufferlist> *attrs;
         struct rgw_err *perr;
 
-        StatParams() : lastmod(NULL), obj_size(NULL), attrs(NULL) {}
+        StatParams() : lastmod(NULL), obj_size(NULL), attrs(NULL), perr(NULL) {}
       } stat_params;
 
       struct ReadParams {
