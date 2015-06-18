@@ -864,7 +864,7 @@ protected:
     assert(ctx->release_snapset_obc == false);
     ctx->lock_to_release = OpContext::NONE;
     if (requeue_recovery || requeue_recovery_clone || requeue_recovery_snapset)
-      osd->recovery_wq.queue(this);
+      queue_recovery();
     if (requeue_snaptrimmer ||
 	requeue_snaptrimmer_clone ||
 	requeue_snaptrimmer_snapset)
@@ -1197,19 +1197,19 @@ protected:
 
   void queue_for_recovery();
   bool start_recovery_ops(
-    int max, RecoveryCtx *prctx,
-    ThreadPool::TPHandle &handle, int *started);
+    uint64_t max, RecoveryCtx *prctx,
+    ThreadPool::TPHandle &handle, uint64_t *started);
 
-  int recover_primary(int max, ThreadPool::TPHandle &handle);
-  int recover_replicas(int max, ThreadPool::TPHandle &handle);
+  uint64_t recover_primary(uint64_t max, ThreadPool::TPHandle &handle);
+  uint64_t recover_replicas(uint64_t max, ThreadPool::TPHandle &handle);
   hobject_t earliest_peer_backfill() const;
   bool all_peer_done() const;
   /**
    * @param work_started will be set to true if recover_backfill got anywhere
    * @returns the number of operations started
    */
-  int recover_backfill(int max, ThreadPool::TPHandle &handle,
-                       bool *work_started);
+  uint64_t recover_backfill(uint64_t max, ThreadPool::TPHandle &handle,
+			    bool *work_started);
 
   /**
    * scan a (hash) range of objects in the current pg

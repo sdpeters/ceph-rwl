@@ -52,18 +52,8 @@ class PrioritizedQueue {
   typedef std::list<std::pair<unsigned, T> > ListPairs;
   template <class F>
   static unsigned filter_list_pairs(
-    ListPairs *l, F f,
-    std::list<T> *out) {
+    ListPairs *l, F &f) {
     unsigned ret = 0;
-    if (out) {
-      for (typename ListPairs::reverse_iterator i = l->rbegin();
-	   i != l->rend();
-	   ++i) {
-	if (f(i->second)) {
-	  out->push_front(i->second);
-	}
-      }
-    }
     for (typename ListPairs::iterator i = l->begin();
 	 i != l->end();
       ) {
@@ -152,11 +142,11 @@ class PrioritizedQueue {
       return q.empty();
     }
     template <class F>
-    void remove_by_filter(F f, std::list<T> *out) {
+    void remove_by_filter(F &f) {
       for (typename Classes::iterator i = q.begin();
 	   i != q.end();
 	   ) {
-	size -= filter_list_pairs(&(i->second), f, out);
+	size -= filter_list_pairs(&(i->second), f);
 	if (i->second.empty()) {
 	  if (cur == i)
 	    ++cur;
@@ -254,13 +244,13 @@ public:
   }
 
   template <class F>
-  void remove_by_filter(F f, std::list<T> *removed = 0) {
+  void remove_by_filter(F &f) {
     for (typename SubQueues::iterator i = queue.begin();
 	 i != queue.end();
 	 ) {
       unsigned priority = i->first;
       
-      i->second.remove_by_filter(f, removed);
+      i->second.remove_by_filter(f);
       if (i->second.empty()) {
 	++i;
 	remove_queue(priority);
@@ -271,7 +261,7 @@ public:
     for (typename SubQueues::iterator i = high_queue.begin();
 	 i != high_queue.end();
 	 ) {
-      i->second.remove_by_filter(f, removed);
+      i->second.remove_by_filter(f);
       if (i->second.empty()) {
 	high_queue.erase(i++);
       } else {

@@ -37,6 +37,7 @@
 #include "messages/MOSDECSubOpWriteReply.h"
 #include "messages/MOSDECSubOpRead.h"
 #include "messages/MOSDECSubOpReadReply.h"
+#include "messages/MOSDPGUpdateLogMissing.h"
 
 #include "messages/MOSDSubOp.h"
 #include "messages/MOSDRepOp.h"
@@ -195,9 +196,10 @@ PG::PG(OSDService *o, OSDMapRef curmap,
   coll(p), pg_log(cct),
   pgmeta_oid(p.make_pgmeta_oid()),
   missing_loc(this),
-  recovery_item(this), stat_queue_item(this),
+  stat_queue_item(this),
   snap_trim_queued(false),
   scrub_queued(false),
+  recovery_queued(false),
   recovery_ops_active(0),
   role(0),
   state(0),
@@ -902,8 +904,6 @@ void PG::clear_primary_state()
 
   scrubber.reserved_peers.clear();
   scrub_after_recovery = false;
-
-  osd->recovery_wq.dequeue(this);
 
   agent_clear();
 }
@@ -1751,8 +1751,6 @@ void PG::activate(ObjectStore::Transaction& t,
       build_might_have_unfound();
 
       state_set(PG_STATE_DEGRADED);
-      dout(10) << "activate - starting recovery" << dendl;
-      osd->queue_for_recovery(this);
       if (have_unfound())
 	discover_all_missing(query_map);
     }
@@ -1970,6 +1968,17 @@ bool PG::requeue_scrub()
   }
 }
 
+void PG::queue_recovery(bool front)
+{
+  if (recovery_queued) {
+    dout(10) << "queue_recovery -- already queued" << dendl;
+  } else {
+    dout(10) << "queue_recovery -- queuing" << dendl;
+    recovery_queued = true;
+    osd->queue_for_recovery(this, front);
+  }
+}
+
 bool PG::queue_scrub()
 {
   assert(_lock.is_locked());
@@ -2096,8 +2105,7 @@ void PG::start_recovery_op(const hobject_t& soid)
   assert(recovering_oids.count(soid) == 0);
   recovering_oids.insert(soid);
 #endif
-  // TODOSAM: osd->osd-> not good
-  osd->osd->start_recovery_op(this, soid);
+  osd->start_recovery_op(this, soid);
 }
 
 void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
@@ -2113,8 +2121,11 @@ void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
   assert(recovering_oids.count(soid));
   recovering_oids.erase(soid);
 #endif
-  // TODOSAM: osd->osd-> not good
-  osd->osd->finish_recovery_op(this, soid, dequeue);
+  osd->finish_recovery_op(this, soid, dequeue);
+
+  if (!dequeue) {
+    queue_recovery();
+  }
 }
 
 static void split_replay_queue(
@@ -4469,41 +4480,85 @@ void PG::share_pg_info()
   }
 }
 
+void PG::append_log_entries_update_missing(
+  const list<pg_log_entry_t> &entries,
+  Context *on_local_complete)
+{
+  ObjectStore::Transaction *t = new ObjectStore::Transaction;
+  if (on_local_complete)
+    t->register_on_complete(on_local_complete);
+
+  assert(!entries.empty());
+  assert(entries.begin()->version > info.last_update);
+
+  PGLogEntryHandler rollbacker;
+  pg_log.append_new_log_entries(
+    info.last_backfill,
+    entries,
+    &rollbacker);
+  rollbacker.apply(this, t);
+  info.last_update = pg_log.get_head();
+
+  if (pg_log.get_missing().num_missing() == 0) {
+    // advance last_complete since nothing else is missing!
+    info.last_complete = info.last_update;
+  }
+
+  info.stats.stats_invalid = true;
+  dirty_info = true;
+  write_if_dirty(*t);
+  osd->store->queue_transaction_and_cleanup(osr.get(), t);
+}
+  
+
 /*
  * Share a new segment of this PG's log with some replicas, after PG is active.
  *
  * Updates peer_missing and peer_info.
  */
-void PG::share_pg_log()
+void PG::share_new_log_entries(
+  const list<pg_log_entry_t> &entries,
+  Context *on_local_complete)
 {
   dout(10) << __func__ << dendl;
   assert(is_primary());
 
-  set<pg_shard_t>::const_iterator a = actingbackfill.begin();
-  assert(a != actingbackfill.end());
-  set<pg_shard_t>::const_iterator end = actingbackfill.end();
-  while (a != end) {
-    pg_shard_t peer(*a);
-    ++a;
+  append_log_entries_update_missing(entries, on_local_complete);
+  for (set<pg_shard_t>::const_iterator i = actingbackfill.begin();
+       i != actingbackfill.end();
+       ++i) {
+    pg_shard_t peer(*i);
     if (peer == pg_whoami) continue;
+    assert(peer_missing.count(peer));
+    assert(peer_info.count(peer));
     pg_missing_t& pmissing(peer_missing[peer]);
     pg_info_t& pinfo(peer_info[peer]);
-
-    MOSDPGLog *m = new MOSDPGLog(
-      peer.shard, pg_whoami.shard,
-      info.last_update.epoch, info);
-    m->log.copy_after(pg_log.get_log(), pinfo.last_update);
-
-    for (list<pg_log_entry_t>::const_iterator i = m->log.log.begin();
-	 i != m->log.log.end();
-	 ++i) {
-      pmissing.add_next_event(*i);
-    }
-    pinfo.last_update = m->log.head;
-
+    PGLog::append_log_entries_update_missing(
+      pinfo.last_backfill,
+      entries,
+      NULL,
+      pmissing,
+      NULL,
+      this);
+    pinfo.last_update = info.last_update;
+    pinfo.stats.stats_invalid = true;
+    MOSDPGUpdateLogMissing *m = new MOSDPGUpdateLogMissing(
+      entries,
+      spg_t(info.pgid.pgid, i->shard),
+      pg_whoami.shard,
+      get_osdmap()->get_epoch());
     osd->send_message_osd_cluster(peer.osd, m, get_osdmap()->get_epoch());
   }
 }
+
+void PG::do_update_log_missing(OpRequestRef &op)
+{
+  MOSDPGUpdateLogMissing *m = static_cast<MOSDPGUpdateLogMissing*>(
+    op->get_req());
+  assert(m->get_type() == MSG_OSD_PG_UPDATE_LOG_MISSING);
+  append_log_entries_update_missing(m->entries, NULL);
+}
+
 
 void PG::update_history_from_master(pg_history_t new_history)
 {
@@ -5172,6 +5227,9 @@ bool PG::can_discard_request(OpRequestRef& op)
     return can_discard_replica_op<MOSDECSubOpReadReply, MSG_OSD_EC_READ_REPLY>(op);
   case MSG_OSD_REP_SCRUB:
     return can_discard_replica_op<MOSDRepScrub, MSG_OSD_REP_SCRUB>(op);
+  case MSG_OSD_PG_UPDATE_LOG_MISSING:
+    return can_discard_replica_op<
+      MOSDPGUpdateLogMissing, MSG_OSD_PG_UPDATE_LOG_MISSING>(op);
 
   case MSG_OSD_PG_SCAN:
     return can_discard_scan(op);
@@ -5258,6 +5316,11 @@ bool PG::op_must_wait_for_map(epoch_t cur_epoch, OpRequestRef& op)
     return !have_same_or_newer_map(
       cur_epoch,
       static_cast<MOSDRepScrub*>(op->get_req())->map_epoch);
+
+  case MSG_OSD_PG_UPDATE_LOG_MISSING:
+    return !have_same_or_newer_map(
+      cur_epoch,
+      static_cast<MOSDPGUpdateLogMissing*>(op->get_req())->map_epoch);
   }
   assert(0);
   return false;
@@ -5792,7 +5855,7 @@ PG::RecoveryState::Backfilling::Backfilling(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
   PG *pg = context< RecoveryMachine >().pg;
   pg->backfill_reserved = true;
-  pg->osd->queue_for_recovery(pg);
+  pg->queue_recovery();
   pg->state_clear(PG_STATE_BACKFILL_TOOFULL);
   pg->state_clear(PG_STATE_BACKFILL_WAIT);
   pg->state_set(PG_STATE_BACKFILL);
@@ -5822,8 +5885,6 @@ PG::RecoveryState::Backfilling::react(const RemoteReservationRejected &)
       }
     }
   }
-
-  pg->osd->recovery_wq.dequeue(pg);
 
   pg->waiting_on_backfill.clear();
   pg->finish_recovery_op(hobject_t::get_max());
@@ -6239,7 +6300,7 @@ PG::RecoveryState::Recovering::Recovering(my_context ctx)
   PG *pg = context< RecoveryMachine >().pg;
   pg->state_clear(PG_STATE_RECOVERY_WAIT);
   pg->state_set(PG_STATE_RECOVERING);
-  pg->osd->queue_for_recovery(pg);
+  pg->queue_recovery();
 }
 
 void PG::RecoveryState::Recovering::release_reservations()
@@ -6499,10 +6560,11 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
     pg->queue_snap_trim();
   }
 
-  if (!pg->is_clean() &&
+  if (pg->is_peered() &&
+      !pg->is_clean() &&
       !pg->get_osdmap()->test_flag(CEPH_OSDMAP_NOBACKFILL) &&
       (!pg->get_osdmap()->test_flag(CEPH_OSDMAP_NOREBALANCE) || pg->is_degraded())) {
-    pg->osd->queue_for_recovery(pg);
+    pg->queue_recovery();
   }
   return forward_event();
 }
@@ -6566,8 +6628,9 @@ boost::statechart::result PG::RecoveryState::Active::react(const MLogRec& logevt
     pg->peer_missing[logevt.from],
     logevt.from,
     context< RecoveryMachine >().get_recovery_ctx());
-  if (got_missing)
-    pg->osd->queue_for_recovery(pg);
+  if (pg->is_peered() &&
+      got_missing)
+    pg->queue_recovery();
   return discard_event();
 }
 

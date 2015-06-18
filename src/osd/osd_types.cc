@@ -3393,7 +3393,6 @@ void pg_missing_t::add_next_event(const pg_log_entry_t& e)
       missing[e.soid] = item(e.version, eversion_t());  // .have = nil
     } else if (missing.count(e.soid)) {
       // already missing (prior).
-      //assert(missing[e.soid].need == e.prior_version);
       rmissing.erase(missing[e.soid].need.version);
       missing[e.soid].need = e.version;  // leave .have unchanged.
     } else if (e.is_backlog()) {

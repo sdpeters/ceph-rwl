@@ -188,6 +188,7 @@ public:
   bool pool_snaps;
   bool write_fadvise_dontneed;
   int snapname_num;
+  const bool replica_random_read;
 
   RadosTestContext(const string &pool_name, 
 		   int max_in_flight,
@@ -197,6 +198,7 @@ public:
 		   bool no_omap,
 		   bool pool_snaps,
 		   bool write_fadvise_dontneed,
+		   bool replica_random_read,
 		   const char *id = 0) :
     state_lock("Context Lock"),
     pool_obj_cont(),
@@ -213,7 +215,8 @@ public:
     no_omap(no_omap),
     pool_snaps(pool_snaps),
     write_fadvise_dontneed(write_fadvise_dontneed),
-    snapname_num(0)
+    snapname_num(0),
+    replica_random_read(false)
   {
   }
 
@@ -1073,7 +1076,15 @@ public:
       op.omap_get_header(&header, 0);
     }
     op.getxattrs(&xattrs, 0);
-    assert(!context->io_ctx.aio_operate(context->prefix+oid, completion, &op, 0));
+    int r = !context->io_ctx.aio_operate(
+      context->prefix+oid,
+      completion,
+      &op,
+      (context->replica_random_read ?
+       librados::OPERATION_BALANCE_READS :
+       librados::OPERATION_NOFLAG),
+      0);
+    assert(r == 0);
     if (snap >= 0) {
       context->io_ctx.snap_set_read(0);
     }

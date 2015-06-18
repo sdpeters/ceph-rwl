@@ -25,7 +25,18 @@
 #include <list>
 using namespace std;
 
-struct PGLog {
+struct PGLog : DoutPrefixProvider {
+  DoutPrefixProvider *prefix_provider;
+  string gen_prefix() const {
+    return prefix_provider ? prefix_provider->gen_prefix() : "";
+  }
+  unsigned get_subsys() const {
+    return prefix_provider ? prefix_provider->get_subsys() : ceph_subsys_osd;
+  }
+  CephContext *get_cct() const {
+    return cct;
+  }
+
   ////////////////////////////// sub classes //////////////////////////////
   struct LogEntryHandler {
     virtual void rollback(
@@ -374,7 +385,8 @@ protected:
     check();
   }
 public:
-  PGLog(CephContext *cct = 0) :
+  PGLog(CephContext *cct, DoutPrefixProvider *dpp = 0) :
+    prefix_provider(dpp),
     pg_log_debug(!(cct && !(cct->_conf->osd_debug_pg_log_writeout))),
     touched_log(false), dirty_from(eversion_t::max()),
     writeout_from(eversion_t::max()),
@@ -570,7 +582,8 @@ protected:
     eversion_t olog_can_rollback_to,     ///< [in] rollback boundary
     pg_missing_t &omissing,              ///< [in,out] missing to adjust, use
     boost::optional<pair<eversion_t, hobject_t> > *new_divergent_prior,
-    LogEntryHandler *rollbacker          ///< [in] optional rollbacker object
+    LogEntryHandler *rollbacker,         ///< [in] optional rollbacker object
+    const DoutPrefixProvider *dpp        ///< [in] logging provider
     );
 
   /// Merge all entries using above
@@ -581,7 +594,8 @@ protected:
     eversion_t olog_can_rollback_to,     ///< [in] rollback boundary
     pg_missing_t &omissing,              ///< [in,out] missing to adjust, use
     map<eversion_t, hobject_t> *priors,  ///< [out] target for new priors
-    LogEntryHandler *rollbacker          ///< [in] optional rollbacker object
+    LogEntryHandler *rollbacker,         ///< [in] optional rollbacker object
+    const DoutPrefixProvider *dpp        ///< [in] logging provider
     ) {
     map<hobject_t, list<pg_log_entry_t> > split;
     split_by_object(entries, &split);
@@ -597,7 +611,8 @@ protected:
 	olog_can_rollback_to,
 	omissing,
 	&new_divergent_prior,
-	rollbacker);
+	rollbacker,
+	dpp);
       if (priors && new_divergent_prior) {
 	(*priors)[new_divergent_prior->first] = new_divergent_prior->second;
       }
@@ -624,7 +639,8 @@ protected:
       log.can_rollback_to,
       missing,
       &new_divergent_prior,
-      rollbacker);
+      rollbacker,
+      this);
     if (new_divergent_prior)
       add_divergent_prior(
 	(*new_divergent_prior).first,
@@ -639,6 +655,26 @@ public:
 		 pg_shard_t from,
 		 pg_info_t &info, LogEntryHandler *rollbacker,
 		 bool &dirty_info, bool &dirty_big_info);
+
+  static void append_log_entries_update_missing(
+    const hobject_t &last_backfill,
+    const list<pg_log_entry_t> &entries,
+    IndexedLog *log,
+    pg_missing_t &missing,
+    LogEntryHandler *rollbacker,
+    const DoutPrefixProvider *dpp);
+  void append_new_log_entries(
+    const hobject_t &last_backfill,
+    const list<pg_log_entry_t> &entries,
+    LogEntryHandler *rollbacker) {
+    append_log_entries_update_missing(
+      last_backfill,
+      entries,
+      &log,
+      missing,
+      rollbacker,
+      this);
+  }
 
   void write_log(ObjectStore::Transaction& t,
 		 map<string,bufferlist> *km,
@@ -673,6 +709,7 @@ public:
     return read_log(
       store, pg_coll, log_coll, log_oid, info, divergent_priors,
       log, missing, oss,
+      this,
       (pg_log_debug ? &log_keys_debug : 0));
   }
 
@@ -681,6 +718,7 @@ public:
     const pg_info_t &info, map<eversion_t, hobject_t> &divergent_priors,
     IndexedLog &log,
     pg_missing_t &missing, ostringstream &oss,
+    const DoutPrefixProvider *dpp = NULL,
     set<string> *log_keys_debug = 0
     );
 };
