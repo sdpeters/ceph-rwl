@@ -1749,6 +1749,7 @@ public:
     RECALC_OP_TARGET_OSD_DOWN,
   };
   bool _osdmap_full_flag() const;
+  bool _osdmap_pool_full_flag() const;
 
   bool target_should_be_paused(op_target_t *op);
   int _calc_target(op_target_t *t, epoch_t *last_force_resend=0, bool any_change=false);

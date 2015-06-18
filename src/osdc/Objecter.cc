@@ -1006,7 +1006,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
   }
 
   bool was_pauserd = osdmap->test_flag(CEPH_OSDMAP_PAUSERD);
-  bool was_full = _osdmap_full_flag();
+  bool was_full = _osdmap_full_flag() || _osdmap_pool_full_flag();
   bool was_pausewr = osdmap->test_flag(CEPH_OSDMAP_PAUSEWR) || was_full;
 
   list<LingerOp*> need_resend_linger;
@@ -1108,7 +1108,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
   }
 
   bool pauserd = osdmap->test_flag(CEPH_OSDMAP_PAUSERD);
-  bool pausewr = osdmap->test_flag(CEPH_OSDMAP_PAUSEWR) || _osdmap_full_flag();
+  bool pausewr = osdmap->test_flag(CEPH_OSDMAP_PAUSEWR) || _osdmap_full_flag() || _osdmap_pool_full_flag();
 
   // was/is paused?
   if (was_pauserd || was_pausewr || pauserd || pausewr || osdmap->get_epoch() < epoch_barrier) {
@@ -2353,8 +2353,9 @@ bool Objecter::is_pg_changed(
 
 bool Objecter::target_should_be_paused(op_target_t *t)
 {
+  const pg_pool_t *pi = osdmap->get_pg_pool(t->base_oloc.pool);
   bool pauserd = osdmap->test_flag(CEPH_OSDMAP_PAUSERD);
-  bool pausewr = osdmap->test_flag(CEPH_OSDMAP_PAUSEWR) || _osdmap_full_flag();
+  bool pausewr = osdmap->test_flag(CEPH_OSDMAP_PAUSEWR) || _osdmap_full_flag() || pi->has_flag(pg_pool_t::FLAG_FULL);
 
   return (t->flags & CEPH_OSD_FLAG_READ && pauserd) ||
          (t->flags & CEPH_OSD_FLAG_WRITE && pausewr) ||
@@ -2395,6 +2396,15 @@ bool Objecter::_osdmap_full_flag() const
 {
   // Ignore the FULL flag if the caller has honor_osdmap_full
   return osdmap->test_flag(CEPH_OSDMAP_FULL) && honor_osdmap_full;
+}
+bool Objecter::_osdmap_pool_full_flag() const
+{
+  for (map<int64_t, pg_pool_t>::const_iterator it = osdmap->get_pools().begin();
+       it != osdmap->get_pools().end(); it++) {
+    if (it->second.has_flag(pg_pool_t::FLAG_FULL))
+      return true;
+  }
+  return false;
 }
 
 
