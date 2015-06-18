@@ -556,21 +556,23 @@ int DataScan::recover()
   return 0;
 }
 
-int MetadataDriver::read_fnode(inodeno_t ino, frag_t frag, fnode_t *fnode)
+int MetadataDriver::read_fnode(
+    inodeno_t ino, frag_t frag, fnode_t *fnode,
+    uint64_t *last_version)
 {
   assert(fnode != NULL);
 
   object_t frag_oid = InodeStore::get_object_name(ino, frag, "");
-  bufferlist old_fnode_bl;
-  int r = metadata_io.omap_get_header(frag_oid.name, &old_fnode_bl);
+  bufferlist fnode_bl;
+  int r = metadata_io.omap_get_header(frag_oid.name, &fnode_bl);
+  *last_version = metadata_io.get_last_version();
   if (r < 0) {
     return r;
   }
 
-  bufferlist::iterator old_fnode_iter = old_fnode_bl.begin();
+  bufferlist::iterator old_fnode_iter = fnode_bl.begin();
   try {
-    fnode_t old_fnode;
-    old_fnode.decode(old_fnode_iter);
+    (*fnode).decode(old_fnode_iter);
   } catch (const buffer::error &err) {
     return -EINVAL;
   }
@@ -934,9 +936,6 @@ int MetadataDriver::inject_with_backtrace(
         // existing metadata with the one that we have just recovered
         // from scan_extents phase
       } else {
-        // FIXME: at this point we should set a flag to recover
-        // this inode in a /_recovery/<inodeno>.data file as we
-        // can't recover it into its desired filesystem position.
         derr << "Dentry 0x" << std::hex
           << parent_ino << std::dec << "/"
           << dname << " already exists but points to 0x"
@@ -1050,7 +1049,10 @@ int MetadataDriver::find_or_create_dirfrag(
   fnode_t existing_fnode;
   *created = false;
 
-  int r = read_fnode(ino, fragment, &existing_fnode);
+  uint64_t read_version = 0;
+  int r = read_fnode(ino, fragment, &existing_fnode, &read_version);
+  dout(10) << "read_version = " << read_version << dendl;
+
   if (r == -ENOENT || r == -EINVAL) {
     // Missing or corrupt fnode, create afresh
     bufferlist fnode_bl;
@@ -1058,19 +1060,33 @@ int MetadataDriver::find_or_create_dirfrag(
     blank_fnode.version = 1;
     blank_fnode.encode(fnode_bl);
 
-    // TODO: for the ENOENT case, do an 'exclusive create' op
-    // at the start of this write op, so that multiple
-    // writers won't both think they did the create.
-    // For the EINVAL case, we don't have a neat way to do
-    // that, so we will potentially have two writers thinking
-    // they both created a dirfrag, and both linking it into
-    // (two different places) in the hierarchy.  But that's not
-    // fatal as a seperate operation to resolve multiple
-    // metadata linkage is needed anyway.
+
+    librados::ObjectWriteOperation op;
+
+    if (read_version) {
+      assert(r == -EINVAL);
+      // Case A: We must assert that the version isn't changed since we saw the object
+      // was unreadable, to avoid the possibility of two data-scan processes
+      // both creating the frag.
+      op.assert_version(read_version);
+    } else {
+      assert(r == -ENOENT);
+      // Case B: The object didn't exist in read_fnode, so while creating it we must
+      // use an exclusive create to correctly populate *creating with
+      // whether we created it ourselves or someone beat us to it.
+      op.create(true);
+    }
 
     object_t frag_oid = InodeStore::get_object_name(ino, fragment, "");
-    r = metadata_io.omap_set_header(frag_oid.name, fnode_bl);
-    if (r < 0) {
+    op.omap_set_header(fnode_bl);
+    r = metadata_io.operate(frag_oid.name, &op);
+    if (r == -EOVERFLOW) {
+      // Someone else created it (see case A above)
+      dout(10) << "Dirfrag creation race: 0x" << std::hex
+        << ino << " " << fragment << std::dec << dendl;
+      *created = false;
+      return 0;
+    } else if (r < 0) {
       derr << "Failed to create dirfrag 0x" << std::hex
         << ino << std::dec << ": " << cpp_strerror(r) << dendl;
       return r;

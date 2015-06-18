@@ -139,7 +139,8 @@ class MetadataDriver : public RecoveryDriver
     /**
      * Try and read an fnode from a dirfrag
      */
-    int read_fnode(inodeno_t ino, frag_t frag, fnode_t *fnode);
+    int read_fnode(inodeno_t ino, frag_t frag,
+                   fnode_t *fnode, uint64_t *read_version);
 
     /**
      * Try and read a dentry from a dirfrag
