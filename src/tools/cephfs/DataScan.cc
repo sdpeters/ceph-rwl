@@ -443,7 +443,7 @@ int DataScan::recover()
       try {
         bufferlist::iterator q = parent_bl.begin();
         backtrace.decode(q);
-        have_backtrace = true;
+        have_backtrace = backtrace.ancestors.size() > 0;
       } catch (buffer::error &e) {
         dout(4) << "Corrupt backtrace on '" << oid << "': " << e << dendl;
       }
@@ -522,15 +522,28 @@ int DataScan::recover()
 
     // Inject inode to the metadata pool
     if (have_backtrace) {
-      // TODO: inspect backtrace and fall back to lost+found
-      // for some or all stray cases.
-      r = driver->inject_with_backtrace(
-          backtrace, file_size, file_mtime, chunk_size, data_pool_id);
-      if (r < 0) {
-        dout(4) << "Error injecting 0x" << std::hex << backtrace.ino
-          << std::dec << " with backtrace: " << cpp_strerror(r) << dendl;
+      inode_backpointer_t root_bp = *(backtrace.ancestors.rbegin());
+      if (MDS_INO_IS_MDSDIR(root_bp.dirino)) {
+        /* Special case for strays: even if we have a good backtrace,
+         * don't put it in the stray dir, because while that would technically
+         * give it linkage it would still be invisible to the user */
+        r = driver->inject_lost_and_found(
+            obj_name_ino, file_size, file_mtime, chunk_size, data_pool_id);
+        if (r < 0) {
+          dout(4) << "Error injecting 0x" << std::hex << backtrace.ino
+            << std::dec << " into lost+found: " << cpp_strerror(r) << dendl;
+        }
+      } else {
+        /* Happy case: we will inject a named dentry for this inode */
+        r = driver->inject_with_backtrace(
+            backtrace, file_size, file_mtime, chunk_size, data_pool_id);
+        if (r < 0) {
+          dout(4) << "Error injecting 0x" << std::hex << backtrace.ino
+            << std::dec << " with backtrace: " << cpp_strerror(r) << dendl;
+        }
       }
     } else {
+      /* Backtrace-less case: we will inject a lost+found dentry */
       r = driver->inject_lost_and_found(
           obj_name_ino, file_size, file_mtime, chunk_size, data_pool_id);
       if (r < 0) {
