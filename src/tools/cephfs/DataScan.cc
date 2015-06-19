@@ -944,7 +944,8 @@ int MetadataDriver::inject_with_backtrace(
           << dname << " already exists but points to 0x"
           << std::hex << existing_dentry.inode.ino << std::dec << dendl;
         // Fall back to lost+found!
-        break;
+        return inject_lost_and_found(backtrace.ino, file_size, file_mtime,
+            chunk_size, data_pool_id);
       }
     }
 
