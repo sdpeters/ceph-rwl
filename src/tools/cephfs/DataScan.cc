@@ -646,6 +646,9 @@ int MetadataDriver::inject_lost_and_found(
   if (r == -ENOENT || r == -EINVAL) {
     // Inject dentry
     lf_ino.inode.mode = 0755 | S_IFDIR;
+    // Set nfiles to something non-zero, to fool any other code
+    // that tries to ignore 'empty' directories.  This won't be
+    // accurate, but it should avoid functional issues.
     lf_ino.inode.dirstat.nfiles = 1;
     lf_ino.inode.size = 1;
     lf_ino.inode.nlink = 1;
@@ -1081,16 +1084,18 @@ int MetadataDriver::find_or_create_dirfrag(
     op.omap_set_header(fnode_bl);
     r = metadata_io.operate(frag_oid.name, &op);
     if (r == -EOVERFLOW) {
-      // Someone else created it (see case A above)
+      // Someone else wrote it (see case A above)
       dout(10) << "Dirfrag creation race: 0x" << std::hex
         << ino << " " << fragment << std::dec << dendl;
       *created = false;
       return 0;
     } else if (r < 0) {
+      // We were unable to create or write it, error out
       derr << "Failed to create dirfrag 0x" << std::hex
         << ino << std::dec << ": " << cpp_strerror(r) << dendl;
       return r;
     } else {
+      // Success: the dirfrag object now exists with a value header
       dout(10) << "Created dirfrag: 0x" << std::hex
         << ino << std::dec << dendl;
       *created = true;
