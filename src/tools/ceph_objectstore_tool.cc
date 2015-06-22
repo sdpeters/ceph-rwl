@@ -699,7 +699,7 @@ int ObjectStoreTool::export_files(ObjectStore *store, coll_t coll)
     for (vector<ghobject_t>::iterator i = objects.begin();
 	 i != objects.end();
 	 ++i) {
-      if (i->is_pgmeta()) {
+      if (i->is_pgmeta() || i->hobj.is_meta() || i->hobj.is_temp()) {
 	continue;
       }
       r = export_file(store, coll, *i);
