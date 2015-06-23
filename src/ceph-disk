@@ -32,6 +32,8 @@ import tempfile
 import uuid
 import time
 import shlex
+import pwd
+import grp
 
 """
 Prepare:
@@ -628,6 +630,7 @@ def write_one_line(parent, name, text):
     with file(tmp, 'wb') as tmp_file:
         tmp_file.write(text + '\n')
         os.fsync(tmp_file.fileno())
+        path_set_context(tmp)
     os.rename(tmp, path)
 
 
@@ -708,6 +711,30 @@ def get_osd_id(path):
         check_osd_id(osd_id)
     return osd_id
 
+def get_ceph_user():
+    if pwd.getpwnam('ceph') and grp.getgrnam('ceph'):
+        return 'ceph'
+    else:
+        return 'root'
+
+def path_set_context(path):
+    # restore selinux context to default policy values
+    if which('restorecon'):
+        command(
+           [
+                'restorecon', '-R',
+                path,
+                ],
+           )
+
+    # if ceph user exists, set owner to ceph
+    if get_ceph_user() == 'ceph':
+        command(
+           [
+                'chown', '-R', 'ceph:ceph',
+                path,
+                 ],
+           )
 
 def _check_output(args=None, **kwargs):
     out, ret = command(args, **kwargs)
@@ -939,12 +966,6 @@ def mount(
                 path,
                 ],
             )
-        command(
-           [
-                'restorecon',
-                path,
-                ],
-           )
     except subprocess.CalledProcessError as e:
         try:
             os.rmdir(path)
@@ -1483,6 +1504,7 @@ def prepare_dev(
                 journal_dmcrypt=journal_dmcrypt,
                 )
         finally:
+            path_set_context(path)
             unmount(path)
     finally:
         if rawdev != dev:
@@ -1780,6 +1802,8 @@ def mkfs(
             '--osd-journal', os.path.join(path, 'journal'),
             '--osd-uuid', fsid,
             '--keyring', os.path.join(path, 'keyring'),
+            '--setuser', get_ceph_user(),
+            '--setgroup', get_ceph_user(),
             ],
         )
     # TODO ceph-osd --mkfs removes the monmap file?
