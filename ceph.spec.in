@@ -185,6 +185,7 @@ Summary:	Rados REST gateway
 Group:		Development/Libraries
 Requires:	ceph-common = %{epoch}:%{version}-%{release}
 Requires:	librados2 = %{epoch}:%{version}-%{release}
+Requires:	mailcap
 %if 0%{defined suse_version}
 BuildRequires:	libexpat-devel
 BuildRequires:	FastCGI-devel
