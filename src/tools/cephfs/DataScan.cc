@@ -489,8 +489,6 @@ int DataScan::recover()
           // an educated guess that this object's size is probably the chunk
           // size.
         
-          // TODO: provide a means for the user to specify the layout, as
-          // for e.g. striped layouts there is no way we can infer it.
           if ((obj_size & (obj_size - 1)) == 0 && obj_size >= max_obj_size) {
             chunk_size = obj_size;
           } else {
@@ -659,8 +657,6 @@ int MetadataDriver::inject_lost_and_found(
     lf_ino.inode.ino = CEPH_INO_LOST_AND_FOUND;
     lf_ino.inode.version = 1;
     lf_ino.inode.backtrace_version = 1;
-    // TODO: we should probably fragment this by default, as we will
-    // potentially write very many dentries.
     r = inject_linkage(CEPH_INO_ROOT, "lost+found", frag_t(), lf_ino);
     if (r < 0) {
       return r;
@@ -842,11 +838,6 @@ int MetadataDriver::inject_with_backtrace(
   // a whole tree, as backtraces will in general not be up to date
   // beyond the first parent, if anything in the trace was ever
   // moved after the file was created.
-  //
-  // TODO: it would perhaps be good to have a "soft touch" model
-  // where we only inject a dentry if its immediate parent already
-  // exists, rather than potentially injecting a bunch of bogus
-  // ancestry.
 
   // On inode numbers
   // ================
@@ -874,8 +865,6 @@ int MetadataDriver::inject_with_backtrace(
   // Note this isn't 100% safe: if we die immediately after creating dirfrag
   // object, next run will fail to create linkage for the dirfrag object
   // and leave it orphaned.
-  //
-  // TODO: Tool for linking in orphan dirfrag objects!
 
   inodeno_t ino = backtrace.ino;
   dout(10) << "  inode: 0x" << std::hex << ino << std::dec << dendl;
@@ -896,17 +885,6 @@ int MetadataDriver::inject_with_backtrace(
       dout(20) << "don't know fragment for 0x" << std::hex <<
         parent_ino << std::dec << "/" << dname << ", will insert to root"
         << dendl;
-
-      // TODO: if we can't find it by following backtrace back by inos,
-      // we *could* try finding it by following dnames forwards
-      // from the root, but that only works if we're lucky and the
-      // backtrace is up to date.  Might not be worth implementing,
-      // if we can just use live injection (i.e. via a running MDCache)
-      // for that case.
-  
-      // TODO: limited-size cache of directory fragtrees, so that when
-      // injecting lots of files to a dir we don't keep on doing
-      // the lookup process to learn its fragtree
     }
 
     // Find or create dirfrag
@@ -916,9 +894,6 @@ int MetadataDriver::inject_with_backtrace(
     if (r < 0) {
       return r;
     }
-
-    // TODO: if backtrace does not end at root, and the most distance ancestor
-    // did not exist, then link the most distant ancestor into lost+found
 
     // Check if dentry already exists
     // ==============================
@@ -939,9 +914,6 @@ int MetadataDriver::inject_with_backtrace(
         dout(20) << "Dentry 0x" << std::hex
           << parent_ino << std::dec << "/"
           << dname << " already exists and points to me" << dendl;
-        // TODO: a tool or frag to overwrite the 'size' in the
-        // existing metadata with the one that we have just recovered
-        // from scan_extents phase
       } else {
         derr << "Dentry 0x" << std::hex
           << parent_ino << std::dec << "/"
@@ -1014,34 +986,6 @@ int MetadataDriver::inject_with_backtrace(
       // Proceed up the backtrace, creating parents
       ino = parent_ino;
     }
-
-    // TODO ensure that injected inode has layout pointing to this pool (if
-    // none of its ancestor layouts does)
-
-    // TODO handle backtraces pointing to stray dirs of MDS ranks that
-    // don't exist
-
-    // TODO handle strays in general: if something was stray but had
-    // hard links, we can't know its linked name, but we can shove it
-    // some recovery directory.
-
-    // TODO for objects with no backtrace, OPTIONALLY (don't do it by
-    // default) write them a /_recovered/<inodeno>.data backtrace and
-    // link them in there.  In general backtrace-less objects are
-    // just journalled metadata that hasn't landed yet, we should only
-    // override that if we are explicitly told to, or if a full
-    // forward scrub has failed to tag them.
-
-    // TODO scan objects for size of recovered inode.  We can either
-    // do this inline here, OR we can rely on a full scan also
-    // touching all other objects, and updating max size of inode
-    // every time we see it (but that gets complicated with multiple
-    // workers).  Maybe also a fast path for <4MB objects that sets size
-    // to the size of the 0000th object when that size is <4MB.  More generally,
-    // we could do this in an initial pass that just looks at all objects,
-    // and sets an xattr on the 0000th object (including creating it if necessary)
-    // to the maximum seen (may need a special RADOS op to do a "set if greater"
-    // xattr write)
   }
 
   return 0;
