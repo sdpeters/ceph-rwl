@@ -23,88 +23,10 @@ CLS_VER(1,0)
 CLS_NAME(cephfs_size_scan)
 
 cls_handle_t h_class;
-cls_method_handle_t h_set_if_greater;
 cls_method_handle_t h_accumulate_inode_metadata;
 
 /**
- * Set a named xattr to a given integer, if and only if the xattr
- * is not already set to a greater integer.
- *
- * If the xattr is missing, or does not encode an integer, then
- * it is set to the input integer.
- *
- * On success, the output buffer is populated with the resulting
- * integer contained in the xattr.  On failure, a nonzero value is
- * returned and the contents of the output buffer are undefined.
- *
- * @param in: encoded xattr name, uint64_t
- * @param out: the resulting value of the named xattr
- */
-static int set_if_greater(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
-{
-  assert(in != NULL);
-  assert(out != NULL);
-
-  std::string xattr_name;
-  uint64_t input_val = 0;
-
-  // Decode `in`
-  bufferlist::iterator q = in->begin();
-  try {
-    ::decode(xattr_name, q);
-    ::decode(input_val, q);
-  } catch (const buffer::error &err) {
-    return -EINVAL;
-  }
-
-  // Load existing xattr value
-  uint64_t existing_val = 0;
-  bufferlist existing_bl;
-  bool set_it = false;
-  int r = cls_cxx_getxattr(hctx, xattr_name.c_str(), &existing_bl);
-  if (r == -ENOENT || existing_bl.length() == 0) {
-    set_it = true;
-  } else if (r == 0) {
-    bufferlist::iterator existing_p = existing_bl.begin();
-    try {
-      ::decode(existing_val, existing_p);
-      if (!existing_p.end()) {
-        // Trailing junk?  Consider it invalid and overwrite
-        set_it = true;
-      } else {
-        // Valid existing value, do comparison
-        set_it = input_val > existing_val;
-      }
-    } catch (const buffer::error &err) {
-      // Corrupt or empty existing value, overwrite it
-      set_it = true;
-    }
-  } else {
-    return r;
-  }
-
-  // Conditionally set the new xattr
-  uint64_t result_val;
-  if (set_it) {
-    bufferlist set_bl;
-    ::encode(input_val, set_bl);
-    r = cls_cxx_setxattr(hctx, xattr_name.c_str(), &set_bl);
-    if (r < 0) {
-      return r;
-    }
-    result_val = input_val;
-  } else {
-    result_val = existing_val;
-  }
-
-  // Encode the result
-  ::encode(result_val, *out);
-
-  return 0;
-}
-
-/**
- * Value class for the xattr we'll use to accumulating
+ * Value class for the xattr we'll use to accumulate
  * the highest object seen for a given inode
  */
 class ObjCeiling {
@@ -147,11 +69,22 @@ std::ostream &operator<<(std::ostream &out, ObjCeiling &in)
 
 
 /**
- * Helper for setting an xattr iff the input value compares as
- * greater than an existing value decoded from the xattr.
+ * Set a named xattr to a given integer, if and only if the xattr
+ * is not already set to a greater integer.
+ *
+ * If the xattr is missing, or does not encode an integer, then
+ * it is set to the input integer.
+ *
+ * On success, the output buffer is populated with the resulting
+ * integer contained in the xattr.  On failure, a nonzero value is
+ * returned and the contents of the output buffer are undefined.
+ *
+ * @param in: encoded xattr name, uint64_t
+ * @param out: the resulting value of the named xattr
  */
 template <typename A>
-static int set_if_greater(cls_method_context_t hctx, const std::string &xattr_name, const A input_val)
+static int set_if_greater(cls_method_context_t hctx,
+    const std::string &xattr_name, const A input_val)
 {
   bufferlist existing_val_bl;
 
@@ -163,44 +96,6 @@ static int set_if_greater(cls_method_context_t hctx, const std::string &xattr_na
     bufferlist::iterator existing_p = existing_val_bl.begin();
     try {
       A existing_val;
-      ::decode(existing_val, existing_p);
-      if (!existing_p.end()) {
-        // Trailing junk?  Consider it invalid and overwrite
-        set_val = true;
-      } else {
-        // Valid existing value, do comparison
-        set_val = input_val > existing_val;
-      }
-    } catch (const buffer::error &err) {
-      // Corrupt or empty existing value, overwrite it
-      set_val = true;
-    }
-  } else {
-    return r;
-  }
-
-  // Conditionally set the new xattr
-  if (set_val) {
-    bufferlist set_bl;
-    ::encode(input_val, set_bl);
-    return cls_cxx_setxattr(hctx, xattr_name.c_str(), &set_bl);
-  } else {
-    return 0;
-  }
-}
-
-static int set_if_greater(cls_method_context_t hctx, const std::string &xattr_name, const ObjCeiling input_val)
-{
-  bufferlist existing_val_bl;
-
-  bool set_val = false;
-  int r = cls_cxx_getxattr(hctx, xattr_name.c_str(), &existing_val_bl);
-  if (r == -ENOENT || existing_val_bl.length() == 0) {
-    set_val = true;
-  } else if (r >= 0) {
-    bufferlist::iterator existing_p = existing_val_bl.begin();
-    try {
-      ObjCeiling existing_val;
       ::decode(existing_val, existing_p);
       if (!existing_p.end()) {
         // Trailing junk?  Consider it invalid and overwrite
@@ -282,8 +177,5 @@ void __cls_init()
   cls_register_cxx_method(h_class, "accumulate_inode_metadata",
 			  CLS_METHOD_WR | CLS_METHOD_RD,
 			  accumulate_inode_metadata, &h_accumulate_inode_metadata);
-  cls_register_cxx_method(h_class, "set_if_greater",
-			  CLS_METHOD_WR | CLS_METHOD_RD,
-			  set_if_greater, &h_set_if_greater);
 }
 
