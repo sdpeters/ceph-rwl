@@ -319,8 +319,6 @@ int DataScan::recover_extents()
     // Read size
     uint64_t size;
     time_t mtime;
-    // FIXME: by using librados, I throw away precision because it wants
-    // to make me use time_t instead of utime_t :-(
     r = data_io.stat(oid, &size, &mtime);
     if (r != 0) {
       dout(4) << "Cannot stat '" << oid << "': skipping" << dendl;
@@ -348,16 +346,11 @@ int DataScan::recover_extents()
     int r = ClsCephFSClient::accumulate_inode_metadata(
         data_io,
         inode_no,
-        AccumulateArgs(
-          obj_id,
-          size,
-          mtime,
-          std::string("scan_size"),
-          std::string("scan_mtime"),
-          std::string("scan_max_size")
-          ));
+        obj_id,
+        size,
+        mtime);
     if (r < 0) {
-      derr << "Failed to store size data from '"
+      derr << "Failed to accumulate metadata data from '"
         << oid << "': " << cpp_strerror(r) << dendl;
       continue;
     }
@@ -424,28 +417,36 @@ int DataScan::recover()
       continue;
     }
 
-    // Read backtrace
-    bool have_backtrace = false;
-    bufferlist parent_bl;
-    int r = data_io.getxattr(oid, "parent", parent_bl);
-    if (r == -ENODATA) {
-      dout(10) << "No backtrace on '" << oid << "'" << dendl;
-    } else if (r < 0) {
-      // TODO: accumulate these errors in a structure we can output
-      dout(4) << "Unexpected error on '" << oid << "': " << cpp_strerror(r) << dendl;
+    AccumulateResult accum_res;
+    inode_backtrace_t backtrace;
+    int r = ClsCephFSClient::fetch_inode_accumulate_result(
+        data_io, oid, &backtrace, &accum_res);
+    
+    if (r < 0) {
+      dout(4) << "Unexpected error loading accumulated metadata from '"
+              << oid << "': " << cpp_strerror(r) << dendl;
       continue;
     }
 
-    // Deserialize backtrace
-    inode_backtrace_t backtrace;
-    if (parent_bl.length()) {
-      try {
-        bufferlist::iterator q = parent_bl.begin();
-        backtrace.decode(q);
-        have_backtrace = backtrace.ancestors.size() > 0;
-      } catch (buffer::error &e) {
-        dout(4) << "Corrupt backtrace on '" << oid << "': " << e << dendl;
+    const time_t file_mtime = accum_res.max_mtime;
+    uint64_t file_size = 0;
+    uint32_t chunk_size = g_default_file_layout.fl_object_size;
+    bool have_backtrace = !(backtrace.ancestors.empty());
+
+    // Calculate file_size, guess chunk_size
+    if (accum_res.ceiling_obj_index > 0) {
+      // When there are multiple objects, the largest object probably
+      // indicates the chunk size.  But not necessarily, because files
+      // can be sparse.  Only make this assumption if size seen
+      // is a power of two, as chunk sizes typically are.
+      if ((accum_res.max_obj_size & (accum_res.max_obj_size - 1)) == 0) {
+        chunk_size = accum_res.max_obj_size;
       }
+
+      file_size = chunk_size * accum_res.ceiling_obj_index
+                  + accum_res.ceiling_obj_size;
+    } else {
+      file_size = accum_res.ceiling_obj_size;
     }
 
     // Santity checking backtrace ino against object name
@@ -454,67 +455,6 @@ int DataScan::recover()
         << " doesn't match object name ino 0x" << obj_name_ino
         << std::dec << dendl;
       have_backtrace = false;
-    }
-
-    // Read size
-    uint64_t obj_size = 0;
-    time_t obj_mtime = 0;
-    r = data_io.stat(oid, &obj_size, &obj_mtime);
-    if (r != 0) {
-      dout(4) << "Cannot stat '" << oid << "': skipping" << dendl;
-      continue;
-    }
-
-    // Read accumulated size from scan_extents phase
-    uint64_t file_size = 0;
-    uint32_t chunk_size = g_default_file_layout.fl_object_size;
-    bufferlist scan_size_bl;
-    r = data_io.getxattr(oid, "scan_size", scan_size_bl);
-    if (r >= 0) {
-      try {
-        bufferlist::iterator scan_size_bl_iter = scan_size_bl.begin();
-        uint64_t max_obj_id;
-        uint64_t max_obj_size;
-        ::decode(max_obj_id, scan_size_bl_iter);
-        ::decode(max_obj_size, scan_size_bl_iter);
-
-        if (max_obj_id > 0) {
-          // If there are more objects, and this object is a power of two
-          // that is greater than the size of the last object, then make
-          // an educated guess that this object's size is probably the chunk
-          // size.
-        
-          if ((obj_size & (obj_size - 1)) == 0 && obj_size >= max_obj_size) {
-            chunk_size = obj_size;
-          } else {
-            chunk_size = g_default_file_layout.fl_object_size;
-          }
-          file_size = chunk_size * max_obj_id + max_obj_size;
-        } else {
-          file_size = obj_size;
-        }
-      } catch (const buffer::error &err) {
-        dout(4) << "Invalid size attr on '" << oid << "'" << dendl;
-        file_size = obj_size;
-      }
-    } else {
-      file_size = obj_size;
-    }
-
-    // Read accumulated mtime from scan_extents phase
-    time_t file_mtime = 0;
-    bufferlist scan_mtime_bl;
-    r = data_io.getxattr(oid, "scan_mtime", scan_mtime_bl);
-    if (r >= 0) {
-      try {
-        bufferlist::iterator scan_mtime_bl_iter = scan_mtime_bl.begin();
-        ::decode(file_mtime, scan_mtime_bl_iter);
-      } catch (const buffer::error &err) {
-        dout(4) << "Invalid mtime attr on '" << oid << "'" << dendl;
-        file_mtime = obj_mtime;
-      }
-    } else {
-      file_mtime = obj_mtime;
     }
 
     // Inject inode to the metadata pool
