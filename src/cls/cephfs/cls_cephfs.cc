@@ -19,47 +19,15 @@
 
 #include "objclass/objclass.h"
 
+#include "cls_cephfs.h"
+
 CLS_VER(1,0)
 CLS_NAME(cephfs_size_scan)
 
 cls_handle_t h_class;
 cls_method_handle_t h_accumulate_inode_metadata;
 
-/**
- * Value class for the xattr we'll use to accumulate
- * the highest object seen for a given inode
- */
-class ObjCeiling {
-  public:
-    uint64_t id;
-    uint64_t size;
 
-    ObjCeiling()
-      : id(0), size(0)
-    {}
-
-    ObjCeiling(uint64_t id_, uint64_t size_)
-      : id(id_), size(size_)
-    {}
-
-    bool operator >(ObjCeiling const &rhs) const
-    {
-      return id > rhs.id;
-    }
-
-    void encode(bufferlist &bl) const
-    {
-      ::encode(id, bl);
-      ::encode(size, bl);
-    }
-
-    void decode(bufferlist::iterator &p)
-    {
-      ::decode(id, p);
-      ::decode(size, p);
-    }
-};
-WRITE_CLASS_ENCODER(ObjCeiling)
 
 std::ostream &operator<<(std::ostream &out, ObjCeiling &in)
 {
@@ -128,32 +96,29 @@ static int accumulate_inode_metadata(cls_method_context_t hctx,
   assert(in != NULL);
   assert(out != NULL);
 
-  std::string obj_xattr_name;
-  std::string mtime_xattr_name;
-  uint64_t input_obj_id = 0;
-  uint64_t input_obj_size = 0;
-  time_t input_mtime = 0;
   int r = 0;
 
   // Decode `in`
   bufferlist::iterator q = in->begin();
+  AccumulateArgs args;
   try {
-    ::decode(obj_xattr_name, q);
-    ::decode(mtime_xattr_name, q);
-    ::decode(input_obj_id, q);
-    ::decode(input_obj_size, q);
-    ::decode(input_mtime, q);
+    args.decode(q);
   } catch (const buffer::error &err) {
     return -EINVAL;
   }
 
-  ObjCeiling ceiling(input_obj_id, input_obj_size);
-  r = set_if_greater(hctx, obj_xattr_name, ceiling);
+  ObjCeiling ceiling(args.obj_index, args.obj_size);
+  r = set_if_greater(hctx, args.obj_xattr_name, ceiling);
   if (r < 0) {
     return r;
   }
 
-  r = set_if_greater(hctx, mtime_xattr_name, input_mtime);
+  r = set_if_greater(hctx, args.mtime_xattr_name, args.mtime);
+  if (r < 0) {
+    return r;
+  }
+
+  r = set_if_greater(hctx, args.obj_size_xattr_name, args.obj_size);
   if (r < 0) {
     return r;
   }
