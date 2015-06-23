@@ -18,6 +18,7 @@
 #include "include/util.h"
 
 #include "mds/CInode.h"
+#include "cls/cephfs/cls_cephfs_client.h"
 
 #include "DataScan.h"
 
@@ -344,26 +345,20 @@ int DataScan::recover_extents()
       continue;
     }
 
-    // Generate 0th object name, where we will accumulate sizes/mtimes
-    object_t zeroth_object = InodeStore::get_object_name(inode_no, frag_t(), "");
-
-    // Construct a librados operation invoking our class method
-    librados::ObjectReadOperation op;
-    bufferlist inbl;
-    ::encode(std::string("scan_size"), inbl);
-    ::encode(std::string("scan_mtime"), inbl);
-    ::encode(obj_id, inbl);
-    ::encode(size, inbl);
-    ::encode(mtime, inbl);
-
-    op.exec("cephfs", "accumulate_inode_metadata", inbl);
-
-    bufferlist outbl;
-    int r = data_io.operate(zeroth_object.name, &op, &outbl);
+    int r = ClsCephFSClient::accumulate_inode_metadata(
+        data_io,
+        inode_no,
+        AccumulateArgs(
+          obj_id,
+          size,
+          mtime,
+          std::string("scan_size"),
+          std::string("scan_mtime"),
+          std::string("scan_max_size")
+          ));
     if (r < 0) {
       derr << "Failed to store size data from '"
-        << oid << "' to '" << zeroth_object.name << "': "
-        << cpp_strerror(r) << dendl;
+        << oid << "': " << cpp_strerror(r) << dendl;
       continue;
     }
   }
