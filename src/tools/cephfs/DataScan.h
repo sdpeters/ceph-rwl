@@ -34,8 +34,8 @@ class RecoveryDriver {
         int64_t data_pool_id) = 0;
 
     /**
-     * Inject and inode + dentry into the lost+found directory,
-     * when all wel know about a file is its inode.
+     * Inject an inode + dentry into the lost+found directory,
+     * when all we know about a file is its inode.
      */
     virtual int inject_lost_and_found(
         inodeno_t ino,
