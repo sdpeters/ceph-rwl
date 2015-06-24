@@ -214,12 +214,32 @@ class DataScan : public MDSUtility
      */
     int recover_extents();
 
+    // Accept pools which are not in the MDSMap
+    bool force_pool;
+
+    /**
+     * @param r set to error on valid key with invalid value
+     * @return true if argument consumed, else false
+     */
+    bool parse_kwarg(
+        const std::vector<const char*> &args,
+        std::vector<const char *>::const_iterator &i,
+        int *r);
+
+    /**
+     * @return true if argument consumed, else false
+     */
+    bool parse_arg(
+      const std::vector<const char*> &arg,
+      std::vector<const char *>::const_iterator &i);
+
   public:
     void usage();
     int main(const std::vector<const char *> &args);
 
     DataScan()
-      : driver(NULL), data_pool_id(-1), n(0), m(1)
+      : driver(NULL), data_pool_id(-1), n(0), m(1),
+        force_pool(false)
     {
     }
 

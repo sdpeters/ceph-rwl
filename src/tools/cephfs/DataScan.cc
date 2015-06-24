@@ -37,6 +37,57 @@ void DataScan::usage()
   generic_client_usage();
 }
 
+bool DataScan::parse_kwarg(
+    const std::vector<const char*> &args,
+    std::vector<const char *>::const_iterator &i,
+    int *r)
+{
+  if (i + 1 == args.end()) {
+    return false;
+  }
+
+  const std::string arg(*i);
+  const std::string val(*(++i));
+
+  if (arg == std::string("--output-dir")) {
+    driver = new LocalFileDriver(val, data_io);
+    return true;
+  } else if (arg == std::string("-n")) {
+    std::string err;
+    n = strict_strtoll(val.c_str(), 10, &err);
+    if (!err.empty()) {
+      std::cerr << "Invalid worker number '" << val << "'" << std::endl;
+      *r = -EINVAL;
+      return false;
+    }
+    return true;
+  } else if (arg == std::string("-m")) {
+    std::string err;
+    m = strict_strtoll(val.c_str(), 10, &err);
+    if (!err.empty()) {
+      std::cerr << "Invalid worker count '" << val << "'" << std::endl;
+      *r = -EINVAL;
+      return false;
+    }
+    return true;
+  } else {
+    return false;
+  }
+}
+
+bool DataScan::parse_arg(
+    const std::vector<const char*> &args,
+    std::vector<const char *>::const_iterator &i)
+{
+  const std::string arg(*i);
+  if (arg == "--force-pool") {
+    force_pool = true;
+    return true;
+  } else {
+    return false;
+  }
+}
+
 int DataScan::main(const std::vector<const char*> &args)
 {
   // Parse args
@@ -58,32 +109,21 @@ int DataScan::main(const std::vector<const char*> &args)
   // Consume any known key-value arguments
   for (std::vector<const char *>::const_iterator i = args.begin();
        i != args.end(); ++i) {
-    const std::string arg(*i);
-
-    if (arg.substr(0, 1) == std::string("-") && (i + 1 != args.end())) {
-      i++;
-      const std::string val(*i);
-      if (arg == std::string("--output-dir")) {
-        driver = new LocalFileDriver(val, data_io);
-      } else if (arg == std::string("-n")) {
-        std::string err;
-        n = strict_strtoll(val.c_str(), 10, &err);
-        if (!err.empty()) {
-          std::cerr << "Invalid worker number '" << val << "'" << std::endl;
-          return -EINVAL;
-        }
-      } else if (arg == std::string("-m")) {
-        std::string err;
-        m = strict_strtoll(val.c_str(), 10, &err);
-        if (!err.empty()) {
-          std::cerr << "Invalid worker count '" << val << "'" << std::endl;
-          return -EINVAL;
-        }
-      } else {
-        std::cerr << "Unknown argument '" << arg << "'" << std::endl;
-        return -EINVAL;
-      }
+    if (parse_kwarg(args, i, &r)) {
+      // Skip the kwarg value field
+      ++i;
+      continue;
+    } else if (r) {
+      return r;
     }
+
+    if (parse_arg(args, i)) {
+      continue;
+    }
+
+    // Fall through: unhandled
+    std::cerr << "Unknown argument '" << *i << "'" << std::endl;
+    return -EINVAL;
   }
 
   // Default to output to metadata pool
@@ -122,6 +162,10 @@ int DataScan::main(const std::vector<const char*> &args)
       if (!mdsmap->is_data_pool(data_pool_id)) {
         std::cerr << "Warning: pool '" << data_pool_name << "' is not a "
           "CephFS data pool!" << std::endl;
+        if (!force_pool) {
+          std::cerr << "Use --force-pool to continue" << std::endl;
+          return -EINVAL;
+        }
       }
 
       dout(4) << "opening data pool '" << data_pool_name << "'" << dendl;
