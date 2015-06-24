@@ -19,8 +19,17 @@
 class InodeStore;
 
 class RecoveryDriver {
+  protected:
+    // If true, overwrite structures that generate decoding errors.
+    bool force_corrupt;
+
   public:
     virtual int init(librados::Rados &rados, const MDSMap *mdsmap) = 0;
+
+    void set_force_corrupt(const bool val)
+    {
+      force_corrupt = val;
+    }
 
     /**
      * Inject an inode + dentry parents into the metadata pool,
@@ -74,6 +83,10 @@ class RecoveryDriver {
       return std::string(s);
     }
 
+    RecoveryDriver()
+      : force_corrupt(false)
+    {}
+
     virtual ~RecoveryDriver() {}
 };
 
@@ -91,7 +104,7 @@ class LocalFileDriver : public RecoveryDriver
   public:
 
     LocalFileDriver(const std::string &path_, librados::IoCtx &data_io_)
-      : path(path_), data_io(data_io_)
+      : RecoveryDriver(), path(path_), data_io(data_io_)
     {}
 
     // Implement RecoveryDriver interface
@@ -146,7 +159,7 @@ class MetadataDriver : public RecoveryDriver
      * Try and read a dentry from a dirfrag
      */
     int read_dentry(inodeno_t parent_ino, frag_t frag,
-        const std::string &dname, InodeStore *inode);
+                    const std::string &dname, InodeStore *inode);
 
     int find_or_create_dirfrag(
         inodeno_t ino,
@@ -216,6 +229,8 @@ class DataScan : public MDSUtility
 
     // Accept pools which are not in the MDSMap
     bool force_pool;
+    // Respond to decode errors by overwriting
+    bool force_corrupt;
 
     /**
      * @param r set to error on valid key with invalid value

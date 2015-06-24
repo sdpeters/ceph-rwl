@@ -83,6 +83,9 @@ bool DataScan::parse_arg(
   if (arg == "--force-pool") {
     force_pool = true;
     return true;
+  } else if (arg == "--force-corrupt") {
+    force_corrupt = true;
+    return true;
   } else {
     return false;
   }
@@ -106,7 +109,7 @@ int DataScan::main(const std::vector<const char*> &args)
     return r;
   }
 
-  // Consume any known key-value arguments
+  // Consume any known --key val or --flag arguments
   for (std::vector<const char *>::const_iterator i = args.begin();
        i != args.end(); ++i) {
     if (parse_kwarg(args, i, &r)) {
@@ -129,6 +132,7 @@ int DataScan::main(const std::vector<const char*> &args)
   // Default to output to metadata pool
   if (driver == NULL) {
     driver = new MetadataDriver();
+    driver->set_force_corrupt(force_corrupt);
   }
 
   dout(4) << "connecting to RADOS..." << dendl;
@@ -301,10 +305,6 @@ int MetadataDriver::check_roots(bool *result)
  * SERIAL
  *  3. Dirfrag statistics: depth first traverse into metadata tree,
  *    rebuilding dir sizes.
- *    XXX hmm, *or* we could use an object class to accumulate
- *    the number of insertions we've done on any given frag, and
- *    then do a pass where we just inject that accumulated number
- *    of insertions into the directory's size and the dirfrags stats?
  * PARALLEL
  *  4. Cleanup; go over all 0th objects (and dirfrags if we tagged
  *   anything onto them) and remove any of the xattrs that we
@@ -513,6 +513,10 @@ int DataScan::recover()
         if (r < 0) {
           dout(4) << "Error injecting 0x" << std::hex << backtrace.ino
             << std::dec << " into lost+found: " << cpp_strerror(r) << dendl;
+          if (r == -EINVAL) {
+            dout(4) << "Use --force-corrupt to overwrite structures that "
+                       "appear to be corrupt" << dendl;
+          }
         }
       } else {
         /* Happy case: we will inject a named dentry for this inode */
@@ -521,6 +525,10 @@ int DataScan::recover()
         if (r < 0) {
           dout(4) << "Error injecting 0x" << std::hex << backtrace.ino
             << std::dec << " with backtrace: " << cpp_strerror(r) << dendl;
+          if (r == -EINVAL) {
+            dout(4) << "Use --force-corrupt to overwrite structures that "
+                       "appear to be corrupt" << dendl;
+          }
         }
       }
     } else {
@@ -530,6 +538,10 @@ int DataScan::recover()
       if (r < 0) {
         dout(4) << "Error injecting 0x" << std::hex << obj_name_ino
           << std::dec << " into lost+found: " << cpp_strerror(r) << dendl;
+        if (r == -EINVAL) {
+          dout(4) << "Use --force-corrupt to overwrite structures that "
+                     "appear to be corrupt" << dendl;
+        }
       }
     }
   }
@@ -612,9 +624,8 @@ int MetadataDriver::read_dentry(inodeno_t parent_ino, frag_t frag,
   return 0;
 }
 
-int MetadataDriver::inject_lost_and_found(
-    inodeno_t ino, uint64_t file_size, time_t file_mtime, uint32_t chunk_size,
-    int64_t data_pool_id)
+int MetadataDriver::inject_lost_and_found(inodeno_t ino, uint64_t file_size,
+    time_t file_mtime, uint32_t chunk_size, int64_t data_pool_id)
 {
   // Create lost+found if doesn't exist
   bool created = false;
@@ -625,6 +636,9 @@ int MetadataDriver::inject_lost_and_found(
   InodeStore lf_ino;
   r = read_dentry(CEPH_INO_ROOT, frag_t(), "lost+found", &lf_ino);
   if (r == -ENOENT || r == -EINVAL) {
+    if (r == -EINVAL && !force_corrupt) {
+      return r;
+    }
     // Inject dentry
     lf_ino.inode.mode = 0755 | S_IFDIR;
     // Set nfiles to something non-zero, to fool any other code
@@ -880,6 +894,9 @@ int MetadataDriver::inject_with_backtrace(
     r = read_dentry(parent_ino, fragment, dname, &existing_dentry);
     bool write_dentry = false;
     if (r == -ENOENT || r == -EINVAL) {
+      if (r == -EINVAL && !force_corrupt) {
+        return r;
+      }
       // Missing or corrupt dentry
       write_dentry = true;
     } else if (r < 0) {
@@ -985,6 +1002,10 @@ int MetadataDriver::find_or_create_dirfrag(
   dout(10) << "read_version = " << read_version << dendl;
 
   if (r == -ENOENT || r == -EINVAL) {
+    if (r == -EINVAL && !force_corrupt) {
+      return r;
+    }
+
     // Missing or corrupt fnode, create afresh
     bufferlist fnode_bl;
     fnode_t blank_fnode;
