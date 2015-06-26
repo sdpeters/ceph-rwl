@@ -3475,12 +3475,15 @@ void Monitor::dispatch(MonOpRequestRef op)
 void Monitor::dispatch_op(MonOpRequestRef op)
 {
   op->mark_event("mon:dispatch_op");
+  /* we will consider the default type as being 'monitor' until proven wrong */
+  op->set_type_monitor();
   /* deal with all messages that do not necessarily need caps */
   bool dealt_with = true;
   switch (op->get_req()->get_type()) {
     // auth
     case MSG_MON_GLOBAL_ID:
     case CEPH_MSG_AUTH:
+      op->set_type_service();
       /* no need to check caps here */
       paxos_service[PAXOS_AUTH]->dispatch(op);
       break;
@@ -3510,6 +3513,8 @@ void Monitor::dispatch_op(MonOpRequestRef op)
   if (dealt_with)
     return;
 
+  /* well, maybe the op belongs to a service... */
+  op->set_type_service();
   /* deal with all messages which caps should be checked somewhere else */
   dealt_with = true;
   switch (op->get_req()->get_type()) {
@@ -3550,6 +3555,7 @@ void Monitor::dispatch_op(MonOpRequestRef op)
 
     // handle_command() does its own caps checking
     case MSG_MON_COMMAND:
+      op->set_type_command();
       handle_command(op);
       break;
 
@@ -3559,6 +3565,9 @@ void Monitor::dispatch_op(MonOpRequestRef op)
   }
   if (dealt_with)
     return;
+
+  /* nop, looks like it's not a service message; revert back to monitor */
+  op->set_type_monitor();
 
   /* messages we, the Monitor class, need to deal with
    * but may be sent by clients. */
@@ -3631,6 +3640,7 @@ void Monitor::dispatch_op(MonOpRequestRef op)
     // paxos
     case MSG_MON_PAXOS:
       {
+        op->set_type_paxos();
         MMonPaxos *pm = static_cast<MMonPaxos*>(op->get_req());
         if (!op->is_src_mon() ||
             !op->get_session()->is_capable("mon", MON_CAP_X)) {
@@ -3661,6 +3671,7 @@ void Monitor::dispatch_op(MonOpRequestRef op)
 
     // elector messages
     case MSG_MON_ELECTION:
+      op->set_type_election();
       //check privileges here for simplicity
       if (op->get_session() &&
           !op->get_session()->is_capable("mon", MON_CAP_X)) {
