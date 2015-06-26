@@ -431,6 +431,9 @@ public:
 
 
   const ECUtil::stripe_info_t sinfo;
+  // This flag indicates whether we issue subread requests to all replicas (
+  // data and parity), this can improve performance with some I/O overhead
+  bool subread_all;
   /// If modified, ensure that the ref is held until the update is applied
   SharedPtrRegistry<hobject_t, ECUtil::HashInfo> unstable_hashinfo_registry;
   ECUtil::HashInfoRef get_hash_info(const hobject_t &hoid);
