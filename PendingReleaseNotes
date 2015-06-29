@@ -4,3 +4,4 @@ v9.0.4
 * The return code for librbd's rbd_aio_read and Image::aio_read API methods no
   longer returns the number of bytes read upon success.  Instead, it returns 0
   upon success and a negative value upon failure.
+* The `--dump-json` option of "osdmaptool" is replaced by `--dump json`.
