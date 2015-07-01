@@ -897,15 +897,16 @@ void Objecter::_scan_requests(OSDSession *s,
 
   s->lock.get_write();
 
+  ldout(cct, 0) << __func__ << " epoch " << osdmap->get_epoch() << " skip_map " << force_resend << " was_full " << force_resend_writes << dendl;
   // check for changed linger mappings (_before_ regular ops)
   map<ceph_tid_t,LingerOp*>::iterator lp = s->linger_ops.begin();
   while (lp != s->linger_ops.end()) {
     LingerOp *op = lp->second;
     assert(op->session == s);
     ++lp;   // check_linger_pool_dne() may touch linger_ops; prevent iterator invalidation
-    ldout(cct, 10) << " checking linger op " << op->linger_id << dendl;
     bool unregister;
     int r = _recalc_linger_op_target(op, lc);
+    ldout(cct, 10) << " checking linger op " << op->linger_id << " rc " << r << dendl;
     switch (r) {
     case RECALC_OP_TARGET_NO_ACTION:
       if (!force_resend && !force_resend_writes)
@@ -932,8 +933,8 @@ void Objecter::_scan_requests(OSDSession *s,
   while (p != s->ops.end()) {
     Op *op = p->second;
     ++p;   // check_op_pool_dne() may touch ops; prevent iterator invalidation
-    ldout(cct, 10) << " checking op " << op->tid << dendl;
     int r = _calc_target(&op->target, &op->last_force_resend);
+    ldout(cct, 10) << " checking op " << op->tid << " rc " << r << dendl;
     switch (r) {
     case RECALC_OP_TARGET_NO_ACTION:
       if (!force_resend &&
@@ -958,8 +959,8 @@ void Objecter::_scan_requests(OSDSession *s,
   while (cp != s->command_ops.end()) {
     CommandOp *c = cp->second;
     ++cp;
-    ldout(cct, 10) << " checking command " << c->tid << dendl;
     int r = _calc_command_target(c);
+    ldout(cct, 10) << " checking command " << c->tid << " rc " << r << dendl;
     switch (r) {
     case RECALC_OP_TARGET_NO_ACTION:
       // resend if skipped map; otherwise do nothing.
@@ -1121,6 +1122,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
   for (map<ceph_tid_t, Op*>::iterator p = need_resend.begin();
        p != need_resend.end(); ++p) {
     Op *op = p->second;
+    ldout(cct, 0) << __func__ << " check resend op " << op->tid << dendl;
     OSDSession *s = op->session;
     bool mapped_session = false;
     if (!s) {
@@ -1148,6 +1150,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
   for (list<LingerOp*>::iterator p = need_resend_linger.begin();
        p != need_resend_linger.end(); ++p) {
     LingerOp *op = *p;
+    ldout(cct, 0) << __func__ << " check resend linger op " << op->linger_id << dendl;
     if (!op->session) {
       _calc_target(&op->target, &op->last_force_resend);
       OSDSession *s = NULL;
@@ -1165,6 +1168,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
   for (map<ceph_tid_t,CommandOp*>::iterator p = need_resend_command.begin();
        p != need_resend_command.end(); ++p) {
     CommandOp *c = p->second;
+    ldout(cct, 0) << __func__ << " check resend command op " << c->tid << dendl;
     _assign_command_session(c);
     if (c->session && !c->session->is_homeless()) {
       _send_command(c);
