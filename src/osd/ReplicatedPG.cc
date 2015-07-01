@@ -4236,7 +4236,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  result = -EINVAL;
 	  break;
 	}
-	result = check_offset_and_length(op.extent.offset, op.extent.length, cct->_conf->osd_max_object_size);
+	result = check_offset_and_length(0, op.extent.length, cct->_conf->osd_max_object_size);
 	if (result < 0)
 	  break;
 
@@ -4252,7 +4252,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	    }
 	  }
 	  ctx->mod_desc.create();
-	  t->append(soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags);
+	  t->append(soid, 0, op.extent.length, osd_op.indata, op.flags);
 	  if (obs.exists) {
 	    map<string, bufferlist> to_set = ctx->obc->attr_cache;
 	    map<string, boost::optional<bufferlist> > &overlay =
@@ -4271,7 +4271,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  }
 	} else {
 	  ctx->mod_desc.mark_unrollbackable();
-	  t->write(soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags);
+	  t->write(soid, 0, op.extent.length, osd_op.indata, op.flags);
 	  if (obs.exists && op.extent.length < oi.size) {
 	    t->truncate(soid, op.extent.length);
 	  }
@@ -4281,8 +4281,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  obs.oi.set_data_digest(osd_op.indata.crc32c(-1));
 
 	write_update_size_and_usage(ctx->delta_stats, oi, ctx->modified_ranges,
-	    op.extent.offset, op.extent.length, true,
-	    op.extent.offset + op.extent.length != oi.size ? true : false);
+	    0, op.extent.length, true, op.extent.length != oi.size ? true : false);
       }
       break;
 
