@@ -30,7 +30,7 @@ public:
   __u32 op;
   uint64_t auid;
   snapid_t snapid;
-  __s16 crush_rule;
+  int crush_rule;
 
   MPoolOp()
     : PaxosServiceMessage(CEPH_MSG_POOLOP, 0, HEAD_VERSION, COMPAT_VERSION) { }
