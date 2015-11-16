@@ -1215,6 +1215,7 @@ int NewStore::fsck()
   set<uint64_t> used_nids;
   set<uint64_t> used_omap_head;
   interval_set<uint64_t> used_blocks;
+  KeyValueDB::Iterator it;
 
   int r = _open_path();
   if (r < 0)
@@ -1346,10 +1347,12 @@ int NewStore::fsck()
 	    ++errors;
 	  }
 	}
-	{
+	do {
 	  string start;
 	  get_overlay_key(o->onode.nid, 0, &start);
 	  KeyValueDB::Iterator it = db->get_iterator(PREFIX_OVERLAY);
+	  if (!it)
+	    break;
 	  for (it->lower_bound(start); it->valid(); it->next()) {
 	    string k = it->key();
 	    const char *p = k.c_str();
@@ -1363,9 +1366,9 @@ int NewStore::fsck()
 	      ++errors;
 	    }
 	  }
-	}
+	} while (false);
 	// omap
-	if (o->onode.omap_head) {
+	while (o->onode.omap_head) {
 	  if (used_omap_head.count(o->onode.omap_head)) {
 	    derr << " " << oid << " omap_head " << o->onode.omap_head
 		 << " already in use" << dendl;
@@ -1375,6 +1378,8 @@ int NewStore::fsck()
 	  used_omap_head.insert(o->onode.omap_head);
 	  // hrm, scan actual key/value pairs?
 	  KeyValueDB::Iterator it = db->get_iterator(PREFIX_OMAP);
+	  if (!it)
+	    break;
 	  string head, tail;
 	  get_omap_header(o->onode.omap_head, &head);
 	  get_omap_tail(o->onode.omap_head, &tail);
@@ -1388,21 +1393,23 @@ int NewStore::fsck()
 	    } else {
 	      string user_key;
 	      decode_omap_key(it->key(), &user_key);
-	      dout(30) << __func__ << "  got " << pretty_binary_string(it->key())
+	      dout(30) << __func__
+		       << "  got " << pretty_binary_string(it->key())
 		       << " -> " << user_key << dendl;
 	      assert(it->key() < tail);
 	    }
 	    it->next();
 	  }
+	  break;
 	}
       }
     }
   }
 
   dout(1) << __func__ << " checking for stray objects" << dendl;
-  {
-    CollectionRef c = coll_map.begin()->second;
-    KeyValueDB::Iterator it = db->get_iterator(PREFIX_OBJ);
+  it = db->get_iterator(PREFIX_OBJ);
+  if (it) {
+    CollectionRef c;
     for (it->lower_bound(string()); it->valid(); it->next()) {
       ghobject_t oid;
       int r = get_key_object(it->key(), &oid);
@@ -1434,8 +1441,8 @@ int NewStore::fsck()
   }
 
   dout(1) << __func__ << " checking for stray overlay data" << dendl;
-  {
-    KeyValueDB::Iterator it = db->get_iterator(PREFIX_OVERLAY);
+  it = db->get_iterator(PREFIX_OVERLAY);
+  if (it) {
     for (it->lower_bound(string()); it->valid(); it->next()) {
       string key = it->key();
       const char *p = key.c_str();
@@ -1449,8 +1456,8 @@ int NewStore::fsck()
   }
 
   dout(1) << __func__ << " checking for stray omap data" << dendl;
-  {
-    KeyValueDB::Iterator it = db->get_iterator(PREFIX_OMAP);
+  it = db->get_iterator(PREFIX_OMAP);
+  if (it) {
     for (it->lower_bound(string()); it->valid(); it->next()) {
       string key = it->key();
       const char *p = key.c_str();
@@ -1489,6 +1496,7 @@ int NewStore::fsck()
  out_alloc:
   _close_alloc();
  out_db:
+  it.reset();  // before db is closed
   _close_db();
  out_bdev:
   _close_bdev();
