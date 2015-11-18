@@ -4,6 +4,7 @@
 #define CEPH_OS_BLUESTORE_BLUEFS_TYPES_H
 
 #include "bluestore_types.h"
+#include "include/utime.h"
 #include "include/encoding.h"
 
 struct bluefs_extent_t {
@@ -31,6 +32,7 @@ ostream& operator<<(ostream& out, bluefs_extent_t e);
 struct bluefs_fnode_t {
   uint64_t ino;
   uint64_t size;
+  utime_t mtime;
   uint32_t nref;
   vector<bluefs_extent_t> extents;
 
@@ -92,8 +94,10 @@ struct bluefs_transaction_t {
     OP_ALLOC_RM,    ///< remove extent from availabe block storage (extent)
     OP_DIR_LINK,    ///< (re)set a dir entry (dirname, filename, ino)
     OP_DIR_UNLINK,  ///< remove a dir entry (dirname, filename)
+    OP_DIR_CREATE,  ///< create a dir (dirname)
+    OP_DIR_REMOVE,  ///< remove a dir (dirname)
     OP_FILE_UPDATE, ///< set/update file metadata (file)
-    OP_FILE_RM,     ///< remove file (ino)
+    OP_FILE_REMOVE, ///< remove file (ino)
   } op_t;
 
   uint64_t seq;         ///< sequence number
@@ -123,6 +127,14 @@ struct bluefs_transaction_t {
     ::encode(offset, op_bl);
     ::encode(length, op_bl);    
   }
+  void op_dir_create(const string& dir) {
+    ::encode((__u8)OP_DIR_CREATE, op_bl);
+    ::encode(dir, op_bl);
+  }    
+  void op_dir_remove(const string& dir) {
+    ::encode((__u8)OP_DIR_REMOVE, op_bl);
+    ::encode(dir, op_bl);
+  }    
   void op_dir_link(const string& dir, const string& file, uint64_t ino) {
     ::encode((__u8)OP_DIR_LINK, op_bl);
     ::encode(dir, op_bl);
@@ -138,8 +150,8 @@ struct bluefs_transaction_t {
     ::encode((__u8)OP_FILE_UPDATE, op_bl);
     ::encode(file, op_bl);
   }
-  void op_file_rm(uint64_t ino) {
-    ::encode((__u8)OP_FILE_RM, op_bl);
+  void op_file_remove(uint64_t ino) {
+    ::encode((__u8)OP_FILE_REMOVE, op_bl);
     ::encode(ino, op_bl);
   }
 

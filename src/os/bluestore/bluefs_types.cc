@@ -126,6 +126,7 @@ void bluefs_fnode_t::encode(bufferlist& bl) const
   ENCODE_START(1, 1, bl);
   ::encode(ino, bl);
   ::encode(size, bl);
+  ::encode(mtime, bl);
   ::encode(nref, bl);
   ::encode(extents, bl);
   ENCODE_FINISH(bl);
@@ -136,6 +137,7 @@ void bluefs_fnode_t::decode(bufferlist::iterator& p)
   DECODE_START(1, p);
   ::decode(ino, p);
   ::decode(size, p);
+  ::decode(mtime, p);
   ::decode(nref, p);
   ::decode(extents, p);
   DECODE_FINISH(p);
@@ -145,6 +147,7 @@ void bluefs_fnode_t::dump(Formatter *f) const
 {
   f->dump_unsigned("ino", ino);
   f->dump_unsigned("size", size);
+  f->dump_stream("mtime") << mtime;
   f->dump_unsigned("nref", nref);
   f->open_array_section("extents");
   for (auto p : extents)
@@ -158,6 +161,7 @@ void bluefs_fnode_t::generate_test_instances(list<bluefs_fnode_t*>& ls)
   ls.push_back(new bluefs_fnode_t);
   ls.back()->ino = 123;
   ls.back()->size = 1048576;
+  ls.back()->mtime = utime_t(123,45);
   ls.back()->nref = 2;
   ls.back()->extents.push_back(bluefs_extent_t(0, 1048576, 4096));
 }
@@ -166,6 +170,7 @@ ostream& operator<<(ostream& out, const bluefs_fnode_t& file)
 {
   return out << "file(" << file.ino
 	     << " size " << file.size
+	     << " mtime " << file.mtime
 	     << " nref " << file.nref
 	     << " extents " << file.extents
 	     << ")";
@@ -213,10 +218,13 @@ void bluefs_transaction_t::generate_test_instance(
   ls.back()->op_init();
   ls.back()->op_alloc_add(0, 0, 123123211);
   ls.back()->op_alloc_rm(1, 0, 123);
+  ls.back()->op_dir_create("dir");
+  ls.back()->op_dir_create("dir2");
   ls.back()->op_dir_link("dir", "file1", 1);
   ls.back()->op_dir_unlink("dir", "oldfile");
   ls.back()->op_file_update(bluefs_fnode_t());
-  ls.back()->op_file_rm(2);
+  ls.back()->op_dir_remove("dir3");    
+  ls.back()->op_file_remove(2);
 }
 
 ostream& operator<<(ostream& out, const bluefs_transaction_t& t)

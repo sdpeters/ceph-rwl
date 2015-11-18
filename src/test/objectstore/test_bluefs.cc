@@ -67,7 +67,8 @@ TEST(BlueFS, write_read) {
   ASSERT_EQ(0, fs.mount(0, 4096));
   {
     BlueFS::FileWriter *h;
-    ASSERT_EQ(0, fs.create_and_open_for_write("dir", "file", &h));
+    ASSERT_EQ(0, fs.mkdir("dir"));
+    ASSERT_EQ(0, fs.open_for_write("dir", "file", &h, false));
     bufferlist bl;
     bl.append("foo");
     h->append(bl);
@@ -82,7 +83,7 @@ TEST(BlueFS, write_read) {
     BlueFS::FileReader *h;
     ASSERT_EQ(0, fs.open_for_read("dir", "file", &h));
     bufferptr bp;
-    ASSERT_EQ(9, fs.read(h, 1024, &bp, NULL));
+    ASSERT_EQ(9, fs.read(h, 0, 1024, &bp, NULL));
     ASSERT_EQ(0, strncmp("foobarbaz", bp.c_str(), 9));
     delete h;
   }

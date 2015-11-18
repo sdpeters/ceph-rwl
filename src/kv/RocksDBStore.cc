@@ -64,6 +64,11 @@ public:
   }
 };
 
+rocksdb::Logger *create_rocksdb_ceph_logger()
+{
+  return new CephRocksdbLogger(g_ceph_context);
+}
+
 int string2bool(string val, bool &b_val)
 {
   if (strcasecmp(val.c_str(), "false") == 0) {
@@ -192,6 +197,11 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
 
   if (g_conf->rocksdb_log_to_ceph_log) {
     opt.info_log.reset(new CephRocksdbLogger(g_ceph_context));
+  }
+
+  if (priv) {
+    dout(10) << __func__ << " using custom Env " << priv << dendl;
+    opt.env = static_cast<rocksdb::Env*>(priv);
   }
 
   status = rocksdb::DB::Open(opt, path, &db);

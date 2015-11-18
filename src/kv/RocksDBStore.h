@@ -44,8 +44,12 @@ namespace rocksdb{
   class Slice;
   class WriteBatch;
   class Iterator;
+  class Logger;
   struct Options;
 }
+
+extern rocksdb::Logger *create_rocksdb_ceph_logger();
+
 /**
  * Uses RocksDB to implement the KeyValueDB interface
  */
@@ -53,6 +57,7 @@ class RocksDBStore : public KeyValueDB {
   CephContext *cct;
   PerfCounters *logger;
   string path;
+  void *priv;
   rocksdb::DB *db;
   string options_str;
   int do_open(ostream &out, bool create_if_missing);
@@ -104,10 +109,11 @@ public:
   }
   int get_info_log_level(string info_log_level);
 
-  RocksDBStore(CephContext *c, const string &path) :
+  RocksDBStore(CephContext *c, const string &path, void *p) :
     cct(c),
     logger(NULL),
     path(path),
+    priv(p),
     db(NULL),
     compact_queue_lock("RocksDBStore::compact_thread_lock"),
     compact_queue_stop(false),
