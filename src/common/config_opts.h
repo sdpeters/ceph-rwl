@@ -135,6 +135,7 @@ SUBSYS(refs, 0, 0)
 SUBSYS(xio, 1, 5)
 SUBSYS(compressor, 1, 5)
 SUBSYS(bluestore, 1, 5)
+SUBSYS(bluefs, 1, 5)
 SUBSYS(bdev, 1, 5)
 SUBSYS(rocksdb, 3, 5)
 
@@ -813,6 +814,9 @@ OPTION(memstore_page_set, OPT_BOOL, true)
 OPTION(memstore_page_size, OPT_U64, 64 << 10)
 
 OPTION(bdev_debug_inflight_ios, OPT_BOOL, false)
+
+OPTION(bluefs_alloc_size, OPT_U64, 1048576)
+OPTION(bluefs_max_prefetch, OPT_U64, 1048576)
 
 OPTION(bluestore_block_path, OPT_STR, "")
 OPTION(bluestore_block_size, OPT_U64, 0)  // 10gb for testing

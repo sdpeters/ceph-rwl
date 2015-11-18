@@ -1,6 +1,7 @@
 libos_types_a_SOURCES = \
 	os/Transaction.cc \
-	os/bluestore/bluestore_types.cc
+	os/bluestore/bluestore_types.cc \
+	os/bluestore/bluefs_types.cc
 libos_types_a_CXXFLAGS = ${AM_CXXFLAGS}
 noinst_LIBRARIES += libos_types.a
 
@@ -12,6 +13,7 @@ libos_a_SOURCES = \
 	os/bluestore/kv.cc \
 	os/bluestore/Allocator.cc \
 	os/bluestore/BlockDevice.cc \
+	os/bluestore/BlueFS.cc \
 	os/bluestore/FreelistManager.cc \
 	os/bluestore/BlueStore.cc \
 	os/bluestore/StupidAllocator.cc \
@@ -54,9 +56,11 @@ noinst_LIBRARIES += libos.a
 noinst_HEADERS += \
 	os/btrfs_ioctl.h \
 	os/chain_xattr.h \
+	os/bluestore/bluefs_types.h \
 	os/bluestore/bluestore_types.h \
 	os/bluestore/Allocator.h \
 	os/bluestore/BlockDevice.h \
+	os/bluestore/BlueFS.h \
 	os/bluestore/BlueStore.h \
 	os/bluestore/StupidAllocator.h \
 	os/BtrfsFileStoreBackend.h \
