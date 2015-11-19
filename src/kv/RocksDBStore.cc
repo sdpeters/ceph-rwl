@@ -43,10 +43,7 @@ public:
 
   // Write an entry to the log file with the specified format.
   void Logv(const char* format, va_list ap) {
-    char buf[1048576];
-    vsnprintf(buf, sizeof(buf), format, ap);
-    buf[sizeof(buf)-1] = 0;
-    dout(1) << buf << dendl;
+    Logv(rocksdb::INFO_LEVEL, format, ap);
   }
 
   // Write an entry to the log file with the specified log level
@@ -57,8 +54,8 @@ public:
 	    va_list ap) {
     int v = rocksdb::NUM_INFO_LOG_LEVELS - log_level - 1;
     dout(v);
-    char buf[4096];
-    snprintf(buf, sizeof(buf), format, ap);
+    char buf[1048576];
+    vsnprintf(buf, sizeof(buf), format, ap);
     buf[sizeof(buf)-1] = 0;
     *_dout << buf << dendl;
   }

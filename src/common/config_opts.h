@@ -137,7 +137,7 @@ SUBSYS(compressor, 1, 5)
 SUBSYS(bluestore, 1, 5)
 SUBSYS(bluefs, 1, 5)
 SUBSYS(bdev, 1, 5)
-SUBSYS(rocksdb, 3, 5)
+SUBSYS(rocksdb, 4, 5)
 
 OPTION(key, OPT_STR, "")
 OPTION(keyfile, OPT_STR, "")
