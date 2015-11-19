@@ -41,7 +41,7 @@ class BlueRocksSequentialFile : public rocksdb::SequentialFile {
   // REQUIRES: External synchronization
   rocksdb::Status Read(size_t n, rocksdb::Slice* result, char* scratch) {
     int r = fs->read(h, h->pos, n, NULL, scratch);
-    assert (r >= 0);
+    assert(r >= 0);
     *result = rocksdb::Slice(scratch, r);
     return rocksdb::Status::OK();
   }

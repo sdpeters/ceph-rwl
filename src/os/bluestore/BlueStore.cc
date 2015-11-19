@@ -1029,6 +1029,13 @@ void BlueStore::_close_db()
   assert(db);
   delete db;
   db = NULL;
+  if (bluefs) {
+    delete bluerocksenv;
+    bluerocksenv = NULL;
+    bluefs->umount();
+    delete bluefs;
+    bluefs = NULL;
+  }
 }
 
 int BlueStore::_open_collections(int *errors)

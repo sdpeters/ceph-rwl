@@ -533,7 +533,8 @@ BlueFS::File *BlueFS::_get_file(uint64_t ino)
 
 void BlueFS::_drop_link(File *file)
 {
-  dout(20) << __func__ << " on " << file->fnode << dendl;
+  dout(20) << __func__ << " had refs " << file->refs
+	   << " on " << file->fnode << dendl;
   --file->refs;
   if (file->refs == 0) {
     dout(20) << __func__ << " destroying " << file->fnode << dendl;
@@ -560,6 +561,8 @@ int BlueFS::_read(
     len = h->file->fnode.size - off;
     dout(20) << __func__ << " reaching eof, len clipped to " << len << dendl;
   }
+  if (len == 0)
+    return 0;
 
   int left;
   if (off < h->bl_off || off >= h->get_buf_end()) {
@@ -913,6 +916,7 @@ int BlueFS::open_for_write(
   log_t.op_dir_link(dirname, filename, file->fnode.ino);
 
   *h = new FileWriter(file);
+  dout(10) << __func__ << " h " << *h << " on " << file->fnode << dendl;
   return 0;
 }
 
@@ -942,6 +946,7 @@ int BlueFS::open_for_read(
   File *file = q->second;
 
   *h = new FileReader(file, random ? 4096 : g_conf->bluefs_max_prefetch);
+  dout(10) << __func__ << " h " << *h << " on " << file->fnode << dendl;
   return 0;
 }
 
