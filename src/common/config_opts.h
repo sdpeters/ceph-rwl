@@ -817,6 +817,8 @@ OPTION(bdev_debug_inflight_ios, OPT_BOOL, false)
 
 OPTION(bluefs_alloc_size, OPT_U64, 1048576)
 OPTION(bluefs_max_prefetch, OPT_U64, 1048576)
+OPTION(bluefs_min_log_runway, OPT_U64, 1048576)  // alloc when we get this low
+OPTION(bluefs_max_log_runway, OPT_U64, 4194304)  // alloc this much at a time
 
 OPTION(bluestore_bluefs, OPT_BOOL, false)
 OPTION(bluestore_bluefs_initial_offset, OPT_U64,  1024*1024)

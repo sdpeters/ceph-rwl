@@ -94,7 +94,7 @@ int BlueFS::mkfs(uint64_t super_offset_a, uint64_t super_offset_b)
   // init log
   File *log_file = new File;
   log_file->fnode.ino = 1;
-  _allocate(0, g_conf->bluefs_alloc_size, &log_file->fnode.extents);
+  _allocate(0, g_conf->bluefs_max_log_runway, &log_file->fnode.extents);
   log_writer = new FileWriter(log_file);
 
   // initial txn
@@ -608,6 +608,17 @@ int BlueFS::_flush_log()
   dout(10) << __func__ << " " << log_t << dendl;
   assert(!log_t.empty());
 
+  // allocate some more space (before we run out)?
+  uint64_t runway = log_writer->file->fnode.get_allocated() - log_writer->pos;
+  if (runway < g_conf->bluefs_min_log_runway) {
+    dout(10) << __func__ << " allocating more log runway ("
+	     << runway << " remaining" << dendl;
+    int r = _allocate(0, g_conf->bluefs_max_log_runway,
+		      &log_writer->file->fnode.extents);
+    assert(r == 0);
+    log_t.op_file_update(log_writer->file->fnode);
+  }
+  
   bufferlist bl;
   ::encode(log_t, bl);
 
