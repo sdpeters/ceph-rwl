@@ -2112,14 +2112,14 @@ ReplicatedPG::cache_result_t ReplicatedPG::maybe_handle_cache_detail(
     }
 
     if (!hit_set) {
-      promote_object(obc, missing_oid, oloc, op, promote_obc);
+      queue_async_promote(obc, missing_oid, oloc, op, promote_obc);
       return cache_result_t::BLOCKED_PROMOTE;
     } else if (op->may_write() || op->may_cache()) {
       if (can_proxy_write && !must_promote) {
         do_proxy_write(op, missing_oid);
       } else {
 	// promote if can't proxy the write
-	promote_object(obc, missing_oid, oloc, op, promote_obc);
+        queue_async_promote(obc, missing_oid, oloc, op, promote_obc);
 	return cache_result_t::BLOCKED_PROMOTE;
       }
 
@@ -2179,7 +2179,7 @@ ReplicatedPG::cache_result_t ReplicatedPG::maybe_handle_cache_detail(
     // TODO: clean this case up
     if (!obc.get() && r == -ENOENT) {
       // we don't have the object and op's a read
-      promote_object(obc, missing_oid, oloc, op, promote_obc);
+      queue_async_promote(obc, missing_oid, oloc, op, promote_obc);
       return cache_result_t::BLOCKED_PROMOTE;
     }
     if (!r) { // it must be a write
@@ -2198,7 +2198,7 @@ ReplicatedPG::cache_result_t ReplicatedPG::maybe_handle_cache_detail(
 	block_write_on_full_cache(missing_oid, op);
 	return cache_result_t::BLOCKED_FULL;
       }
-      promote_object(obc, missing_oid, oloc, op, promote_obc);
+      queue_async_promote(obc, missing_oid, oloc, op, promote_obc);
       return cache_result_t::BLOCKED_PROMOTE;
     }
 
@@ -2215,7 +2215,7 @@ ReplicatedPG::cache_result_t ReplicatedPG::maybe_handle_cache_detail(
 	block_write_on_full_cache(missing_oid, op);
 	return cache_result_t::BLOCKED_FULL;
       }
-      promote_object(obc, missing_oid, oloc, op, promote_obc);
+      queue_async_promote(obc, missing_oid, oloc, op, promote_obc);
       return cache_result_t::BLOCKED_PROMOTE;
     }
 
@@ -2240,14 +2240,15 @@ bool ReplicatedPG::maybe_promote(ObjectContextRef obc,
   dout(20) << __func__ << " missing_oid " << missing_oid
 	   << "  in_hit_set " << in_hit_set << dendl;
 
+  hobject_t obj = obc ? obc->obs.oi.soid : missing_oid;
   switch (recency) {
   case 0:
-    promote_object(obc, missing_oid, oloc, promote_op, promote_obc);
+    queue_async_promote(obc, missing_oid, oloc, promote_op, promote_obc);
     break;
   case 1:
     // Check if in the current hit set
     if (in_hit_set) {
-      promote_object(obc, missing_oid, oloc, promote_op, promote_obc);
+      queue_async_promote(obc, missing_oid, oloc, promote_op, promote_obc);
     } else {
       // not promoting
       return false;
@@ -2255,7 +2256,7 @@ bool ReplicatedPG::maybe_promote(ObjectContextRef obc,
     break;
   default:
     if (in_hit_set) {
-      promote_object(obc, missing_oid, oloc, promote_op);
+      queue_async_promote(obc, missing_oid, oloc, promote_op, promote_obc);
     } else {
       // Check if in other hit sets
       map<time_t,HitSetRef>::iterator itor;
@@ -2277,7 +2278,7 @@ bool ReplicatedPG::maybe_promote(ObjectContextRef obc,
         }
       }
       if (in_other_hit_sets) {
-        promote_object(obc, missing_oid, oloc, promote_op);
+        queue_async_promote(obc, missing_oid, oloc, promote_op, promote_obc);
       } else {
 	// not promoting
         return false;
@@ -2668,33 +2669,10 @@ public:
 };
 
 void ReplicatedPG::promote_object(ObjectContextRef obc,
-				  const hobject_t& missing_oid,
-				  const object_locator_t& oloc,
-				  OpRequestRef op,
-				  ObjectContextRef *promote_obc)
+				  const object_locator_t& oloc)
 {
-  hobject_t hoid = obc ? obc->obs.oi.soid : missing_oid;
-  assert(hoid != hobject_t());
-  if (scrubber.write_blocked_by_scrub(hoid, get_sort_bitwise())) {
-    dout(10) << __func__ << " " << hoid
-	     << " blocked by scrub" << dendl;
-    if (op) {
-      waiting_for_active.push_back(op);
-      dout(10) << __func__ << " " << hoid
-	       << " placing op in waiting_for_active" << dendl;
-    } else {
-      dout(10) << __func__ << " " << hoid
-	       << " no op, dropping on the floor" << dendl;
-    }
-    return;
-  }
-  if (!obc) { // we need to create an ObjectContext
-    assert(missing_oid != hobject_t());
-    obc = get_object_context(missing_oid, true);
-  }
-  if (promote_obc)
-    *promote_obc = obc;
 
+  osd->promotion_ops.take(1);
   /*
    * Before promote complete, if there are  proxy-reads for the object,
    * for this case we don't use DONTNEED.
@@ -2719,9 +2697,55 @@ void ReplicatedPG::promote_object(ObjectContextRef obc,
 
   assert(obc->is_blocked());
 
+  info.stats.stats.sum.num_promote++;
+}
+
+void ReplicatedPG::queue_async_promote(ObjectContextRef obc,
+                                       const hobject_t& missing_oid,
+                                       const object_locator_t& loc,
+                                       OpRequestRef op,
+                                       ObjectContextRef *promote_obc)
+{
+  hobject_t hoid = obc ? obc->obs.oi.soid : missing_oid;
+
+  assert(hoid != hobject_t());
+  if (scrubber.write_blocked_by_scrub(hoid, get_sort_bitwise())) {
+    dout(10) << __func__ << " " << hoid
+	     << " blocked by scrub" << dendl;
+    if (op) {
+      waiting_for_active.push_back(op);
+      dout(10) << __func__ << " " << hoid
+	       << " placing op in waiting_for_active" << dendl;
+    } else {
+      dout(10) << __func__ << " " << hoid
+	       << " no op, dropping on the floor" << dendl;
+    }
+    return;
+  }
+  if (!obc) { // we need to create an ObjectContext
+    assert(missing_oid != hobject_t());
+    obc = get_object_context(missing_oid, true);
+  }
+  if (promote_obc)
+    *promote_obc = obc;
+
   if (op)
     wait_for_blocked_object(obc->obs.oi.soid, op);
-  info.stats.stats.sum.num_promote++;
+ 
+  hobject_t obj = obc->obs.oi.soid;
+  if (osd->in_promotion.count(obj)) {
+    dout(20) << " object " << obj << " is already in promotion " << dendl;
+    return;
+  }
+
+  {
+    Mutex::Locker l(osd->promotion_lock);
+    pair<object_locator_t, PGRef> oloc;
+    if (!osd->waiting_for_promotion.lookup(obj, &oloc))
+      osd->waiting_for_promotion.add(obj, make_pair(loc, this));
+    assert(!osd->waiting_for_promotion.empty());
+    osd->promotion_cond.Signal();
+  }
 }
 
 void ReplicatedPG::execute_ctx(OpContext *ctx)
@@ -7340,6 +7364,13 @@ void ReplicatedPG::finish_promote(int r, CopyResults *results,
   const hobject_t& soid = obc->obs.oi.soid;
   dout(10) << __func__ << " " << soid << " r=" << r
 	   << " uv" << results->user_version << dendl;
+
+  {
+    Mutex::Locker l(osd->promotion_lock);
+    assert(osd->in_promotion.count(soid));
+    osd->in_promotion.erase(soid);
+    osd->promotion_ops.put(1);
+  }
 
   if (r == -ECANCELED) {
     return;
