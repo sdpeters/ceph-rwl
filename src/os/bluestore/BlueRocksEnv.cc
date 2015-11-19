@@ -180,8 +180,7 @@ class BlueRocksWritableFile : public rocksdb::WritableFile {
   // with other writes to follow.
   rocksdb::Status Truncate(uint64_t size) {
     int r = fs->truncate(h, size);
-    assert(r == 0);
-    return rocksdb::Status::OK();
+    return err_to_status(r);
   }
 
   rocksdb::Status Close() {

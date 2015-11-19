@@ -618,7 +618,7 @@ int BlueFS::_flush_log()
     assert(r == 0);
     log_t.op_file_update(log_writer->file->fnode);
   }
-  
+
   bufferlist bl;
   ::encode(log_t, bl);
 
@@ -772,7 +772,9 @@ int BlueFS::_truncate(FileWriter *h, uint64_t offset)
     assert(0 == "actually this shouldn't happen");
   }
   if (h->buffer.length()) {
-    _flush(h);
+    int r = _flush(h);
+    if (r < 0)
+      return r;
   }
   if (offset > h->pos + h->buffer.length()) {
     assert(0 == "truncate up not supported");
@@ -819,8 +821,11 @@ int BlueFS::_allocate(unsigned id, uint64_t len, vector<bluefs_extent_t> *ev)
 
   uint64_t left = ROUND_UP_TO(len, g_conf->bluefs_alloc_size);
   int r = alloc[id]->reserve(left);
-  if (r < 0)
+  if (r < 0) {
+    derr << __func__ << " failed to allocate " << left << " on bdev " << id
+	 << ", free " << alloc[id]->get_free() << dendl;
     return r;
+  }
 
   uint64_t hint = 0;
   if (!ev->empty()) {
