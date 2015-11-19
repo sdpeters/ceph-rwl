@@ -142,7 +142,7 @@ struct bluefs_transaction_t {
     ::encode(ino, op_bl);
   }
   void op_dir_unlink(const string& dir, const string& file) {
-    ::encode((__u8)OP_DIR_LINK, op_bl);
+    ::encode((__u8)OP_DIR_UNLINK, op_bl);
     ::encode(dir, op_bl);
     ::encode(file, op_bl);
   }

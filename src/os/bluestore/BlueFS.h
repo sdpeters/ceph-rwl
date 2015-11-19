@@ -121,7 +121,7 @@ private:
   void _init_alloc();
   
   File *_get_file(uint64_t ino);
-  void _rm_file(File *f);
+  void _drop_link(File *f);
   
   int _allocate(unsigned bdev, uint64_t len, vector<bluefs_extent_t> *ev);
   int _flush_range(FileWriter *h, uint64_t offset, uint64_t length);

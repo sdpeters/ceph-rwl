@@ -6,6 +6,24 @@
 #include "include/stringify.h"
 #include "kv/RocksDBStore.h"
 
+rocksdb::Status err_to_status(int r)
+{
+  switch (r) {
+  case 0:
+    return rocksdb::Status::OK();
+  case -ENOENT:
+    return rocksdb::Status::NotFound(rocksdb::Status::kNone);
+  case -EINVAL:
+    return rocksdb::Status::InvalidArgument(rocksdb::Status::kNone);
+  case -EIO:
+    return rocksdb::Status::IOError(rocksdb::Status::kNone);
+  default:
+    // FIXME :(
+    assert(0 == "unrecognized error code");
+    return rocksdb::Status::NotSupported(rocksdb::Status::kNone);
+  }
+}
+
 // A file abstraction for reading sequentially through a file
 class BlueRocksSequentialFile : public rocksdb::SequentialFile {
   BlueFS *fs;
@@ -233,8 +251,7 @@ class BlueRocksWritableFile : public rocksdb::WritableFile {
    */
   rocksdb::Status Allocate(off_t offset, off_t len) {
     int r = fs->preallocate(h->file, offset, len);
-    assert(r == 0);
-    return rocksdb::Status::OK();
+    return err_to_status(r);
   }
 };
 
@@ -272,22 +289,6 @@ BlueRocksEnv::BlueRocksEnv(BlueFS *f)
     fs(f)
 {
   
-}
-
-rocksdb::Status BlueRocksEnv::err_to_status(int r)
-{
-  switch (r) {
-  case -ENOENT:
-    return rocksdb::Status::NotFound(rocksdb::Status::kNone);
-  case -EINVAL:
-    return rocksdb::Status::InvalidArgument(rocksdb::Status::kNone);
-  case -EIO:
-    return rocksdb::Status::IOError(rocksdb::Status::kNone);
-  default:
-    // FIXME :(
-    assert(0 == "unrecognized error code");
-    return rocksdb::Status::NotSupported(rocksdb::Status::kNone);
-  }
 }
 
 rocksdb::Status BlueRocksEnv::NewSequentialFile(

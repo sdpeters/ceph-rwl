@@ -24,6 +24,13 @@ BlueFS::BlueFS()
 
 BlueFS::~BlueFS()
 {
+  for (auto p : bdev) {
+    p->close();
+    delete p;
+  }
+  for (auto p : ioc) {
+    delete p;
+  }
 }
 
 int BlueFS::add_block_device(unsigned id, string path)
@@ -183,8 +190,23 @@ int BlueFS::mount(uint64_t super_offset_a, uint64_t super_offset_b)
 void BlueFS::umount()
 {
   dout(1) << __func__ << dendl;
+  sync_metadata();
 
-
+  delete log_writer;
+  log_writer = NULL;
+  for (auto p : alloc) {
+    delete p;
+  }
+  alloc.clear();
+  block_all.clear();
+  for (auto p : file_map) {
+    delete p.second;
+  }
+  for (auto p : dir_map) {
+    delete p.second;
+  }
+  super = bluefs_super_t();
+  log_t.clear();
 }
 
 int BlueFS::_write_super()
@@ -345,9 +367,8 @@ int BlueFS::_replay()
     assert(seq == t.seq);
     dout(10) << __func__ << " " << pos << ": " << t << dendl;
 
-    bool okay = true;
     bufferlist::iterator p = t.op_bl.begin();
-    while (okay && !p.end()) {
+    while (!p.end()) {
       __u8 op;
       ::decode(op, p);
       switch (op) {
@@ -421,6 +442,32 @@ int BlueFS::_replay()
 	}
 	break;
 
+      case bluefs_transaction_t::OP_DIR_CREATE:
+        {
+	  string dirname;
+	  ::decode(dirname, p);
+	  dout(20) << __func__ << " " << pos << ":  op_dir_create " << dirname
+		   << dendl;
+	  map<string,Dir*>::iterator q = dir_map.find(dirname);
+	  assert(q == dir_map.end());
+	  dir_map[dirname] = new Dir;
+	}
+	break;
+
+      case bluefs_transaction_t::OP_DIR_REMOVE:
+        {
+	  string dirname;
+	  ::decode(dirname, p);
+	  dout(20) << __func__ << " " << pos << ":  op_dir_remove " << dirname
+		   << dendl;
+	  map<string,Dir*>::iterator q = dir_map.find(dirname);
+	  assert(q != dir_map.end());
+	  assert(q->second->file_map.empty());
+	  delete q->second;
+	  dir_map.erase(q);
+	}
+	break;
+	
       case bluefs_transaction_t::OP_FILE_UPDATE:
         {
 	  bluefs_fnode_t fnode;
@@ -451,15 +498,14 @@ int BlueFS::_replay()
       default:
 	derr << __func__ << " " << pos << ": stop: unrecognized op " << (int)op
 	     << dendl;
-	okay = false;
-	break;
+	return -EIO;
       }
     }
-    if (p.end()) {
-      // we successfully replayed the transaction; bump the seq and log size
-      ++log_seq;
-      log_file->fnode.size = log_reader->pos;      
-    }
+    assert(p.end());
+
+    // we successfully replayed the transaction; bump the seq and log size
+    ++log_seq;
+    log_file->fnode.size = log_reader->pos;      
   }
 
   dout(10) << __func__ << " log file size was " << log_file->fnode.size << dendl;
@@ -476,23 +522,28 @@ BlueFS::File *BlueFS::_get_file(uint64_t ino)
   if (p == file_map.end()) {
     f = new File;
     file_map[ino] = f;
-    dout(20) << __func__ << " ino " << ino << " = " << f
+    dout(30) << __func__ << " ino " << ino << " = " << f
 	     << " (new)" << dendl;    
     return f;
   } else {
-    dout(20) << __func__ << " ino " << ino << " = " << p->second << dendl;
+    dout(30) << __func__ << " ino " << ino << " = " << p->second << dendl;
     return p->second;
   }
 }
 
-void BlueFS::_rm_file(File *f)
+void BlueFS::_drop_link(File *file)
 {
-  dout(20) << __func__ << " " << f->fnode << dendl;
-  for (auto p : f->fnode.extents) {
-    alloc[p.bdev]->release(p.offset, p.length);
+  dout(20) << __func__ << " on " << file->fnode << dendl;
+  --file->refs;
+  if (file->refs == 0) {
+    dout(20) << __func__ << " destroying " << file->fnode << dendl;
+    log_t.op_file_remove(file->fnode.ino);
+    for (auto r : file->fnode.extents) {
+      alloc[r.bdev]->release(r.offset, r.length);
+    }
+    file_map.erase(file->fnode.ino);
+    delete file;
   }
-  file_map.erase(f->fnode.ino);
-  delete f;
 }
 
 int BlueFS::_read(
@@ -517,6 +568,11 @@ int BlueFS::_read(
     uint64_t x_off = 0;
     vector<bluefs_extent_t>::iterator p = h->file->fnode.seek(h->bl_off, &x_off);
     uint64_t l = MIN(p->length - x_off, h->max_prefetch);
+    uint64_t eof_offset = ROUND_UP_TO(h->file->fnode.size, super.block_size);
+    if (!h->ignore_eof &&
+	h->bl_off + l > eof_offset) {
+      l = eof_offset - h->bl_off;      
+    }
     dout(20) << __func__ << " fetching " << x_off << "~" << l << " of "
 	     << *p << dendl;
     int r = bdev[p->bdev]->read(p->offset + x_off, l, &h->bl, ioc[p->bdev]);
@@ -530,7 +586,8 @@ int BlueFS::_read(
     *bp = bufferptr(h->bl.c_str() + off - h->bl_off, r);
   if (out)
     memcpy(out, h->bl.c_str() + off - h->bl_off, r);
-  h->pos = off + len;
+  h->pos = off + r;
+  dout(20) << __func__ << " got " << r << dendl;
   return r;
 }
 
@@ -609,8 +666,10 @@ int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
     h->file->fnode.size = offset + length;
   h->file->fnode.mtime = ceph_clock_now(NULL);
   log_t.op_file_update(h->file->fnode);
-  h->file->dirty = true;
-  dirty_files.push_back(*h->file);
+  if (!h->file->dirty) {
+    h->file->dirty = true;
+    dirty_files.push_back(*h->file);
+  }
   dout(20) << __func__ << " file now " << h->file->fnode << dendl;
 
   uint64_t x_off = 0;
@@ -918,9 +977,14 @@ int BlueFS::rename(
   if (q != new_dir->file_map.end()) {
     dout(20) << __func__ << " dir " << new_dirname << " (" << old_dir
 	     << ") file " << new_filename
-	     << " already exists" << dendl;
-    return -EEXIST;
+	     << " already exists, unlinking" << dendl;
+    assert(q->second != file);
+    log_t.op_dir_unlink(new_dirname, new_filename);
+    _drop_link(q->second);
   }
+
+  dout(10) << __func__ << " " << new_dirname << "/" << new_filename << " "
+	   << " " << file->fnode << dendl;
 
   new_dir->file_map[new_filename] = file;
   old_dir->file_map.erase(old_filename);
@@ -1082,15 +1146,6 @@ int BlueFS::unlink(const string& dirname, const string& filename)
   File *file = q->second;
   dir->file_map.erase(filename);
   log_t.op_dir_unlink(dirname, filename);
-  --file->refs;
-  if (file->refs == 0) {
-    dout(20) << __func__ << " destroying " << file->fnode << dendl;
-    log_t.op_file_remove(file->fnode.ino);
-    for (auto r : file->fnode.extents) {
-      alloc[r.bdev]->release(r.offset, r.length);
-    }
-    file_map.erase(file->fnode.ino);
-    delete file;
-  }
+  _drop_link(file);
   return 0;
 }

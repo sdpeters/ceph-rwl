@@ -20,8 +20,6 @@ class BlueRocksEnv : public rocksdb::EnvWrapper {
     *file = fn.substr(slash + 1);
   }
 
-  rocksdb::Status err_to_status(int err);
-  
 public:
   // Create a brand new sequentially-readable file with the specified name.
   // On success, stores a pointer to the new file in *result and returns OK.

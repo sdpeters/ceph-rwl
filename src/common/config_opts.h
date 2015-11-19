@@ -820,7 +820,7 @@ OPTION(bluefs_max_prefetch, OPT_U64, 1048576)
 
 OPTION(bluestore_bluefs, OPT_BOOL, false)
 OPTION(bluestore_bluefs_initial_offset, OPT_U64,  1024*1024)
-OPTION(bluestore_bluefs_initial_length, OPT_U64, 16384*1024)
+OPTION(bluestore_bluefs_initial_length, OPT_U64, 65536*1024)
 OPTION(bluestore_block_path, OPT_STR, "")
 OPTION(bluestore_block_size, OPT_U64, 10 * 1024*1024*1024)  // 10gb for testing
 OPTION(bluestore_max_dir_size, OPT_U32, 1000000)
