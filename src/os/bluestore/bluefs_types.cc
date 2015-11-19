@@ -127,7 +127,6 @@ void bluefs_fnode_t::encode(bufferlist& bl) const
   ::encode(ino, bl);
   ::encode(size, bl);
   ::encode(mtime, bl);
-  ::encode(nref, bl);
   ::encode(extents, bl);
   ENCODE_FINISH(bl);
 }
@@ -138,7 +137,6 @@ void bluefs_fnode_t::decode(bufferlist::iterator& p)
   ::decode(ino, p);
   ::decode(size, p);
   ::decode(mtime, p);
-  ::decode(nref, p);
   ::decode(extents, p);
   DECODE_FINISH(p);
 }
@@ -148,7 +146,6 @@ void bluefs_fnode_t::dump(Formatter *f) const
   f->dump_unsigned("ino", ino);
   f->dump_unsigned("size", size);
   f->dump_stream("mtime") << mtime;
-  f->dump_unsigned("nref", nref);
   f->open_array_section("extents");
   for (auto p : extents)
     f->dump_object("extent", p);
@@ -162,7 +159,6 @@ void bluefs_fnode_t::generate_test_instances(list<bluefs_fnode_t*>& ls)
   ls.back()->ino = 123;
   ls.back()->size = 1048576;
   ls.back()->mtime = utime_t(123,45);
-  ls.back()->nref = 2;
   ls.back()->extents.push_back(bluefs_extent_t(0, 1048576, 4096));
 }
 
@@ -171,7 +167,6 @@ ostream& operator<<(ostream& out, const bluefs_fnode_t& file)
   return out << "file(" << file.ino
 	     << " size " << file.size
 	     << " mtime " << file.mtime
-	     << " nref " << file.nref
 	     << " extents " << file.extents
 	     << ")";
 }
@@ -183,6 +178,7 @@ void bluefs_transaction_t::encode(bufferlist& bl) const
 {
   uint32_t crc = op_bl.crc32c(-1);
   ENCODE_START(1, 1, bl);
+  ::encode(uuid, bl);
   ::encode(seq, bl);
   ::encode(op_bl, bl);
   ::encode(crc, bl);
@@ -193,6 +189,7 @@ void bluefs_transaction_t::decode(bufferlist::iterator& p)
 {
   uint32_t crc;
   DECODE_START(1, p);
+  ::decode(uuid, p);
   ::decode(seq, p);
   ::decode(op_bl, p);
   ::decode(crc, p);
@@ -205,6 +202,7 @@ void bluefs_transaction_t::decode(bufferlist::iterator& p)
 
 void bluefs_transaction_t::dump(Formatter *f) const
 {
+  f->dump_stream("uuid") << uuid;
   f->dump_unsigned("seq", seq);
   f->dump_unsigned("op_bl_length", op_bl.length());
   f->dump_unsigned("crc", op_bl.crc32c(-1));

@@ -8,15 +8,18 @@
 #include "common/Cond.h"
 #include "BlockDevice.h"
 
+#include "boost/intrusive/list.hpp"
+
 class Allocator;
 
 class BlueFS {
-public:
+public: 
   struct File {
     bluefs_fnode_t fnode;
     int refs;
     bool dirty;
     bool locked;
+    boost::intrusive::list_member_hook<> dirty_item;
 
     File()
       : refs(0),
@@ -24,6 +27,12 @@ public:
 	locked(false)
       {}
   };
+  typedef boost::intrusive::list<
+      File,
+      boost::intrusive::member_hook<
+        File,
+	boost::intrusive::list_member_hook<>,
+	&File::dirty_item> > dirty_file_list_t;
 
   struct Dir {
     map<string,File*> file_map;
@@ -31,7 +40,7 @@ public:
 
   struct FileWriter {
     File *file;
-    uint64_t pos;
+    uint64_t pos;           ///< start offset for buffer
     bufferlist buffer;      ///< new data to write (at end of file)
     bufferlist tail_block;  ///< existing partial block at end of file, if any
 
@@ -96,6 +105,7 @@ private:
   // cache
   map<string, Dir*> dir_map;                    ///< dirname -> Dir
   ceph::unordered_map<uint64_t,File*> file_map; ///< ino -> File
+  dirty_file_list_t dirty_files;                ///< list of dirty files
 
   bluefs_super_t super;       ///< latest superblock (as last written)
   uint64_t ino_last;          ///< last assigned ino (this one is in use)
@@ -103,9 +113,8 @@ private:
   FileWriter *log_writer;     ///< writer for the log
   bluefs_transaction_t log_t; ///< pending, unwritten log transaction
 
-  IOContext ioc;              ///< IOContext for all of our IO
-
   vector<BlockDevice*> bdev;                  ///< block devices we can use
+  vector<IOContext*> ioc;                     ///< IOContexts for bdevs
   vector<interval_set<uint64_t> > block_all;  ///< extents in bdev we own
   vector<Allocator*> alloc;                   ///< allocators for bdevs
 
@@ -119,6 +128,8 @@ private:
   int _flush(FileWriter *h);
   int _flush_log();
   void _fsync(FileWriter *h);
+
+  void _submit_bdev();
   void _flush_bdev();
 
   int _preallocate(File *f, uint64_t off, uint64_t len);

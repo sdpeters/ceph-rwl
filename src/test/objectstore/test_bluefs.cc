@@ -91,6 +91,41 @@ TEST(BlueFS, write_read) {
   rm_temp_bdev(fn);
 }
 
+TEST(BlueFS, small_appends) {
+  uint64_t size = 1048476 * 128;
+  string fn = get_temp_bdev(size);
+  BlueFS fs;
+  ASSERT_EQ(0, fs.add_block_device(0, fn));
+  fs.add_block_extent(0, 1048576, size - 1048576);
+  ASSERT_EQ(0, fs.mkfs(0, 4096));
+  ASSERT_EQ(0, fs.mount(0, 4096));
+  {
+    BlueFS::FileWriter *h;
+    ASSERT_EQ(0, fs.mkdir("dir"));
+    ASSERT_EQ(0, fs.open_for_write("dir", "file", &h, false));
+    for (unsigned i = 0; i < 10000; ++i) {
+      bufferlist bl;
+      bl.append("fddjdjdjdjdjdjdjdjdjdjjddjoo");
+      h->append(bl);
+    }
+    fs.fsync(h);
+    delete h;
+  }
+  {
+    BlueFS::FileWriter *h;
+    ASSERT_EQ(0, fs.open_for_write("dir", "file_sync", &h, false));
+    for (unsigned i = 0; i < 1000; ++i) {
+      bufferlist bl;
+      bl.append("fddjdjdjdjdjdjdjdjdjdjjddjoo");
+      h->append(bl);
+      fs.fsync(h);
+    }
+    delete h;
+  }
+  fs.umount();
+  rm_temp_bdev(fn);
+}
+
 int main(int argc, char **argv) {
   vector<const char*> args;
   argv_to_vec(argc, (const char **)argv, args);

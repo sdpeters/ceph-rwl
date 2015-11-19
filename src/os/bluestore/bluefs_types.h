@@ -33,10 +33,9 @@ struct bluefs_fnode_t {
   uint64_t ino;
   uint64_t size;
   utime_t mtime;
-  uint32_t nref;
   vector<bluefs_extent_t> extents;
 
-  bluefs_fnode_t() : ino(0), size(0), nref(0) {}
+  bluefs_fnode_t() : ino(0), size(0) {}
 
   uint64_t get_allocated() const {
     uint64_t r = 0;
@@ -100,6 +99,7 @@ struct bluefs_transaction_t {
     OP_FILE_REMOVE, ///< remove file (ino)
   } op_t;
 
+  uuid_d uuid;          ///< fs uuid
   uint64_t seq;         ///< sequence number
   bufferlist op_bl;     ///< encoded transaction ops
 

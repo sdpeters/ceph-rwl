@@ -375,7 +375,7 @@ rocksdb::Status BlueRocksEnv::FileExists(const std::string& fname)
   split(fname, &dir, &file);
   if (fs->stat(dir, file, NULL, NULL) == 0)
     return rocksdb::Status::OK();
-  return rocksdb::Status::IOError(rocksdb::Status::kNone);
+  return err_to_status(-ENOENT);
 }
 
 rocksdb::Status BlueRocksEnv::GetChildren(
