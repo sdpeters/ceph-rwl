@@ -1038,6 +1038,61 @@ void BlueStore::_close_db()
   }
 }
 
+void BlueStore::_balance_bluefs_freespace()
+{
+  assert(bluefs);
+
+  // fixme: look at primary bdev only for now
+  uint64_t bluefs_total = bluefs->get_total(0);
+  uint64_t bluefs_free = bluefs->get_free(0);
+  float bluefs_free_ratio = (float)bluefs_free / (float)bluefs_total;
+  
+  uint64_t my_free = alloc->get_free();
+  uint64_t total = bdev->get_size();
+  float my_free_ratio = (float)my_free / (float)total;
+
+  dout(10) << __func__ << " bluefs " << pretty_si_t(bluefs_free)
+	   << " free of " << pretty_si_t(bluefs_total)
+	   << " free_ratio " << bluefs_free_ratio << dendl;
+  dout(10) << __func__ << " bluestore " << pretty_si_t(my_free)
+	   << " free of " << pretty_si_t(total)
+	   << " free_ratio " << my_free_ratio << dendl;
+  
+  uint64_t gift = 0;
+  if (bluefs_free_ratio < g_conf->bluestore_bluefs_min_free_ratio &&
+      bluefs_free_ratio < my_free_ratio) {
+    // give it more
+    gift = g_conf->bluestore_bluefs_min_free_ratio * bluefs_total;
+    dout(10) << __func__ << " bluefs_free_ratio " << bluefs_free_ratio
+	     << " < min_free_ratio " << g_conf->bluestore_bluefs_min_free_ratio
+	     << ", should gift " << pretty_si_t(gift) << dendl;
+  }
+  float bluefs_ratio = (float)bluefs_total / (float)total;
+  if (bluefs_ratio < g_conf->bluestore_bluefs_min_ratio) {
+    uint64_t g = total * g_conf->bluestore_bluefs_min_ratio;
+    dout(10) << __func__ << " bluefs_ratio " << bluefs_ratio
+	     << " < min_ratio " << g_conf->bluestore_bluefs_min_ratio
+	     << ", should gift " << pretty_si_t(g) << dendl;
+    if (g > gift)
+      gift = g;
+  }
+
+  float fs_main_ratio = (float)bluefs_free / (float)my_free;
+  dout(10) << __func__ << " fs:main free ratio " << fs_main_ratio << dendl;
+
+  dout(10) << __func__ << " gifting " << pretty_si_t(gift) << dendl;
+
+  // just one allocation to start...
+  uint64_t offset;
+  uint32_t length;
+  uint64_t min_alloc_size = g_conf->bluestore_min_alloc_size;
+  int r =  alloc->allocate(MAX(gift, 1ull<<31), min_alloc_size, 0,
+			   &offset, &length);
+  if (r == 0) {
+    bluefs->add_block_extent(0, offset, length);
+  }
+}
+
 int BlueStore::_open_collections(int *errors)
 {
   KeyValueDB::Iterator it = db->get_iterator(PREFIX_COLL);
@@ -2911,6 +2966,9 @@ void BlueStore::_kv_sync_thread()
 
       // this is as good a place as any ...
       _reap_collections();
+      if (bluefs) {
+	_balance_bluefs_freespace();
+      }
 
       kv_lock.Lock();
     }

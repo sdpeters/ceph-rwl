@@ -455,6 +455,8 @@ private:
   int _open_collections(int *errors=0);
   void _close_collections();
 
+  void _balance_bluefs_freespace();
+
   CollectionRef _get_collection(coll_t cid);
   void _queue_reap_collection(CollectionRef& c);
   void _reap_collections();
