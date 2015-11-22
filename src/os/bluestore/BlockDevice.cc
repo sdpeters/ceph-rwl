@@ -290,7 +290,7 @@ int BlockDevice::aio_write(
   assert(off < size);
   assert(off + len <= size);
 
-  if (!bl.is_page_aligned()) {
+  if (!bl.is_n_page_sized()) {
     dout(20) << __func__ << " rebuilding buffer to be page-aligned" << dendl;
     bl.rebuild();
   }
