@@ -153,19 +153,24 @@ int RocksDBStore::init(string _options_str)
 
 int RocksDBStore::create_and_open(ostream &out)
 {
-  int r = ::mkdir(path.c_str(), 0755);
-  if (r < 0)
-    r = -errno;
-  if (r < 0 && r != -EEXIST) {
-    derr << __func__ << " failed to create " << path << ": " << cpp_strerror(r)
-	 << dendl;
-    return r;
+  if (env) {
+    unique_ptr<rocksdb::Directory> dir;
+    env->NewDirectory(path, &dir);
+  } else {
+    int r = ::mkdir(path.c_str(), 0755);
+    if (r < 0)
+      r = -errno;
+    if (r < 0 && r != -EEXIST) {
+      derr << __func__ << " failed to create " << path << ": " << cpp_strerror(r)
+	   << dendl;
+      return r;
+    }
   }
 
   // create tertiary paths
   string wal_path = path + ".wal";
   struct stat st;
-  r = ::stat(wal_path.c_str(), &st);
+  int r = ::stat(wal_path.c_str(), &st);
   if (r < 0)
     r = -errno;
   if (r == -ENOENT) {
@@ -190,7 +195,7 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
     return -EINVAL;
   }
   opt.create_if_missing = create_if_missing;
-  opt.wal_dir = path + ".wal";
+  //opt.wal_dir = path + ".wal";
 
   if (g_conf->rocksdb_log_to_ceph_log) {
     opt.info_log.reset(new CephRocksdbLogger(g_ceph_context));

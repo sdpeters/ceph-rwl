@@ -608,6 +608,13 @@ int BlueFS::_read(
     *bp = bufferptr(h->bl.c_str() + off - h->bl_off, r);
   if (out)
     memcpy(out, h->bl.c_str() + off - h->bl_off, r);
+
+  dout(30) << __func__ << " result (" << r << " bytes):\n";
+  bufferlist t;
+  t.substr_of(h->bl, off, r);
+  t.hexdump(*_dout);
+  *_dout << dendl;
+
   h->pos = off + r;
   dout(20) << __func__ << " got " << r << dendl;
   return r;
@@ -732,6 +739,10 @@ int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
   }
   assert(bl.length() == length);
 
+  dout(30) << "dump:";
+  bl.hexdump(*_dout);
+  *_dout << dendl;
+
   h->pos = offset + length;
   h->tail_block.clear();
 
@@ -749,6 +760,10 @@ int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
       z.zero();
       t.append(z);
     }
+  dout(30) << "t dump:";
+  t.hexdump(*_dout);
+  *_dout << dendl;
+
     bdev[0]->aio_write(p->offset + x_off, t, ioc[0]);
     bloff += wlen;
     length -= wlen;
@@ -1070,9 +1085,10 @@ int BlueFS::rmdir(const string& dirname)
 bool BlueFS::dir_exists(const string& dirname)
 {
   Mutex::Locker l(lock);
-  dout(10) << __func__ << " " << dirname << dendl;
   map<string,Dir*>::iterator p = dir_map.find(dirname);
-  return p != dir_map.end();
+  bool exists = p != dir_map.end();
+  dout(10) << __func__ << " " << dirname << " = " << (int)exists << dendl;
+  return exists;
 }
 
 int BlueFS::stat(const string& dirname, const string& filename,
@@ -1160,10 +1176,12 @@ int BlueFS::readdir(const string& dirname, vector<string> *ls)
     return -ENOENT;
   }
   Dir *dir = p->second;
-  ls->reserve(dir->file_map.size());
+  ls->reserve(dir->file_map.size() + 2);
   for (auto q : dir->file_map) {
     ls->push_back(q.first);
   }
+  ls->push_back(".");
+  ls->push_back("..");
   return 0;
 }
 

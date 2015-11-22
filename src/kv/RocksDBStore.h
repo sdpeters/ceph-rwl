@@ -38,6 +38,7 @@ enum {
 
 namespace rocksdb{
   class DB;
+  class Env;
   class Cache;
   class FilterPolicy;
   class Snapshot;
@@ -59,6 +60,7 @@ class RocksDBStore : public KeyValueDB {
   string path;
   void *priv;
   rocksdb::DB *db;
+  rocksdb::Env *env;
   string options_str;
   int do_open(ostream &out, bool create_if_missing);
 
@@ -115,6 +117,7 @@ public:
     path(path),
     priv(p),
     db(NULL),
+    env(static_cast<rocksdb::Env*>(p)),
     compact_queue_lock("RocksDBStore::compact_thread_lock"),
     compact_queue_stop(false),
     compact_thread(this),
