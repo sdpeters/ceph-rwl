@@ -574,7 +574,8 @@ int BlueFS::_read(
   char *out)      ///< [out] optional: or copy it here
 {
   Mutex::Locker l(h->lock);
-  dout(10) << __func__ << " h " << h << " len " << len << dendl;
+  dout(10) << __func__ << " h " << h << " " << off << "~" << len
+	   << " from " << h->file->fnode << dendl;
   if (!h->ignore_eof &&
       off + len > h->file->fnode.size) {
     len = h->file->fnode.size - off;
@@ -589,7 +590,10 @@ int BlueFS::_read(
     h->bl_off = off & super.block_mask();
     uint64_t x_off = 0;
     vector<bluefs_extent_t>::iterator p = h->file->fnode.seek(h->bl_off, &x_off);
-    uint64_t l = MIN(p->length - x_off, h->max_prefetch);
+    uint64_t want = ROUND_UP_TO(len + (off & ~super.block_mask()),
+				super.block_size);
+    want = MAX(want, h->max_prefetch);
+    uint64_t l = MIN(p->length - x_off, want);
     uint64_t eof_offset = ROUND_UP_TO(h->file->fnode.size, super.block_size);
     if (!h->ignore_eof &&
 	h->bl_off + l > eof_offset) {
@@ -600,7 +604,8 @@ int BlueFS::_read(
     int r = bdev[p->bdev]->read(p->offset + x_off, l, &h->bl, ioc[p->bdev]);
     assert(r == 0);
   }
-  left = h->get_buf_remaining();
+  left = h->get_buf_remaining(off);
+  dout(20) << __func__ << " left " << left << dendl;
 
   int r = MIN(len, left);
   // NOTE: h->bl is normally a contiguous buffer so c_str() is free.
@@ -611,7 +616,7 @@ int BlueFS::_read(
 
   dout(30) << __func__ << " result (" << r << " bytes):\n";
   bufferlist t;
-  t.substr_of(h->bl, off, r);
+  t.substr_of(h->bl, off - h->bl_off, r);
   t.hexdump(*_dout);
   *_dout << dendl;
 
@@ -739,7 +744,7 @@ int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
   }
   assert(bl.length() == length);
 
-  dout(30) << "dump:";
+  dout(30) << "dump:\n";
   bl.hexdump(*_dout);
   *_dout << dendl;
 
@@ -760,10 +765,6 @@ int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
       z.zero();
       t.append(z);
     }
-  dout(30) << "t dump:";
-  t.hexdump(*_dout);
-  *_dout << dendl;
-
     bdev[0]->aio_write(p->offset + x_off, t, ioc[0]);
     bloff += wlen;
     length -= wlen;

@@ -289,6 +289,7 @@ namespace rocksdb {
       Status bs = b_->GetFileSize(f, &bsize);
       assert(as == bs);
       assert(asize == bsize);
+      *s = asize;
       return as;
     }
 
@@ -299,6 +300,7 @@ namespace rocksdb {
       Status bs = b_->GetFileModificationTime(fname, &bmtime);
       assert(as == bs);
       assert(amtime - bmtime < 10000 || bmtime - amtime < 10000);
+      *file_mtime = amtime;
       return as;
     }
 
