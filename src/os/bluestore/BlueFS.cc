@@ -146,7 +146,7 @@ int BlueFS::mkfs(uint64_t super_offset_a, uint64_t super_offset_b)
   block_all.clear();
   alloc.clear();
 
-  dout(10) << __func__ << " done" << dendl;
+  dout(10) << __func__ << " success" << dendl;
   return 0;
 }
 
