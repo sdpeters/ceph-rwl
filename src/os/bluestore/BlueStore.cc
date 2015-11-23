@@ -953,7 +953,7 @@ int BlueStore::_open_db(bool create)
 	string cmd = "rm -r " + path + "/db";
 	system(cmd.c_str());      
       }
-      env = new rocksdb::MirrorEnv(a, b);
+      env = new rocksdb::MirrorEnv(b, a);
     } else {
       env = new BlueRocksEnv(bluefs);
     }
