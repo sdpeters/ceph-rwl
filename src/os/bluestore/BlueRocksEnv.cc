@@ -452,7 +452,6 @@ rocksdb::Status BlueRocksEnv::GetFileModificationTime(const std::string& fname,
   int r = fs->stat(dir, file, NULL, &mtime);
   if (r < 0)
     return err_to_status(r);
-#warning wrong time units?
   *file_mtime = mtime.sec();
   return rocksdb::Status::OK();
 }
