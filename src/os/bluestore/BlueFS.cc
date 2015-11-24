@@ -592,7 +592,6 @@ int BlueFS::_read(
   dout(10) << __func__ << " h " << h << " " << off << "~" << len
 	   << " from " << h->file->fnode << dendl;
 
-  assert(h->file->num_writers.read() == 0);
   h->file->num_reading.inc();
 
   if (!h->ignore_eof &&
@@ -667,7 +666,7 @@ void BlueFS::_invalidate_cache(FileRef f, uint64_t offset, uint64_t length)
 {
   dout(10) << __func__ << " file " << f->fnode
 	   << " " << offset << "~" << length << dendl;
-#warning implement _invalidate_cache
+  
 }
 
 uint64_t BlueFS::_estimate_log_size()

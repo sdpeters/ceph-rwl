@@ -2686,7 +2686,7 @@ int BlueStore::_open_super_meta()
       ::decode(nid_max, bl);
     } catch (buffer::error& e) {
     }
-    dout(1) << __func__ << " old nid_max " << nid_max << dendl;
+    dout(10) << __func__ << " old nid_max " << nid_max << dendl;
     nid_last = nid_max;
   }
 
@@ -2701,7 +2701,7 @@ int BlueStore::_open_super_meta()
     }
     catch (buffer::error& e) {
     }
-    dout(1) << __func__ << " bluefs_extents " << bluefs_extents << dendl;
+    dout(10) << __func__ << " bluefs_extents " << bluefs_extents << dendl;
   }
   return 0;
 }
