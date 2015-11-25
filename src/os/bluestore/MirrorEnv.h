@@ -233,8 +233,8 @@ namespace rocksdb {
 			     const std::string& old_fname,
 			     unique_ptr<WritableFile>* r,
 			     const EnvOptions& options) override {
-      if (f[0] == '/')
-	return a_->ReuseWritableFile(fname, r, options);
+      if (fname[0] == '/')
+	return a_->ReuseWritableFile(fname, old_fname, r, options);
       MirrorWritableFile *mf = new MirrorWritableFile(fname);
       r->reset(mf);
       Status as = a_->ReuseWritableFile(fname, old_fname, &mf->a_, options);
