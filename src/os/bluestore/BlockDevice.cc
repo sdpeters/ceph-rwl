@@ -29,9 +29,10 @@ void IOContext::aio_wait()
 void IOContext::_aio_wait()
 {
   // see _aio_thread for waker logic
-  while (num_running > 0) {
-    dout(10) << __func__ << " " << this << " waiting for " << num_running
-	     << " aios to complete" << dendl;
+  while (num_running > 0 || num_reading > 0) {
+    dout(10) << __func__ << " " << this
+	     << " waiting for " << num_running << " aios and/or "
+	     << num_reading << " readers to complete" << dendl;
     cond.Wait(lock);
   }
   dout(20) << __func__ << " " << this << " done" << dendl;
@@ -214,7 +215,6 @@ void BlockDevice::_aio_thread()
 
 void BlockDevice::_aio_prepare(IOContext *ioc, uint64_t offset, uint64_t length)
 {
-  Mutex::Locker l(ioc->lock);
   dout(20) << __func__ << " " << offset << "~" << length
 	   << " (" << ioc->blocks << ")" << dendl;
   while (ioc->blocks.intersects(offset, length)) {
@@ -259,7 +259,7 @@ void BlockDevice::aio_submit(IOContext *ioc)
   Mutex::Locker l(ioc->lock);
   dout(20) << __func__ << " ioc " << ioc
 	   << " pending " << ioc->num_pending
-	   << " running " << ioc->num_running    
+	   << " running " << ioc->num_running
 	   << dendl;
 
 #warning fixme can we make this avoid a mutex?
@@ -324,7 +324,10 @@ int BlockDevice::aio_write(
   bl.hexdump(*_dout);
   *_dout << dendl;
 
-  _aio_prepare(ioc, off, bl.length());
+  {
+    Mutex::Locker l(ioc->lock);
+    _aio_prepare(ioc, off, bl.length());
+  }
 
 #ifdef HAVE_LIBAIO
   if (aio && dio) {
@@ -390,7 +393,11 @@ int BlockDevice::read(uint64_t off, uint64_t len, bufferlist *pbl, IOContext *io
   assert(off < size);
   assert(off + len <= size);
 
-  _aio_prepare(ioc, off, len);
+  {
+    Mutex::Locker l(ioc->lock);
+    _aio_prepare(ioc, off, len);
+    ++ioc->num_reading;
+  }
 
   bufferptr p = buffer::create_page_aligned(len);
   int r = ::pread(fd, p.c_str(), len, off);
@@ -405,6 +412,7 @@ int BlockDevice::read(uint64_t off, uint64_t len, bufferlist *pbl, IOContext *io
   *_dout << dendl;
  out:
   Mutex::Locker l(ioc->lock);
+  --ioc->num_reading;
   _aio_finish(ioc, off, len);
   return r < 0 ? r : 0;
 }

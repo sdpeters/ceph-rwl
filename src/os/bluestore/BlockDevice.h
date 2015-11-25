@@ -19,6 +19,7 @@ struct IOContext {
   list<FS::aio_t> running_aios;    ///< submitting or submitted
   int num_pending;
   int num_running;
+  int num_reading;
 
   bufferlist pending_bl;  // just a pile of refs
   bufferlist running_bl;  // just a pile of refs
@@ -27,7 +28,8 @@ struct IOContext {
     : priv(p),
       lock("IOContext::lock"),
       num_pending(0),
-      num_running(0) {}
+      num_running(0),
+      num_reading(0) {}
 
   bool has_aios() {
     Mutex::Locker l(lock);
