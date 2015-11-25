@@ -27,7 +27,16 @@ namespace rocksdb {
 	while (left) {
 	  Status bs = b_->Read(left, &bslice, bscratch);
 	  assert(as == bs);
-	  assert(memcmp(bscratch, scratch + off, bslice.size()) == 0);
+	  if (memcmp(bscratch, scratch + off, bslice.size()) != 0) {
+	    for (unsigned i=0; i < bslice.size(); ++i) {
+	      if (scratch[off + i] != bscratch[i]) {
+		std::cout << "at offset " << offset + off + i << " a got "
+			  << (int)scratch[off + i] << " and b got "
+			  << (int)bscratch[i] << std::endl;
+	      }
+	    }
+	    assert(memcmp(bscratch, scratch + off, bslice.size()) == 0);
+	  }
 	  off += bslice.size();
 	  left -= bslice.size();
 	}
@@ -68,7 +77,16 @@ namespace rocksdb {
 	while (left) {
 	  Status bs = b_->Read(offset + off, left, &bslice, bscratch);
 	  assert(as == bs);
-	  assert(memcmp(bscratch, scratch + off, bslice.size()) == 0);
+	  if (memcmp(bscratch, scratch + off, bslice.size()) != 0) {
+	    for (unsigned i=0; i < bslice.size(); ++i) {
+	      if (scratch[off + i] != bscratch[i]) {
+		std::cout << "at offset " << offset + off + i << " a got "
+			  << (int)scratch[off + i] << " and b got "
+			  << (int)bscratch[i] << std::endl;
+	      }
+	    }
+	    assert(memcmp(bscratch, scratch + off, bslice.size()) == 0);
+	  }
 	  off += bslice.size();
 	  left -= bslice.size();
 	}
