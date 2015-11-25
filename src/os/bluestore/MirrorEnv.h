@@ -229,6 +229,19 @@ namespace rocksdb {
       assert(as == bs);
       return as;
     }
+    Status ReuseWritableFile(const std::string& fname,
+			     const std::string& old_fname,
+			     unique_ptr<WritableFile>* r,
+			     const EnvOptions& options) override {
+      if (f[0] == '/')
+	return a_->ReuseWritableFile(fname, r, options);
+      MirrorWritableFile *mf = new MirrorWritableFile(fname);
+      r->reset(mf);
+      Status as = a_->ReuseWritableFile(fname, old_fname, &mf->a_, options);
+      Status bs = b_->ReuseWritableFile(fname, old_fname, &mf->b_, options);
+      assert(as == bs);
+      return as;
+    }
     virtual Status NewDirectory(const std::string& name,
 				unique_ptr<Directory>* result) override {
       unique_ptr<Directory> br;
