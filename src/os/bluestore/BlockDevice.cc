@@ -293,7 +293,7 @@ int BlockDevice::aio_write(
   assert(off < size);
   assert(off + len <= size);
 
-  if (!bl.is_n_page_sized()) {
+  if (!bl.is_n_page_sized() || !bl.is_page_aligned()) {
     dout(20) << __func__ << " rebuilding buffer to be page-aligned" << dendl;
     bl.rebuild();
   }
@@ -310,6 +310,10 @@ int BlockDevice::aio_write(
     ++ioc->num_pending;
     FS::aio_t& aio = ioc->pending_aios.back();
     bl.prepare_iov(&aio.iov);
+    for (unsigned i=0; i<aio.iov.size(); ++i) {
+      dout(30) << "aio " << i << " " << aio.iov[i].iov_base
+	       << " " << aio.iov[i].iov_len << dendl;
+    }
     ioc->pending_bl.append(bl);
     aio.pwritev(off);
     dout(2) << __func__ << " prepared aio " << &aio << dendl;
@@ -374,6 +378,9 @@ int BlockDevice::read(uint64_t off, uint64_t len, bufferlist *pbl, IOContext *io
   }
   pbl->clear();
   pbl->push_back(p);
+  dout(40) << "data: ";
+  pbl->hexdump(*_dout);
+  *_dout << dendl;
  out:
   Mutex::Locker l(ioc->lock);
   _aio_finish(ioc, off, len);
