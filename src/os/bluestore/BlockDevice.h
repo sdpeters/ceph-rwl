@@ -73,6 +73,7 @@ private:
   int _aio_start();
   void _aio_stop();
 
+  void _aio_submit(IOContext *ioc);
   void _aio_prepare(IOContext *ioc, uint64_t offset, uint64_t length);
   void _aio_finish(IOContext *ioc, uint64_t offset, uint64_t length);
 

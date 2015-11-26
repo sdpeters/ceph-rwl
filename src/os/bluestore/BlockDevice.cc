@@ -215,6 +215,7 @@ void BlockDevice::_aio_thread()
 
 void BlockDevice::_aio_prepare(IOContext *ioc, uint64_t offset, uint64_t length)
 {
+  assert(ioc->lock.is_locked());
   dout(20) << __func__ << " " << offset << "~" << length
 	   << " (" << ioc->blocks << ")" << dendl;
   while (ioc->blocks.intersects(offset, length)) {
@@ -222,7 +223,7 @@ void BlockDevice::_aio_prepare(IOContext *ioc, uint64_t offset, uint64_t length)
 	     << offset << "~" << length
 	     << " (" << ioc->blocks << ")" << dendl;
     if (ioc->num_pending) {
-      aio_submit(ioc);
+      _aio_submit(ioc);
     }
     ioc->_aio_wait();
     dout(20) << __func__ << " done waiting" << dendl;
@@ -257,6 +258,11 @@ void BlockDevice::_aio_finish(IOContext *ioc, uint64_t offset, uint64_t length)
 void BlockDevice::aio_submit(IOContext *ioc)
 {
   Mutex::Locker l(ioc->lock);
+  _aio_submit(ioc);
+}
+
+void BlockDevice::_aio_submit(IOContext *ioc)
+{
   dout(20) << __func__ << " ioc " << ioc
 	   << " pending " << ioc->num_pending
 	   << " running " << ioc->num_running
