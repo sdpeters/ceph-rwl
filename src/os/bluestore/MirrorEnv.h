@@ -30,7 +30,7 @@ namespace rocksdb {
 	  if (memcmp(bscratch, scratch + off, bslice.size()) != 0) {
 	    for (unsigned i=0; i < bslice.size(); ++i) {
 	      if (scratch[off + i] != bscratch[i]) {
-		std::cout << "at offset " << offset + off + i << " a got "
+		std::cout << "at offset " << off + i << " a got "
 			  << (int)scratch[off + i] << " and b got "
 			  << (int)bscratch[i] << std::endl;
 	      }
