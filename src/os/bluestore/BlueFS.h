@@ -265,6 +265,8 @@ public:
     // no need to hold the global lock here; we only touch h and
     // h->file, and read vs write or delete is already protected (via
     // atomics and asserts).
+    Mutex::Locker l(lock);  // drop shared IOContext first!!
+#warning fix lockless read after removing shared IOContext
     return _read(h, buf, offset, len, outbl, out);
   }
   void invalidate_cache(FileRef f, uint64_t offset, uint64_t len) {
