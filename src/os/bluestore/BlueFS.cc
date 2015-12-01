@@ -1007,7 +1007,10 @@ int BlueFS::_truncate(FileWriter *h, uint64_t offset)
     if (r < 0)
       return r;
   }
-  if (offset > h->pos + h->buffer.length()) {
+  if (offset == h->file->fnode.size) {
+    return 0;  // no-op!
+  }
+  if (offset > h->file->fnode.size) {
     assert(0 == "truncate up not supported");
   }
   assert(h->file->fnode.size >= offset);
