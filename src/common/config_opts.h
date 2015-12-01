@@ -814,7 +814,7 @@ OPTION(memstore_device_bytes, OPT_U64, 1024*1024*1024)
 OPTION(memstore_page_set, OPT_BOOL, true)
 OPTION(memstore_page_size, OPT_U64, 64 << 10)
 
-OPTION(bdev_debug_inflight_ios, OPT_BOOL, true) // fixme
+OPTION(bdev_debug_inflight_ios, OPT_BOOL, false)
 
 OPTION(bluefs_alloc_size, OPT_U64, 1048576)
 OPTION(bluefs_max_prefetch, OPT_U64, 1048576)
