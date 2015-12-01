@@ -3119,12 +3119,6 @@ void BlueStore::_kv_sync_thread()
 	if (!bluefs_gift_extents.empty()) {
 	  _commit_bluefs_freespace(bluefs_gift_extents);
 	}
-	interval_set<uint64_t> bset;
-	bufferlist bl;
-	db->get(PREFIX_SUPER, "bluefs_extents", &bl);
-	bufferlist::iterator p = bl.begin();
-	::decode(bset, p);
-	dout(20) << __func__ << " kv's bluefs_extents " << bset << dendl;
       }
 
       kv_lock.Lock();
