@@ -36,6 +36,8 @@ void IOContext::aio_wait()
 }
 
 // ----------------
+#undef dout_prefix
+#define dout_prefix *_dout << "bdev(" << path << ") "
 
 BlockDevice::BlockDevice(aio_callback_t cb, void *cbpriv)
   : fd(-1),
