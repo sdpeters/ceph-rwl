@@ -399,7 +399,6 @@ int BlockDevice::read(uint64_t off, uint64_t len, bufferlist *pbl, IOContext *io
   
  out:
   _aio_log_finish(ioc, off, len);
-  int waiting = ioc->num_waiting.read();
   ioc->num_reading.dec();
   if (ioc->num_waiting.read()) {
     dout(20) << __func__ << " waking waiter" << dendl;
