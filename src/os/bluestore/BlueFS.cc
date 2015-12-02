@@ -126,8 +126,7 @@ int BlueFS::mkfs(uuid_d osd_uuid)
   // init log
   FileRef log_file = new File;
   log_file->fnode.ino = 1;
-  if (bdev.size() >= 2)
-    log_file->fnode.prefer_bdev = 1;
+  log_file->fnode.prefer_bdev = bdev.size() - 1;
   _allocate(log_file->fnode.prefer_bdev,
 	    g_conf->bluefs_max_log_runway,
 	    &log_file->fnode.extents);
@@ -1118,18 +1117,27 @@ int BlueFS::open_for_write(
   } else {
     // overwrite existing file?
     file = q->second;
-    if (!overwrite) {
+    if (overwrite) {
       dout(20) << __func__ << " dir " << dirname << " (" << dir
 	       << ") file " << filename
-	       << " already exists, overwriting" << dendl;
+	       << " already exists, overwrite in place" << dendl;
     } else {
       dout(20) << __func__ << " dir " << dirname << " (" << dir
 	       << ") file " << filename
-	       << " already exists, overwriting" << dendl;
+	       << " already exists, truncate + overwrite" << dendl;
       file->fnode.size = 0;
     }
     file->fnode.mtime = ceph_clock_now(NULL);
     log_t.op_file_update(file->fnode);
+  }
+
+  // slow device?
+  if (dirname.length() > 5 &&
+      strcmp(dirname.c_str() + dirname.length() - 5, ".slow") == 0) {
+    assert(bdev.size() > 1);
+    dout(20) << __func__ << " mapping " << dirname << "/" << filename
+	     << " to bdev 1" << dendl;
+    file->fnode.prefer_bdev = 1;
   }
 
   *h = new FileWriter(file, bdev.size());
