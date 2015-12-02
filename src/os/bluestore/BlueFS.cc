@@ -331,7 +331,7 @@ int BlueFS::_replay()
       ::decode(len, p);
       ::decode(uuid, p);
       ::decode(seq, p);
-      if (len - 6 > bl.length()) {
+      if (len + 6 > bl.length()) {
 	more = ROUND_UP_TO(len + 6 - bl.length(), super.block_size);
       }
     }
