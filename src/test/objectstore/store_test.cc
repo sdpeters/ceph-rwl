@@ -1839,7 +1839,7 @@ TEST_P(StoreTest, Synthetic) {
     if (!(i % 500)) cerr << "seeding object " << i << std::endl;
     test_obj.touch();
   }
-  for (int i = 0; i < 100000; ++i) {
+  for (int i = 0; i < 10000; ++i) {
     if (!(i % 1000)) {
       cerr << "Op " << i << std::endl;
       test_obj.print_internal_state();
@@ -1880,7 +1880,7 @@ TEST_P(StoreTest, AttrSynthetic) {
     if (!(i % 10)) cerr << "seeding object " << i << std::endl;
     test_obj.touch();
   }
-  for (int i = 0; i < 10000; ++i) {
+  for (int i = 0; i < 1000; ++i) {
     if (!(i % 100)) {
       cerr << "Op " << i << std::endl;
       test_obj.print_internal_state();
