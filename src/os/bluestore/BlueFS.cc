@@ -1131,13 +1131,22 @@ int BlueFS::open_for_write(
     log_t.op_file_update(file->fnode);
   }
 
-  // slow device?
-  if (dirname.length() > 5 &&
-      strcmp(dirname.c_str() + dirname.length() - 5, ".slow") == 0) {
-    assert(bdev.size() > 1);
-    dout(20) << __func__ << " mapping " << dirname << "/" << filename
-	     << " to bdev 1" << dendl;
-    file->fnode.prefer_bdev = 1;
+  if (dirname.length() > 5) {
+    // the "db.slow" and "db.wal" directory names are hard-coded at
+    // match up with bluestore.  the slow device is always the second
+    // one (when a dedicated block.db device is present and used at
+    // bdev 0).  the wal device is always last.
+    if (strcmp(dirname.c_str() + dirname.length() - 5, ".slow") == 0) {
+      assert(bdev.size() > 1);
+      dout(20) << __func__ << " mapping " << dirname << "/" << filename
+	       << " to bdev 1" << dendl;
+      file->fnode.prefer_bdev = 1;
+    } else if (strcmp(dirname.c_str() + dirname.length() - 4, ".wal") == 0) {
+      assert(bdev.size() > 1);
+      file->fnode.prefer_bdev = bdev.size() - 1;
+      dout(20) << __func__ << " mapping " << dirname << "/" << filename
+	       << " to bdev " << file->fnode.prefer_bdev << dendl;
+    }
   }
 
   *h = new FileWriter(file, bdev.size());
