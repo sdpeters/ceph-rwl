@@ -141,6 +141,14 @@ void BlockDevice::close()
 int BlockDevice::flush()
 {
   dout(10) << __func__ << " start" << dendl;
+  if (g_conf->bdev_inject_crash) {
+    // sleep for a moment to give other threads a chance to submit or
+    // wait on io that races with a flush.
+    derr << __func__ << " injecting crash. first we sleep..." << dendl;
+    sleep(3);
+    derr << __func__ << " and now we die" << dendl;
+    assert(0 == "bdev_inject_crash");
+  }
   utime_t start = ceph_clock_now(NULL);
   int r = ::fdatasync(fd);
   utime_t end = ceph_clock_now(NULL);
