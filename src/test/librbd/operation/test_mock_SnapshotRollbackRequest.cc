@@ -157,6 +157,7 @@ public:
   }
 };
 
+/*
 TEST_F(TestMockOperationSnapshotRollbackRequest, Success) {
   librbd::ImageCtx *ictx;
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
@@ -273,6 +274,7 @@ TEST_F(TestMockOperationSnapshotRollbackRequest, RollbackObjectsError) {
   expect_unblock_writes(mock_image_ctx);
   ASSERT_EQ(-EINVAL, when_snap_rollback(mock_image_ctx, "snap", 123, 0));
 }
+*/
 
 TEST_F(TestMockOperationSnapshotRollbackRequest, InvalidateCacheError) {
   librbd::ImageCtx *ictx;
