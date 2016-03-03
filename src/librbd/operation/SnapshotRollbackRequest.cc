@@ -125,6 +125,7 @@ void SnapshotRollbackRequest<I>::send_resize_image() {
     current_size = image_ctx.get_image_size(CEPH_NOSNAP);
   }
 
+  ldout(image_ctx.cct, 5) << this << " " << __func__ << " current size " << current_size << " snap size " << m_snap_size << dendl;
   if (current_size == m_snap_size) {
     send_rollback_object_map();
     return;
