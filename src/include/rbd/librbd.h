@@ -1,4 +1,4 @@
-// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*- 
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 /*
  * Ceph - scalable distributed file system
@@ -240,6 +240,8 @@ CEPH_RBD_API int rbd_mirror_image_status_summary(rados_ioctx_t io_ctx,
     rbd_mirror_image_status_state_t *states, int *counts, size_t *maxlen);
 
 CEPH_RBD_API int rbd_open(rados_ioctx_t io, const char *name,
+                          rbd_image_t *image, const char *snap_name);
+CEPH_RBD_API int rbd_open_skip_cache(rados_ioctx_t io, const char *name,
                           rbd_image_t *image, const char *snap_name);
 
 CEPH_RBD_API int rbd_aio_open(rados_ioctx_t io, const char *name,

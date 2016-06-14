@@ -427,7 +427,7 @@ ceph_test_librbd_LDADD = \
 	libcls_rbd_client.la libcls_lock_client.la \
 	libjournal.la libcls_journal_client.la \
 	librados_api.la $(LIBRADOS_DEPS) $(UNITTEST_LDADD) \
-	$(CEPH_GLOBAL) $(RADOS_TEST_LDADD)
+	$(CEPH_GLOBAL) $(RADOS_TEST_LDADD) -lrbc
 bin_DEBUGPROGRAMS += ceph_test_librbd
 
 ceph_test_librbd_api_SOURCES = \
@@ -519,6 +519,7 @@ ceph_test_rbd_mirror_LDADD = \
 	$(LIBRBD_TYPES) \
 	librados_api.la $(LIBRADOS_DEPS) \
 	$(LIBOSDC) $(UNITTEST_LDADD) \
+    librbd/librbd_la-librbd.lo -lrbc \
 	$(CEPH_GLOBAL) $(RADOS_TEST_LDADD)
 bin_DEBUGPROGRAMS += ceph_test_rbd_mirror
 
@@ -542,6 +543,7 @@ ceph_test_rbd_mirror_image_replay_LDADD = \
 	libcls_rbd_client.la \
 	libcls_lock_client.la \
 	libcls_journal_client.la \
+    librbd/librbd_la-librbd.lo -lrbc \
 	$(CEPH_GLOBAL)
 bin_DEBUGPROGRAMS += ceph_test_rbd_mirror_image_replay
 

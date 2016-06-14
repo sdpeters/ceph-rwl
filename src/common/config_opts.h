@@ -596,7 +596,7 @@ OPTION(osd_uuid, OPT_UUID, uuid_d())
 OPTION(osd_data, OPT_STR, "/var/lib/ceph/osd/$cluster-$id")
 OPTION(osd_journal, OPT_STR, "/var/lib/ceph/osd/$cluster-$id/journal")
 OPTION(osd_journal_size, OPT_INT, 5120)         // in mb
-// flags for specific control purpose during osd mount() process. 
+// flags for specific control purpose during osd mount() process.
 // e.g., can be 1 to skip over replaying journal
 // or 2 to skip over mounting omap or 3 to skip over both.
 // This might be helpful in case the journal is totally corrupted
@@ -861,7 +861,7 @@ OPTION(osd_snap_trim_cost, OPT_U32, 1<<20) // set default cost equal to 1MB io
 
 OPTION(osd_scrub_priority, OPT_U32, 5)
 // set default cost equal to 50MB io
-OPTION(osd_scrub_cost, OPT_U32, 50<<20) 
+OPTION(osd_scrub_cost, OPT_U32, 50<<20)
 
 /**
  * osd_recovery_op_warn_multiple scales the normal warning threshhold,
@@ -1141,6 +1141,10 @@ OPTION(journal_discard, OPT_BOOL, false) //using ssd disk as journal, whether su
 OPTION(rados_mon_op_timeout, OPT_DOUBLE, 0) // how many seconds to wait for a response from the monitor before returning an error from a rados operation. 0 means on limit.
 OPTION(rados_osd_op_timeout, OPT_DOUBLE, 0) // how many seconds to wait for a response from osds before returning an error from a rados operation. 0 means no limit.
 OPTION(rados_tracing, OPT_BOOL, false) // true if LTTng-UST tracepoints should be enabled
+
+OPTION(rbd_cache_volume_enable, OPT_BOOL, true)
+OPTION(rbd_cache_volume_name, OPT_STR, "cache_volume")
+OPTION(rbd_cache_volume_backend, OPT_STR, "hyperstash")
 
 OPTION(rbd_op_threads, OPT_INT, 1)
 OPTION(rbd_op_thread_timeout, OPT_INT, 60)

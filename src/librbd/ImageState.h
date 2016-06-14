@@ -21,7 +21,7 @@ template <typename ImageCtxT = ImageCtx>
 class ImageState {
 public:
   ImageState(ImageCtxT *image_ctx);
-  ~ImageState();
+  virtual ~ImageState();
 
   int open();
   void open(Context *on_finish);

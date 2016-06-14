@@ -1,4 +1,4 @@
-// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*- 
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 /*
  * Ceph - scalable distributed file system
@@ -28,6 +28,7 @@
 #include "librbd/AioImageRequestWQ.h"
 #include "cls/rbd/cls_rbd_client.h"
 #include "librbd/ImageCtx.h"
+#include "librbd/CacheImageCtx.h"
 #include "librbd/ImageState.h"
 #include "librbd/internal.h"
 #include "librbd/Operations.h"
@@ -960,9 +961,9 @@ namespace librbd {
   bool Image::snap_exists(const char *snap_name)
   {
     ImageCtx *ictx = (ImageCtx *)ctx;
-    tracepoint(librbd, snap_exists_enter, ictx, ictx->name.c_str(), 
+    tracepoint(librbd, snap_exists_enter, ictx, ictx->name.c_str(),
       ictx->snap_name.c_str(), ictx->read_only, snap_name);
-    bool exists; 
+    bool exists;
     int r = librbd::snap_exists(ictx, snap_name, &exists);
     tracepoint(librbd, snap_exists_exit, r, exists);
     if (r < 0) {
@@ -976,7 +977,7 @@ namespace librbd {
   int Image::snap_exists2(const char *snap_name, bool *exists)
   {
     ImageCtx *ictx = (ImageCtx *)ctx;
-    tracepoint(librbd, snap_exists_enter, ictx, ictx->name.c_str(), 
+    tracepoint(librbd, snap_exists_enter, ictx, ictx->name.c_str(),
       ictx->snap_name.c_str(), ictx->read_only, snap_name);
     int r = librbd::snap_exists(ictx, snap_name, exists);
     tracepoint(librbd, snap_exists_exit, r, *exists);
@@ -1559,7 +1560,7 @@ extern "C" int rbd_list(rados_ioctx_t p, char *names, size_t *size)
     return -ERANGE;
   }
 
-  if (!names) 
+  if (!names)
     return -EINVAL;
 
   for (int i = 0; i < (int)cpp_names.size(); i++) {
@@ -1816,8 +1817,38 @@ extern "C" int rbd_open(rados_ioctx_t p, const char *name, rbd_image_t *image,
   librados::IoCtx io_ctx;
   librados::IoCtx::from_rados_ioctx_t(p, io_ctx);
   TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
-  librbd::ImageCtx *ictx = new librbd::ImageCtx(name, "", snap_name, io_ctx,
-						false);
+  //if this image has cache volume,
+  //should open cache_volume instead,
+  //and give read cache name to cache_volume
+  CephContext *cct = (CephContext* )io_ctx.cct();
+  librbd::ImageCtx *ictx;
+  if( cct->_conf->rbd_cache_volume_enable ){
+    string cache_volume_name = cct->_conf->rbd_cache_volume_name + "_" + name;
+    ictx = new librbd::CacheImageCtx(cache_volume_name,
+            "", snap_name, name, io_ctx, false);
+  }else{
+    ictx = new librbd::ImageCtx(name, "", snap_name, io_ctx, false);
+  }
+  tracepoint(librbd, open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only);
+
+  int r = ictx->state->open();
+  if (r < 0) {
+    delete ictx;
+  } else {
+    *image = (rbd_image_t)ictx;
+  }
+  tracepoint(librbd, open_image_exit, r);
+  return r;
+}
+
+extern "C" int rbd_open_skip_cache(rados_ioctx_t p, const char *name,
+				  rbd_image_t *image, const char *snap_name)
+{
+  librados::IoCtx io_ctx;
+  librados::IoCtx::from_rados_ioctx_t(p, io_ctx);
+  TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
+  librbd::ImageCtx *ictx = new librbd::ImageCtx(name, "", snap_name, io_ctx, false);
+
   tracepoint(librbd, open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only);
 
   int r = ictx->state->open();
@@ -1885,10 +1916,15 @@ extern "C" int rbd_aio_open_read_only(rados_ioctx_t p, const char *name,
 extern "C" int rbd_close(rbd_image_t image)
 {
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+  int r;
+  if(ictx->is_cache_volume){
+      librbd::CacheImageCtx* cache_ctx = (librbd::CacheImageCtx *)image;
+      cache_ctx->delete_CacheImageCtx();
+      r = cache_ctx->state->close();
+      return r;
+  }
   tracepoint(librbd, close_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str());
-
-  int r = ictx->state->close();
-
+  r = ictx->state->close();
   tracepoint(librbd, close_image_exit, r);
   return r;
 }
@@ -1929,7 +1965,20 @@ extern "C" int rbd_stat(rbd_image_t image, rbd_image_info_t *info,
 {
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
   tracepoint(librbd, stat_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only);
-  int r = librbd::info(ictx, *info, infosize);
+  int r;
+  if(ictx->is_cache_volume){
+      librbd::CacheImageCtx *cache_ictx = (librbd::CacheImageCtx *)ictx;
+      ictx = new librbd::ImageCtx(cache_ictx->cached_image_name, "", cache_ictx->snap_name.c_str(), cache_ictx->data_ctx, cache_ictx->read_only);
+      r = ictx->state->open();
+      if( r == 0 ){
+          r = librbd::info(ictx, *info, infosize);
+          r = ictx->state->close();
+      }else{
+          delete ictx;
+      }
+  }else{
+      r = librbd::info(ictx, *info, infosize);
+  }
   tracepoint(librbd, stat_exit, r, info);
   return r;
 }
@@ -2513,11 +2562,17 @@ extern "C" int rbd_aio_create_completion(void *cb_arg,
 extern "C" int rbd_aio_write(rbd_image_t image, uint64_t off, size_t len,
 			     const char *buf, rbd_completion_t c)
 {
-  librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+
   librbd::RBD::AioCompletion *comp = (librbd::RBD::AioCompletion *)c;
-  tracepoint(librbd, aio_write_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only, off, len, buf, comp->pc);
-  ictx->aio_work_queue->aio_write(get_aio_completion(comp), off, len, buf, 0);
-  tracepoint(librbd, aio_write_exit, 0);
+  librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+  if(ictx->is_cache_volume){
+      librbd::CacheImageCtx *cache_ctx = (librbd::CacheImageCtx *)image;
+      cache_ctx->aio_write( get_aio_completion(comp), off, len, buf, 0 );
+  }else{
+      tracepoint(librbd, aio_write_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only, off, len, buf, comp->pc);
+     ictx->aio_work_queue->aio_write(get_aio_completion(comp), off, len, buf, 0);
+     tracepoint(librbd, aio_write_exit, 0);
+  }
   return 0;
 }
 
@@ -2551,10 +2606,15 @@ extern "C" int rbd_aio_read(rbd_image_t image, uint64_t off, size_t len,
 {
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
   librbd::RBD::AioCompletion *comp = (librbd::RBD::AioCompletion *)c;
-  tracepoint(librbd, aio_read_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only, off, len, buf, comp->pc);
-  ictx->aio_work_queue->aio_read(get_aio_completion(comp), off, len, buf, NULL,
+  if(ictx->is_cache_volume){
+      librbd::CacheImageCtx *cache_ctx = (librbd::CacheImageCtx *)image;
+      cache_ctx->aio_read( get_aio_completion(comp), off, len, buf, 0 );
+  }else{
+      tracepoint(librbd, aio_read_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only, off, len, buf, comp->pc);
+      ictx->aio_work_queue->aio_read(get_aio_completion(comp), off, len, buf, NULL,
                                  0);
-  tracepoint(librbd, aio_read_exit, 0);
+      tracepoint(librbd, aio_read_exit, 0);
+  }
   return 0;
 }
 

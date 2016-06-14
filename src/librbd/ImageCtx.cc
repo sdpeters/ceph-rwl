@@ -171,7 +171,7 @@ struct C_InvalidateCache : public Context {
       operations(new Operations<>(*this)),
       exclusive_lock(nullptr), object_map(nullptr),
       aio_work_queue(nullptr), op_work_queue(nullptr),
-      asok_hook(nullptr)
+      asok_hook(nullptr), is_cache_volume(false)
   {
     md_ctx.dup(p);
     data_ctx.dup(p);

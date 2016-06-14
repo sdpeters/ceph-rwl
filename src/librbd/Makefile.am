@@ -20,6 +20,7 @@ librbd_internal_la_SOURCES = \
 	librbd/DiffIterate.cc \
 	librbd/ExclusiveLock.cc \
 	librbd/ImageCtx.cc \
+	librbd/CacheImageCtx.cc \
 	librbd/ImageState.cc \
 	librbd/ImageWatcher.cc \
 	librbd/internal.cc \
@@ -85,7 +86,7 @@ librbd_la_LIBADD = \
 librbd_la_LDFLAGS = ${AM_LDFLAGS} -version-info 1:0:0
 if LINUX
 librbd_la_CXXFLAGS = -fvisibility=hidden -fvisibility-inlines-hidden
-librbd_la_LDFLAGS += -Xcompiler -Xlinker -Xcompiler '--exclude-libs=ALL'
+librbd_la_LDFLAGS += -Xcompiler -Xlinker -Xcompiler '--exclude-libs=ALL' -lrbc
 endif
 lib_LTLIBRARIES += librbd.la
 
@@ -101,6 +102,7 @@ noinst_HEADERS += \
 	librbd/DiffIterate.h \
 	librbd/ExclusiveLock.h \
 	librbd/ImageCtx.h \
+	librbd/CacheImageCtx.h \
 	librbd/ImageState.h \
 	librbd/ImageWatcher.h \
 	librbd/internal.h \

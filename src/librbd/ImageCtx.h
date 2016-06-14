@@ -124,6 +124,7 @@ namespace librbd {
     ImageCtx *parent;
     uint64_t stripe_unit, stripe_count;
     uint64_t flags;
+    bool is_cache_volume;
 
     file_layout_t layout;
 

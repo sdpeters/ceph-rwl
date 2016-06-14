@@ -150,7 +150,9 @@ rbd_mirror_LDADD = \
 	libcls_rbd_client.la \
 	libcls_lock_client.la \
 	libcls_journal_client.la \
-	$(CEPH_GLOBAL)
+    librbd/librbd_la-librbd.lo \
+	$(CEPH_GLOBAL) \
+    -lrbc
 bin_PROGRAMS += rbd-mirror
 
 endif # WITH_RBD
