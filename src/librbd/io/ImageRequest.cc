@@ -27,6 +27,7 @@ namespace librbd {
 namespace io {
 
 using librbd::util::get_image_ctx;
+using librbd::util::create_context_callback;
 
 namespace {
 
@@ -78,7 +79,7 @@ struct C_FlushJournalCommit : public Context {
   void finish(int r) override {
     CephContext *cct = image_ctx.cct;
     ldout(cct, 20) << "C_FlushJournalCommit: journal committed" << dendl;
-
+#if 0 // doesn't compile, not present later on branch
     if (r >= 0) {
       size_t length = 0;
       for (auto &image_extent : m_image_extents) {
@@ -90,6 +91,7 @@ struct C_FlushJournalCommit : public Context {
           cct, m_bl, {{0, length}}, 0, {{0, length}});
       r = length;
     }
+#endif
     aio_comp->complete_request(r);
   }
 };
@@ -152,8 +154,9 @@ struct C_AioFlush : public C_AioRequest {
       }
     }
 
-    Context *ctx = util::create_context_callback<
+    Context *ctx = create_context_callback<
       C_AioFlush<I>, &C_AioFlush<I>::handle_flush>(this);
+#if 0 // associate_journal_event() no longer exists
     if (journaling) {
       // flush op completes when flush journal event (and all predecessor
       // events) safely written
@@ -164,13 +167,14 @@ struct C_AioFlush : public C_AioRequest {
 
       image_ctx.journal->flush_event(journal_tid, ctx);
     } else {
+#endif
       // flush op completes when writeback cache (if enabled) flushes
       // all dirty blocks
       image_ctx.flush(ctx);
 
       // track flush op for block writes
       m_completion->start_op(true);
-    }
+//    }
   }
 
   void handle_flush(int r) {
@@ -183,60 +187,6 @@ struct C_AioFlush : public C_AioRequest {
 };
 
 } // anonymous namespace
-
-template <typename I>
-ImageRequest<I>* ImageRequest<I>::create_read_request(
-    I &image_ctx, AioCompletion *aio_comp, Extents &&image_extents,
-    ReadResult &&read_result, int op_flags,
-    const ZTracer::Trace &parent_trace) {
-  return new ImageReadRequest<I>(image_ctx, aio_comp,
-                                 std::move(image_extents),
-                                 std::move(read_result), op_flags,
-                                 parent_trace);
-}
-
-template <typename I>
-ImageRequest<I>* ImageRequest<I>::create_write_request(
-    I &image_ctx, AioCompletion *aio_comp, Extents &&image_extents,
-    bufferlist &&bl, int op_flags, const ZTracer::Trace &parent_trace) {
-  return new ImageWriteRequest<I>(image_ctx, aio_comp, std::move(image_extents),
-                                  std::move(bl), op_flags, parent_trace);
-}
-
-template <typename I>
-ImageRequest<I>* ImageRequest<I>::create_discard_request(
-    I &image_ctx, AioCompletion *aio_comp, uint64_t off, uint64_t len,
-    bool skip_partial_discard, const ZTracer::Trace &parent_trace) {
-  return new ImageDiscardRequest<I>(image_ctx, aio_comp, off, len,
-                                    skip_partial_discard, parent_trace);
-}
-
-template <typename I>
-ImageRequest<I>* ImageRequest<I>::create_flush_request(
-    I &image_ctx, AioCompletion *aio_comp,
-    const ZTracer::Trace &parent_trace) {
-  return new ImageFlushRequest<I>(image_ctx, aio_comp, parent_trace);
-}
-
-template <typename I>
-ImageRequest<I>* ImageRequest<I>::create_writesame_request(
-    I &image_ctx, AioCompletion *aio_comp, uint64_t off, uint64_t len,
-    bufferlist &&bl, int op_flags, const ZTracer::Trace &parent_trace) {
-  return new ImageWriteSameRequest<I>(image_ctx, aio_comp, off, len,
-                                      std::move(bl), op_flags, parent_trace);
-}
-
-template <typename I>
-ImageRequest<I>* ImageRequest<I>::create_compare_and_write_request(
-    I &image_ctx, AioCompletion *c, Extents &&image_extents,
-    bufferlist &&cmp_bl, bufferlist &&bl, uint64_t *mismatch_offset,
-    int op_flags, const ZTracer::Trace &parent_trace) {
-  return new ImageCompareAndWriteRequest<I>(image_ctx, c,
-                                            std::move(image_extents),
-                                            std::move(cmp_bl),
-                                            std::move(bl), mismatch_offset,
-                                            op_flags, parent_trace);
-}
 
 template <typename I>
 void ImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
@@ -438,15 +388,19 @@ void ImageReadRequest<I>::send_image_cache_request() {
   I &image_ctx = this->m_image_ctx;
   assert(image_ctx.image_cache != nullptr);
 
+#if 0 // not present later
   uint64_t len = 0;
   for (auto &extent : this->m_image_extents) {
     len += extent.second;
   }
-
+#endif
+  
   AioCompletion *aio_comp = this->m_aio_comp;
+#if 0 // not present later
   aio_comp->read_buf = m_buf;
   aio_comp->read_buf_len = len;
   aio_comp->read_bl = m_pbl;
+#endif
   aio_comp->set_request_count(1);
 
   auto *req_comp = new io::ReadResult::C_ImageReadRequest(

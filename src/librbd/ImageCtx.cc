@@ -32,6 +32,7 @@
 #include "librbd/io/ImageRequestWQ.h"
 #include "librbd/io/ObjectDispatcher.h"
 #include "librbd/journal/StandardPolicy.h"
+#include "librbd/cache/FileImageCache.h"
 
 #include "osdc/Striper.h"
 #include <boost/bind.hpp>
@@ -771,7 +772,8 @@ public:
         "rbd_mirroring_delete_delay", false)(
         "rbd_mirroring_replay_delay", false)(
         "rbd_skip_partial_discard", false)(
-	"rbd_qos_iops_limit", false);
+	"rbd_qos_iops_limit", false)(
+        "rbd_persistent_cache_enabled", false);
 
     md_config_t local_config_t;
     std::map<std::string, bufferlist> res;
@@ -844,6 +846,7 @@ public:
     }
 
     io_work_queue->apply_qos_iops_limit(qos_iops_limit);
+    ASSIGN_OPTION(persistent_cache_enabled, bool);
   }
 
   ExclusiveLock<ImageCtx> *ImageCtx::create_exclusive_lock() {
