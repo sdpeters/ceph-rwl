@@ -1387,6 +1387,11 @@ OPTION(rbd_journal_max_payload_bytes, OPT_U32, 16384) // maximum journal payload
 OPTION(rbd_journal_max_concurrent_object_sets, OPT_INT, 0) // maximum number of object sets a journal client can be behind before it is automatically unregistered
 
 /**
+ * RBD persistent, client-side cache options
+ */
+OPTION(rbd_persistent_cache_enabled, OPT_BOOL, true)
+
+/**
  * RBD Mirror options
  */
 OPTION(rbd_mirror_journal_commit_age, OPT_DOUBLE, 5) // commit time interval, seconds

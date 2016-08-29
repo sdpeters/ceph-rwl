@@ -195,6 +195,8 @@ namespace librbd {
     int mirroring_replay_delay;
     bool skip_partial_discard;
 
+    bool persistent_cache_enabled;
+
     LibrbdAdminSocketHook *asok_hook;
 
     exclusive_lock::Policy *exclusive_lock_policy = nullptr;
