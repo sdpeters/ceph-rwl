@@ -28,6 +28,216 @@ namespace io {
 
 using librbd::util::get_image_ctx;
 
+namespace {
+
+template <typename ImageCtxT = ImageCtx>
+struct C_DiscardJournalCommit : public Context {
+  typedef std::vector<ObjectExtent> ObjectExtents;
+
+  ImageCtxT &image_ctx;
+  AioCompletion *aio_comp;
+  ObjectExtents object_extents;
+
+  C_DiscardJournalCommit(ImageCtxT &_image_ctx, AioCompletion *_aio_comp,
+                         const ObjectExtents &_object_extents, uint64_t tid)
+    : image_ctx(_image_ctx), aio_comp(_aio_comp),
+      object_extents(_object_extents) {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "delaying cache discard until journal tid " << tid << " "
+                   << "safe" << dendl;
+
+    aio_comp->add_request();
+  }
+
+  void finish(int r) override {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "C_DiscardJournalCommit: "
+                   << "journal committed: discarding from cache" << dendl;
+
+    Mutex::Locker cache_locker(image_ctx.cache_lock);
+    image_ctx.object_cacher->discard_set(image_ctx.object_set, object_extents);
+    aio_comp->complete_request(r);
+  }
+};
+
+template <typename ImageCtxT = ImageCtx>
+struct C_FlushJournalCommit : public Context {
+  ImageCtxT &image_ctx;
+  AioCompletion *aio_comp;
+
+  C_FlushJournalCommit(ImageCtxT &_image_ctx, AioCompletion *_aio_comp,
+                       uint64_t tid)
+    : image_ctx(_image_ctx), aio_comp(_aio_comp) {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "delaying flush until journal tid " << tid << " "
+                   << "safe" << dendl;
+
+    aio_comp->add_request();
+  }
+
+  void finish(int r) override {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "C_FlushJournalCommit: journal committed" << dendl;
+
+    if (r >= 0) {
+      size_t length = 0;
+      for (auto &image_extent : m_image_extents) {
+        length += image_extent.second;
+      }
+      assert(length == m_bl.length());
+
+      m_completion->destriper.add_partial_sparse_result(
+          cct, m_bl, {{0, length}}, 0, {{0, length}});
+      r = length;
+    }
+    aio_comp->complete_request(r);
+  }
+};
+
+template <typename ImageCtxT>
+class C_ObjectCacheRead : public Context {
+public:
+  explicit C_ObjectCacheRead(ImageCtxT &ictx, ObjectReadRequest<ImageCtxT> *req)
+    : m_image_ctx(ictx), m_req(req), m_enqueued(false) {}
+
+  void complete(int r) override {
+    if (!m_enqueued) {
+      // cache_lock creates a lock ordering issue -- so re-execute this context
+      // outside the cache_lock
+      m_enqueued = true;
+      m_image_ctx.op_work_queue->queue(this, r);
+      return;
+    }
+    Context::complete(r);
+  }
+
+protected:
+  void finish(int r) override {
+    m_req->complete(r);
+  }
+
+private:
+  ImageCtxT &m_image_ctx;
+  ObjectReadRequest<ImageCtxT> *m_req;
+  bool m_enqueued;
+};
+
+template <typename I>
+struct C_AioFlush : public C_AioRequest {
+  I &image_ctx;
+
+  C_AioFlush(I &image_ctx, AioCompletion *aio_comp)
+    : C_AioRequest(aio_comp), image_ctx(image_ctx) {
+  }
+
+  virtual void complete(int r) override {
+    finish(r);
+  }
+
+  virtual void finish(int r) override {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "C_AioFlush::" << __func__ << " " << this << ": r=" << r
+                   << dendl;
+
+    // all predecessor AIO operations have finished (or at least
+    // have had a journal event created)
+    bool journaling = false;
+    {
+      RWLock::RLocker snap_locker(image_ctx.snap_lock);
+      if (image_ctx.journal != nullptr &&
+          image_ctx.journal->is_journal_appending()) {
+        // track op now to prevent potential race with disabling journal
+        m_completion->start_op(true);
+        journaling = true;
+      }
+    }
+
+    Context *ctx = util::create_context_callback<
+      C_AioFlush<I>, &C_AioFlush<I>::handle_flush>(this);
+    if (journaling) {
+      // flush op completes when flush journal event (and all predecessor
+      // events) safely written
+      uint64_t journal_tid = image_ctx.journal->append_io_event(
+        journal::EventEntry(journal::AioFlushEvent()),
+        {}, 0, 0, false);
+      m_completion->associate_journal_event(journal_tid);
+
+      image_ctx.journal->flush_event(journal_tid, ctx);
+    } else {
+      // flush op completes when writeback cache (if enabled) flushes
+      // all dirty blocks
+      image_ctx.flush(ctx);
+
+      // track flush op for block writes
+      m_completion->start_op(true);
+    }
+  }
+
+  void handle_flush(int r) {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "C_AioFlush::" << __func__ << " " << this << ": r=" << r
+                   << dendl;
+    C_AioRequest::finish(r);
+    delete this;
+  }
+};
+
+} // anonymous namespace
+
+template <typename I>
+ImageRequest<I>* ImageRequest<I>::create_read_request(
+    I &image_ctx, AioCompletion *aio_comp, Extents &&image_extents,
+    ReadResult &&read_result, int op_flags,
+    const ZTracer::Trace &parent_trace) {
+  return new ImageReadRequest<I>(image_ctx, aio_comp,
+                                 std::move(image_extents),
+                                 std::move(read_result), op_flags,
+                                 parent_trace);
+}
+
+template <typename I>
+ImageRequest<I>* ImageRequest<I>::create_write_request(
+    I &image_ctx, AioCompletion *aio_comp, Extents &&image_extents,
+    bufferlist &&bl, int op_flags, const ZTracer::Trace &parent_trace) {
+  return new ImageWriteRequest<I>(image_ctx, aio_comp, std::move(image_extents),
+                                  std::move(bl), op_flags, parent_trace);
+}
+
+template <typename I>
+ImageRequest<I>* ImageRequest<I>::create_discard_request(
+    I &image_ctx, AioCompletion *aio_comp, uint64_t off, uint64_t len,
+    bool skip_partial_discard, const ZTracer::Trace &parent_trace) {
+  return new ImageDiscardRequest<I>(image_ctx, aio_comp, off, len,
+                                    skip_partial_discard, parent_trace);
+}
+
+template <typename I>
+ImageRequest<I>* ImageRequest<I>::create_flush_request(
+    I &image_ctx, AioCompletion *aio_comp,
+    const ZTracer::Trace &parent_trace) {
+  return new ImageFlushRequest<I>(image_ctx, aio_comp, parent_trace);
+}
+
+template <typename I>
+ImageRequest<I>* ImageRequest<I>::create_writesame_request(
+    I &image_ctx, AioCompletion *aio_comp, uint64_t off, uint64_t len,
+    bufferlist &&bl, int op_flags, const ZTracer::Trace &parent_trace) {
+  return new ImageWriteSameRequest<I>(image_ctx, aio_comp, off, len,
+                                      std::move(bl), op_flags, parent_trace);
+}
+
+template <typename I>
+ImageRequest<I>* ImageRequest<I>::create_compare_and_write_request(
+    I &image_ctx, AioCompletion *c, Extents &&image_extents,
+    bufferlist &&cmp_bl, bufferlist &&bl, uint64_t *mismatch_offset,
+    int op_flags, const ZTracer::Trace &parent_trace) {
+  return new ImageCompareAndWriteRequest<I>(image_ctx, c,
+                                            std::move(image_extents),
+                                            std::move(cmp_bl),
+                                            std::move(bl), mismatch_offset,
+                                            op_flags, parent_trace);
+}
+
 template <typename I>
 void ImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
                                Extents &&image_extents,
@@ -228,12 +438,19 @@ void ImageReadRequest<I>::send_image_cache_request() {
   I &image_ctx = this->m_image_ctx;
   assert(image_ctx.image_cache != nullptr);
 
+  uint64_t len = 0;
+  for (auto &extent : this->m_image_extents) {
+    len += extent.second;
+  }
+
   AioCompletion *aio_comp = this->m_aio_comp;
+  aio_comp->read_buf = m_buf;
+  aio_comp->read_buf_len = len;
+  aio_comp->read_bl = m_pbl;
   aio_comp->set_request_count(1);
 
   auto *req_comp = new io::ReadResult::C_ImageReadRequest(
     aio_comp, this->m_image_extents);
-
   image_ctx.image_cache->aio_read(std::move(this->m_image_extents),
                                   &req_comp->bl, m_op_flags,
                                   req_comp);
