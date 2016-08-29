@@ -76,6 +76,17 @@ struct C_FlushJournalCommit : public Context {
     CephContext *cct = image_ctx.cct;
     ldout(cct, 20) << this << " C_FlushJournalCommit: journal committed"
                    << dendl;
+    if (r >= 0) {
+      size_t length = 0;
+      for (auto &image_extent : m_image_extents) {
+        length += image_extent.second;
+      }
+      assert(length == m_bl.length());
+
+      m_completion->destriper.add_partial_sparse_result(
+          cct, m_bl, {{0, length}}, 0, {{0, length}});
+      r = length;
+    }
     aio_comp->complete_request(r);
   }
 };
@@ -368,12 +379,19 @@ void ImageReadRequest<I>::send_image_cache_request() {
   I &image_ctx = this->m_image_ctx;
   assert(image_ctx.image_cache != nullptr);
 
+  uint64_t len = 0;
+  for (auto &extent : this->m_image_extents) {
+    len += extent.second;
+  }
+
   AioCompletion *aio_comp = this->m_aio_comp;
+  aio_comp->read_buf = m_buf;
+  aio_comp->read_buf_len = len;
+  aio_comp->read_bl = m_pbl;
   aio_comp->set_request_count(1);
 
   auto *req_comp = new io::ReadResult::C_ImageReadRequest(
     aio_comp, this->m_image_extents);
-
   image_ctx.image_cache->aio_read(std::move(this->m_image_extents),
                                   &req_comp->bl, m_op_flags,
                                   req_comp);
