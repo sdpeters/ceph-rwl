@@ -108,6 +108,66 @@ private:
   bool m_enqueued;
 };
 
+template <typename I>
+struct C_AioFlush : public C_AioRequest {
+  I &image_ctx;
+
+  C_AioFlush(I &image_ctx, AioCompletion *aio_comp)
+    : C_AioRequest(aio_comp), image_ctx(image_ctx) {
+  }
+
+  virtual void complete(int r) override {
+    finish(r);
+  }
+
+  virtual void finish(int r) override {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "C_AioFlush::" << __func__ << " " << this << ": r=" << r
+                   << dendl;
+
+    // all predecessor AIO operations have finished (or at least
+    // have had a journal event created)
+    bool journaling = false;
+    {
+      RWLock::RLocker snap_locker(image_ctx.snap_lock);
+      if (image_ctx.journal != nullptr &&
+          image_ctx.journal->is_journal_appending()) {
+        // track op now to prevent potential race with disabling journal
+        m_completion->start_op(true);
+        journaling = true;
+      }
+    }
+
+    Context *ctx = util::create_context_callback<
+      C_AioFlush<I>, &C_AioFlush<I>::handle_flush>(this);
+    if (journaling) {
+      // flush op completes when flush journal event (and all predecessor
+      // events) safely written
+      uint64_t journal_tid = image_ctx.journal->append_io_event(
+        journal::EventEntry(journal::AioFlushEvent()),
+        {}, 0, 0, false);
+      m_completion->associate_journal_event(journal_tid);
+
+      image_ctx.journal->flush_event(journal_tid, ctx);
+    } else {
+      // flush op completes when writeback cache (if enabled) flushes
+      // all dirty blocks
+      image_ctx.flush(ctx);
+
+      // track flush op for block writes
+      m_completion->start_op(true);
+    }
+  }
+
+  void handle_flush(int r) {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "C_AioFlush::" << __func__ << " " << this << ": r=" << r
+                   << dendl;
+    C_AioRequest::finish(r);
+    delete this;
+  }
+};
+
 } // anonymous namespace
 
 template <typename I>
