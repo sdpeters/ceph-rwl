@@ -388,26 +388,28 @@ void ImageReadRequest<I>::send_image_cache_request() {
   I &image_ctx = this->m_image_ctx;
   assert(image_ctx.image_cache != nullptr);
 
-#if 0 // not present later
   uint64_t len = 0;
   for (auto &extent : this->m_image_extents) {
     len += extent.second;
   }
-#endif
   
   AioCompletion *aio_comp = this->m_aio_comp;
+  if (len > 0) {
 #if 0 // not present later
-  aio_comp->read_buf = m_buf;
-  aio_comp->read_buf_len = len;
-  aio_comp->read_bl = m_pbl;
+    aio_comp->read_buf = m_buf;
+    aio_comp->read_buf_len = len;
+    aio_comp->read_bl = m_pbl;
 #endif
-  aio_comp->set_request_count(1);
+    aio_comp->set_request_count(1);
 
-  auto *req_comp = new io::ReadResult::C_ImageReadRequest(
-    aio_comp, this->m_image_extents);
-  image_ctx.image_cache->aio_read(std::move(this->m_image_extents),
-                                  &req_comp->bl, m_op_flags,
-                                  req_comp);
+    auto *req_comp = new io::ReadResult::C_ImageReadRequest(
+      aio_comp, this->m_image_extents);
+    image_ctx.image_cache->aio_read(std::move(this->m_image_extents),
+                                    &req_comp->bl, m_op_flags,
+                                    req_comp);
+  } else {
+    aio_comp->set_request_count(0);
+  }
   aio_comp->put();
 }
 
