@@ -66,6 +66,7 @@ void BlockGuard::create_block_ios(IOType io_type,
       pair.second.extents.front().block_length != m_block_size);
     pair.second.block_request = block_request;
     pair.second.block = pair.first;
+    pair.second.tid = 0;
 
     ldout(m_cct, 20) << "block_io=[" << pair.second << "]" << dendl;
     block_ios->emplace_back(std::move(pair.second));
