@@ -763,8 +763,8 @@ template <typename I>
 void FileImageCache<I>::aio_read(Extents &&image_extents, bufferlist *bl,
                                  int fadvise_flags, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "image_extents=" << image_extents << ", "
-                 << "on_finish=" << on_finish << dendl;
+  //ldout(cct, 20) << "image_extents=" << image_extents << ", "
+  //               << "on_finish=" << on_finish << dendl;
 
   // TODO handle fadvise flags
   BlockGuard::C_BlockRequest *req = new C_ReadBlockRequest<I>(
@@ -779,8 +779,8 @@ void FileImageCache<I>::aio_write(Extents &&image_extents,
                                   int fadvise_flags,
                                   Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "image_extents=" << image_extents << ", "
-                 << "on_finish=" << on_finish << dendl;
+  //ldout(cct, 20) << "image_extents=" << image_extents << ", "
+  //               << "on_finish=" << on_finish << dendl;
 
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
@@ -825,7 +825,7 @@ void FileImageCache<I>::aio_discard(uint64_t offset, uint64_t length,
 
   // TODO invalidate discard blocks until writethrough/back support added
   C_Gather *ctx = new C_Gather(cct, on_finish);
-  invalidate({{offset, length}}, ctx->new_sub());
+  Context *invalidate_done_ctx = ctx->new_sub();
 
   m_image_writeback.aio_discard(offset, length, skip_partial_discard, ctx->new_sub());
 
@@ -860,6 +860,7 @@ void FileImageCache<I>::aio_writesame(uint64_t offset, uint64_t length,
                                   on_finish);
 }
 
+template <typename I>
 void FileImageCache<I>::init(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
@@ -1163,7 +1164,7 @@ template <typename I>
 void FileImageCache<I>::invalidate(Extents&& image_extents,
                                    Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "image_extents=" << image_extents << dendl;
+  //ldout(cct, 20) << "image_extents=" << image_extents << dendl;
 
   // TODO
   for (auto &extent : image_extents) {
