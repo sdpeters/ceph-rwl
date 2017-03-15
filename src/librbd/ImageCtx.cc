@@ -116,6 +116,7 @@ public:
       extra_read_flags(0),
       old_format(true),
       order(0), size(0), features(0),
+      ssd_cache_size(0),
       format_string(NULL),
       id(image_id), parent(NULL),
       stripe_unit(0), stripe_count(0), flags(0),
@@ -194,6 +195,13 @@ public:
 
     assert(image_watcher == NULL);
     image_watcher = new ImageWatcher<>(*this);
+
+    if (persistent_cache_enabled) {
+      ssd_cache_size = cct->_conf->get_val<uint64_t>("rbd_persistent_cache_size");
+    }
+
+    readahead.set_trigger_requests(readahead_trigger_requests);
+    readahead.set_max_readahead_size(readahead_max_bytes);
   }
 
   void ImageCtx::shutdown() {
