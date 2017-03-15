@@ -57,7 +57,7 @@ void ImageStore<I>::reset(Context *on_finish) {
   ldout(cct, 20) << dendl;
 
   // TODO
-  m_cache_file.truncate(m_image_ctx.size, false, on_finish);
+  m_cache_file.truncate(m_image_ctx.ssd_cache_size, false, on_finish);
 }
 
 template <typename I>
