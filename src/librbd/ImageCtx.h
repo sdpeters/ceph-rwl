@@ -127,6 +127,7 @@ namespace librbd {
     cls::rbd::GroupSpec group_spec;
     uint64_t stripe_unit, stripe_count;
     uint64_t flags;
+    uint64_t ssd_cache_size;
 
     file_layout_t layout;
 
