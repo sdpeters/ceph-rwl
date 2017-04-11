@@ -251,9 +251,7 @@ void StupidPolicy<I>::entry_to_bufferlist(uint64_t block, bufferlist *bl){
   Entry_t entry;
   entry.block = entry_it->second->block;
   entry.dirty = entry_it->second->dirty;
-  bufferlist encode_bl;
-  entry.encode(encode_bl);
-  bl->append(encode_bl);
+  entry.encode(*bl);
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "block=" << block << " bl=" << *bl << dendl;
 }
