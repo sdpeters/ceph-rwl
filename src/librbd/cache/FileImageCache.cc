@@ -31,6 +31,7 @@ namespace {
 typedef std::list<bufferlist> Buffers;
 typedef std::map<uint64_t, bufferlist> ExtentBuffers;
 typedef std::function<void(uint64_t)> ReleaseBlock;
+typedef std::function<void(BlockGuard::BlockIO)> AppendDetainedBlock;
 
 static const uint32_t BLOCK_SIZE = 4096;
 
@@ -552,6 +553,7 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
   ImageStore<I> &image_store;
   MetaStore<I> &meta_store;
   ReleaseBlock &release_block;
+  AppendDetainedBlock &append_detain_block;
   bufferlist bl;
   uint32_t block_size;
 
@@ -560,13 +562,14 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
   C_WriteBlockRequest(I &image_ctx, ImageWriteback<I> &image_writeback,
                       Policy &policy, JournalStore<I> &journal_store,
                       ImageStore<I> &image_store, MetaStore<I> &meta_store,
-                      ReleaseBlock &release_block, bufferlist &&bl,
-                      uint32_t block_size, Context *on_finish)
+                      ReleaseBlock &release_block, AppendDetainedBlock &append_detain_block,
+                      bufferlist &&bl, uint32_t block_size, Context *on_finish)
     : C_BlockRequest(on_finish),
       image_ctx(image_ctx), image_writeback(image_writeback), policy(policy),
       journal_store(journal_store), image_store(image_store),
-      meta_store(meta_store), release_block(release_block), bl(std::move(bl)),
-      block_size(block_size) {
+      meta_store(meta_store), release_block(release_block),
+      append_detain_block(append_detain_block),
+      bl(std::move(bl)), block_size(block_size) {
   }
 
   virtual void remap(PolicyMapResult policy_map_result,
@@ -586,7 +589,6 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
     } else {
       // block is now dirty -- can't be replaced until flushed
       policy.set_dirty(block_io.block);
-	  // TODO: persistent metadata
       req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, &policy, req);
 
       if (block_io.partial_block) {
@@ -595,6 +597,19 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
 
         // TODO optimize by only reading missing extents
         promote_buffers.emplace_back();
+
+        IOType io_type = static_cast<IOType>(block_io.io_type);
+        if ((io_type == IO_TYPE_WRITE || io_type == IO_TYPE_DISCARD) &&
+            block_io.tid == 0) {
+          // TODO support non-journal mode / writethrough-only
+          int r = journal_store.allocate_tid(&block_io.tid);
+          if (r < 0) {
+            ldout(cct, 20) << "journal full -- detaining block IO" << dendl;
+            append_detain_block(block_io);
+            return;
+          }
+        }
+
         if (block_io.tid > 0) {
           req = new C_AppendEventToJournal<I>(cct, journal_store, block_io.tid,
                                               block_io.block, IO_TYPE_WRITE,
@@ -623,12 +638,6 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
         }
       } else {
         // full block overwrite
-        if (block_io.tid > 0) {
-          req = new C_AppendEventToJournal<I>(cct, journal_store, block_io.tid,
-                                              block_io.block, IO_TYPE_WRITE,
-                                              req);
-        }
-
         req = new C_PromoteToCache<I>(cct, image_store, block_io.block,
                                       bl, req);
       }
@@ -832,7 +841,7 @@ void FileImageCache<I>::aio_write(Extents &&image_extents,
   // TODO handle fadvise flags
   BlockGuard::C_BlockRequest *req = new C_WriteBlockRequest<I>(
     m_image_ctx, m_image_writeback, *m_policy, *m_journal_store, *m_image_store,
-    *m_meta_store, m_release_block, std::move(bl), BLOCK_SIZE, on_finish);
+    *m_meta_store, m_release_block, m_detain_block, std::move(bl), BLOCK_SIZE, on_finish);
   map_blocks(IO_TYPE_WRITE, std::move(image_extents), req);
 }
 
@@ -1046,18 +1055,6 @@ void FileImageCache<I>::map_block(bool detain_block,
   }
 
   IOType io_type = static_cast<IOType>(block_io.io_type);
-  if ((io_type == IO_TYPE_WRITE || io_type == IO_TYPE_DISCARD) &&
-      block_io.tid == 0) {
-    // TODO support non-journal mode / writethrough-only
-    r = m_journal_store->allocate_tid(&block_io.tid);
-    if (r < 0) {
-      Mutex::Locker locker(m_lock);
-      ldout(cct, 20) << "journal full -- detaining block IO" << dendl;
-      m_detained_block_ios.emplace_back(std::move(block_io));
-      return;
-    }
-  }
-
   PolicyMapResult policy_map_result;
   uint64_t replace_cache_block;
   r = m_policy->map(io_type, block_io.block, block_io.partial_block,
@@ -1082,6 +1079,15 @@ void FileImageCache<I>::release_block(uint64_t block) {
   Mutex::Locker locker(m_lock);
   m_block_guard.release(block, &m_detained_block_ios);
   wake_up();
+}
+
+template <typename I>
+void FileImageCache<I>::append_detain_block(BlockGuard::BlockIO &block_io) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 20) << "block=" << block_io.block << dendl;
+
+  Mutex::Locker locker(m_lock);
+  m_detained_block_ios.emplace_back(std::move(block_io));
 }
 
 template <typename I>
