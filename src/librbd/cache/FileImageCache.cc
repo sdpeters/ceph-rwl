@@ -579,7 +579,6 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
     // NOTE: block guard active -- must be released after IO completes
     C_BlockIORequest *req = new C_ReleaseBlockGuard(cct, block_io.block,
                                                          release_block, this);
-
     if (policy_map_result == POLICY_MAP_RESULT_MISS) {
       req = new C_WriteToImageRequest<I>(cct, image_writeback,
                                          std::move(block_io), bl, req);
