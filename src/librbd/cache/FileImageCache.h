@@ -56,6 +56,7 @@ public:
 
 private:
   typedef std::function<void(uint64_t)> ReleaseBlock;
+  typedef std::function<void(BlockGuard::BlockIO)> AppendDetainedBlock;
   typedef std::list<Context *> Contexts;
 
   ImageCtxT &m_image_ctx;
@@ -68,6 +69,7 @@ private:
   file::ImageStore<ImageCtx> *m_image_store = nullptr;
 
   ReleaseBlock m_release_block;
+  AppendDetainedBlock m_detain_block;
 
   util::AsyncOpTracker m_async_op_tracker;
 
@@ -83,6 +85,7 @@ private:
                   BlockGuard::C_BlockRequest *block_request);
   void map_block(bool detain_block, BlockGuard::BlockIO &&block_io);
   void release_block(uint64_t block);
+  void append_detain_block(BlockGuard::BlockIO &block_io);
 
   void wake_up();
   void process_work();
