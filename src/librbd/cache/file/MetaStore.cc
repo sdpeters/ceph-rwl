@@ -19,16 +19,16 @@ namespace file {
 template <typename I>
 MetaStore<I>::MetaStore(I &image_ctx, uint32_t block_size)
   : m_image_ctx(image_ctx), m_block_size(block_size),
-    m_aio_file(image_ctx, *image_ctx.op_work_queue, image_ctx.id + ".meta") {
+    m_meta_file(image_ctx, *image_ctx.op_work_queue, image_ctx.id + ".meta") {
 }
 
 template <typename I>
-void MetaStore<I>::init(Context *on_finish) {
+void MetaStore<I>::init(bufferlist *bl, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
   // TODO
-  m_aio_file.open(on_finish);
+  m_meta_file.open(on_finish);
 }
 
 template <typename I>
@@ -37,7 +37,58 @@ void MetaStore<I>::shut_down(Context *on_finish) {
   ldout(cct, 20) << dendl;
 
   // TODO
-  m_aio_file.close(on_finish);
+  m_meta_file.close(on_finish);
+}
+
+template <typename I>
+void MetaStore<I>::reset(Context *on_finish) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 20) << dendl;
+
+  // TODO
+  m_meta_file.truncate(offset_to_block(m_image_ctx.size) * m_entry_size, false, on_finish);
+}
+
+template <typename I>
+void MetaStore<I>::set_entry_size(uint32_t entry_size) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 20) << dendl;
+
+  m_entry_size = entry_size;
+}
+template <typename I>
+void MetaStore<I>::write_block(uint64_t cache_block, bufferlist bl, Context *on_finish) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 20) << dendl;
+  uint64_t meta_block_offset = cache_block * m_entry_size;
+  m_meta_file.write(meta_block_offset, std::move(bl), true, on_finish);
+}
+
+template <typename I>
+void MetaStore<I>::read_block(uint64_t cache_block, bufferlist *bl, Context *on_finish) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 20) << dendl;
+  uint64_t meta_block_offset = cache_block * m_entry_size;
+  m_meta_file.read(meta_block_offset, m_entry_size, bl, on_finish);
+}
+
+template <typename I>
+void MetaStore<I>::load_all(bufferlist *bl, Context *on_finish) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 20) << dendl;
+  //1. get total file length
+  Context *ctx = new FunctionContext(
+    [this, on_finish](int r) {
+      if (r < 0) {
+        on_finish->complete(r);
+        return;
+      }
+  });
+  for(uint64_t block_id = 0; block_id < offset_to_block(m_image_ctx.size); block_id++){
+    read_block(block_id, bl, ctx);
+    if (bl->is_zero()) break;
+  }
+  on_finish->complete(0);
 }
 
 } // namespace file

@@ -44,6 +44,9 @@ public:
                   PolicyMapResult *policy_map_result,
                   uint64_t *replace_cache_block);
   virtual void tick();
+  virtual int get_entry_size();
+  virtual void entry_to_bufferlist(uint64_t block, bufferlist *bl);
+  virtual void bufferlist_to_entry(bufferlist &bl);
 
 private:
 
@@ -52,6 +55,8 @@ private:
     uint64_t block;
     bool dirty;
     Entry() : block(0), dirty(false) {}
+    void encode(bufferlist &bl) {}
+    void decode(bufferlist::iterator &it) {}
   };
 
   //typedef std::vector<Entry> Entries;

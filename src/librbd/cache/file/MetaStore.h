@@ -5,6 +5,7 @@
 #define CEPH_LIBRBD_CACHE_FILE_META_STORE
 
 #include "include/int_types.h"
+#include "include/buffer.h"
 #include "librbd/cache/file/AioFile.h"
 
 struct Context;
@@ -21,7 +22,13 @@ class MetaStore {
 public:
   MetaStore(ImageCtxT &image_ctx, uint32_t block_size);
 
-  void init(Context *on_finish);
+
+  void init(bufferlist *bl, Context *on_finish);
+  void set_entry_size(uint32_t entry_size);
+  void reset(Context *on_finish);
+  void write_block(uint64_t cache_block, bufferlist bl, Context *on_finish);
+  void read_block(uint64_t cache_block, bufferlist *bl, Context *on_finish);
+  void load_all(bufferlist* bl, Context *on_finish);
   void shut_down(Context *on_finish);
 
   inline uint64_t offset_to_block(uint64_t offset) {
@@ -35,9 +42,9 @@ public:
 private:
   ImageCtxT &m_image_ctx;
   uint32_t m_block_size;
+  uint32_t m_entry_size;
 
-  AioFile<ImageCtx> m_aio_file;
-
+  AioFile<ImageCtx> m_meta_file;
 };
 
 } // namespace file
