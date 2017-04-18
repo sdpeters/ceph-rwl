@@ -587,8 +587,14 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
       req = new C_WriteToImageRequest<I>(cct, image_writeback,
                                          std::move(block_io), bl, req);
     } else {
-      // block is now dirty -- can't be replaced until flushed
-      policy.set_dirty(block_io.block);
+      if (0 == policy.get_write_mode()) {
+        //write-thru
+        req = new C_WriteToImageRequest<I>(cct, image_writeback,
+                                           std::move(block_io), bl, req);
+      } else {
+        // block is now dirty -- can't be replaced until flushed
+        policy.set_dirty(block_io.block);
+      }
       req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, &policy, req);
 
       if (block_io.partial_block) {
@@ -800,6 +806,9 @@ FileImageCache<I>::FileImageCache(ImageCtx &image_ctx)
     m_release_block(std::bind(&FileImageCache<I>::release_block, this,
                               std::placeholders::_1)),
     m_lock("librbd::cache::FileImageCache::m_lock") {
+  CephContext *cct = m_image_ctx.cct;
+  uint8_t write_mode = cct->_conf->rbd_persistent_cache_enabled?1:0;
+  m_policy->set_write_mode(write_mode);
 }
 
 template <typename I>
