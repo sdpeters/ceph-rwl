@@ -231,7 +231,7 @@ struct C_WriteToMetaRequest : public C_BlockIORequest {
 		                uint64_t cache_block_id, Policy *policy,
                         C_BlockIORequest *next_block_request)
     : C_BlockIORequest(cct, next_block_request), meta_store(meta_store),
-    policy(policy), cache_block_id(cache_block_id) {
+    cache_block_id(cache_block_id), policy(policy) {
   }
 
   virtual void send() override {
@@ -950,6 +950,7 @@ void FileImageCache<I>::init(Context *on_finish) {
     });
   m_meta_store = new MetaStore<I>(m_image_ctx, BLOCK_SIZE);
   m_meta_store->init(&meta_bl, ctx);
+  m_meta_store->set_entry_size(m_policy->get_entry_size());
 }
 
 template <typename I>
