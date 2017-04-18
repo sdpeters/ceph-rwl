@@ -1424,6 +1424,7 @@ OPTION(rbd_journal_max_concurrent_object_sets, OPT_INT, 0) // maximum number of 
  * RBD persistent, client-side cache options
  */
 OPTION(rbd_persistent_cache_enabled, OPT_BOOL, true)
+OPTION(rbd_persistent_cache_writeback, OPT_BOOL, false)
 OPTION(rbd_persistent_cache_size, OPT_U64, 1ULL*1024*1024*1024)
 OPTION(rbd_persistent_cache_path, OPT_STR, "/tmp/")
 OPTION(rbd_persistent_cache_alloc_size, OPT_U32, 4096)
