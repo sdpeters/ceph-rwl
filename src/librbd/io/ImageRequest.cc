@@ -158,7 +158,7 @@ struct C_AioFlush : public C_AioRequest {
 #endif
       // flush op completes when writeback cache (if enabled) flushes
       // all dirty blocks
-      image_ctx.flush(ctx);
+      image_ctx.flush_async_operations(ctx);
 
       // track flush op for block writes
       m_completion->start_op(true);
@@ -401,6 +401,8 @@ void AbstractImageWriteRequest<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
   CephContext *cct = image_ctx.cct;
 
+  RWLock::RLocker md_locker(image_ctx.md_lock);
+
   bool journaling = false;
 
   AioCompletion *aio_comp = this->m_aio_comp;
@@ -607,45 +609,13 @@ template <typename I>
 void ImageFlushRequest<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
 
-  bool journaling = false;
-  {
-    RWLock::RLocker snap_locker(image_ctx.snap_lock);
-    journaling = (m_flush_source == FLUSH_SOURCE_USER &&
-                  image_ctx.journal != nullptr &&
-                  image_ctx.journal->is_journal_appending());
-  }
-
   AioCompletion *aio_comp = this->m_aio_comp;
   aio_comp->set_request_count(1);
 
-  Context *ctx = new C_AioRequest(aio_comp);
+  C_AioFlush<I> *ctx = new C_AioFlush<I>(image_ctx, aio_comp);
+  image_ctx.flush_async_operations(ctx);
 
-  // ensure no locks are held when flush is complete
-  ctx = librbd::util::create_async_context_callback(image_ctx, ctx);
-
-  if (journaling) {
-    // in-flight ops are flushed prior to closing the journal
-    uint64_t journal_tid = image_ctx.journal->append_io_event(
-      journal::EventEntry(journal::AioFlushEvent()), 0, 0, false, 0);
-
-    ctx = new FunctionContext(
-      [&image_ctx, journal_tid, ctx](int r) {
-        image_ctx.journal->commit_io_event(journal_tid, r);
-        ctx->complete(r);
-      });
-    ctx = new FunctionContext(
-      [&image_ctx, journal_tid, ctx](int r) {
-        image_ctx.journal->flush_event(journal_tid, ctx);
-      });
-  } else {
-    // flush rbd cache only when journaling is not enabled
-    auto object_dispatch_spec = ObjectDispatchSpec::create_flush(
-      &image_ctx, OBJECT_DISPATCH_LAYER_NONE, m_flush_source, this->m_trace,
-      ctx);
-    ctx = new FunctionContext([object_dispatch_spec](int r) {
-        object_dispatch_spec->send();
-      });
-  }
+  aio_comp->put();
 
   // ensure all in-flight IOs are settled if non-user flush request
   image_ctx.flush_async_operations(ctx);
