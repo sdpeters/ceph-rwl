@@ -20,7 +20,7 @@ namespace file {
 template <typename I>
 ImageStore<I>::ImageStore(I &image_ctx, MetaStore<I> &metastore)
   : m_image_ctx(image_ctx), m_metastore(metastore),
-    m_cache_file(image_ctx, *image_ctx.op_work_queue,
+    m_cache_file(image_ctx, *image_ctx.pcache_op_work_queue,
                  image_ctx.id + ".image_cache") {
 }
 

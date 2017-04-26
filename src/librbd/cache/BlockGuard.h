@@ -59,13 +59,38 @@ public:
   };
   typedef std::vector<BlockIOExtent> BlockIOExtents;
 
+  struct C_BlockIORequest : public Context {
+    CephContext *cct;
+    C_BlockIORequest *next_block_request;
+
+    C_BlockIORequest(CephContext *cct, C_BlockIORequest *next_block_request)
+      : cct(cct), next_block_request(next_block_request) {
+    }
+
+    virtual void finish(int r) override {
+      //ldout(cct, 20) << "(" << get_name() << "): r=" << r << dendl;
+  
+      if (r < 0) {
+        // abort the chain of requests upon failure
+        next_block_request->complete(r);
+      } else {
+        // execute next request in chain
+        next_block_request->send();
+      }
+    }
+
+    virtual void send() = 0;
+    virtual const char *get_name() const = 0;
+  };
+
   struct BlockIO {
     // TODO intrusive_list
 
-    BlockIO() {
+    BlockIO()
+      : tail_block_io_request(nullptr), in_process(false) {
     }
     BlockIO(uint64_t block, BlockIOExtents &&extents)
-      : block(block), extents(extents) {
+      : block(block), extents(extents), tail_block_io_request(nullptr), in_process(false) {
     }
 
     uint64_t tid;
@@ -75,6 +100,8 @@ public:
     IOType io_type : 2;     ///< IO type for deferred IO request
     bool partial_block : 1; ///< true if not full block request
     C_BlockRequest *block_request;
+    C_BlockIORequest *tail_block_io_request; ///< used to track ios on this block
+    bool in_process;        ///< true if this block has been in processing by thread
   };
   typedef std::list<BlockIO> BlockIOs;
 
