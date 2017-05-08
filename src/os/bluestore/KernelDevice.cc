@@ -27,6 +27,7 @@
 #include "common/blkdev.h"
 #include "common/align.h"
 #include "common/blkdev.h"
+#include "common/EventTrace.h"
 
 #define dout_context cct
 #define dout_subsys ceph_subsys_bdev
@@ -331,6 +332,7 @@ void KernelDevice::_aio_thread()
 {
   dout(10) << __func__ << " start" << dendl;
   int inject_crash_count = 0;
+  utime_t start;
   while (!aio_stop) {
     dout(40) << __func__ << " polling" << dendl;
     int max = 16;
@@ -341,6 +343,7 @@ void KernelDevice::_aio_thread()
       derr << __func__ << " got " << cpp_strerror(r) << dendl;
     }
     if (r > 0) {
+      start = ceph_clock_now();
       dout(30) << __func__ << " got " << r << " completed aios" << dendl;
       for (int i = 0; i < r; ++i) {
 	IOContext *ioc = static_cast<IOContext*>(aio[i]->priv);
@@ -380,6 +383,7 @@ void KernelDevice::_aio_thread()
 	}
       }
     }
+    OID_ELAPSED("", (ceph_clock_now() - start).to_nsec()/1000, "AIO_THREAD_CALLBACK_LATENCY");
     if (cct->_conf->bdev_debug_aio) {
       utime_t now = ceph_clock_now();
       std::lock_guard<std::mutex> l(debug_queue_lock);
@@ -533,6 +537,7 @@ int KernelDevice::aio_write(
   IOContext *ioc,
   bool buffered)
 {
+  FUNCTRACE();
   uint64_t len = bl.length();
   dout(20) << __func__ << " 0x" << std::hex << off << "~" << len << std::dec
 	   << (buffered ? " (buffered)" : " (direct)")

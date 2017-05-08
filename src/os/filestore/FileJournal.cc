@@ -22,6 +22,7 @@
 #include "FileStore.h"
 
 #include "include/compat.h"
+#include "common/EventTrace.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -928,6 +929,7 @@ void FileJournal::queue_completions_thru(uint64_t seq)
 	     << " lat " << lat << dendl;
     if (logger) {
       logger->tinc(l_filestore_journal_latency, lat);
+      OID_ELAPSED("",  lat.to_nsec() / 1000, "FILESTORE_JOURNALE_LATENCY");
     }
     if (next.finish)
       finisher->queue(next.finish);

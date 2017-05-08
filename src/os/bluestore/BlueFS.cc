@@ -10,6 +10,7 @@
 #include "BlockDevice.h"
 #include "Allocator.h"
 #include "include/assert.h"
+#include "common/EventTrace.h"
 
 #define dout_context cct
 #define dout_subsys ceph_subsys_bluefs
@@ -1325,6 +1326,7 @@ int BlueFS::_flush_and_sync_log(std::unique_lock<std::mutex>& l,
 				uint64_t want_seq,
 				uint64_t jump_to)
 {
+  FUNCTRACE();
   while (log_flushing) {
     dout(10) << __func__ << " want_seq " << want_seq
 	     << " log is currently flushing, waiting" << dendl;
@@ -1448,6 +1450,7 @@ int BlueFS::_flush_and_sync_log(std::unique_lock<std::mutex>& l,
 
 int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
 {
+  FUNCTRACE();
   dout(10) << __func__ << " " << h << " pos 0x" << std::hex << h->pos
 	   << " 0x" << offset << "~" << length << std::dec
 	   << " to " << h->file->fnode << dendl;
@@ -1655,6 +1658,7 @@ void BlueFS::_claim_completed_aios(FileWriter *h, list<aio_t> *ls)
 
 void BlueFS::wait_for_aio(FileWriter *h)
 {
+  FUNCTRACE();
   // NOTE: this is safe to call without a lock, as long as our reference is
   // stable.
   dout(10) << __func__ << " " << h << dendl;
@@ -1736,6 +1740,7 @@ int BlueFS::_truncate(FileWriter *h, uint64_t offset)
 
 int BlueFS::_fsync(FileWriter *h, std::unique_lock<std::mutex>& l)
 {
+  FUNCTRACE();
   dout(10) << __func__ << " " << h << " " << h->file->fnode << dendl;
   int r = _flush(h, true);
   if (r < 0)
@@ -1763,6 +1768,7 @@ int BlueFS::_fsync(FileWriter *h, std::unique_lock<std::mutex>& l)
 
 void BlueFS::flush_bdev()
 {
+  FUNCTRACE();
   // NOTE: this is safe to call without a lock.
   dout(20) << __func__ << dendl;
   for (auto p : bdev) {

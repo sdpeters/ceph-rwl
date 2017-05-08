@@ -3116,6 +3116,7 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
   // prepare the reply
   ctx->reply = new MOSDOpReply(m, 0, get_osdmap()->get_epoch(), 0,
 			       successful_write);
+  ctx->reply->set_recv_stamp(op->get_req()->get_recv_stamp());
 
   // Write operations aren't allowed to return a data payload because
   // we can't do so reliably. If the client has to resend the request
@@ -3213,9 +3214,12 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
 	  reply->set_reply_versions(ctx->at_version,
 				    ctx->user_at_version);
 	}
+	
 	reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
 	dout(10) << " sending reply on " << *m << " " << reply << dendl;
 	osd->send_message_osd_client(reply, m->get_connection());
+	utime_t latency = ceph_clock_now() - m->get_recv_stamp();
+	OID_ELAPSED_WITH_MSG(m, latency.to_nsec()/1000, "TIME_TO_PROCESS", true);
 	ctx->sent_reply = true;
 	ctx->op->mark_commit_sent();
       }

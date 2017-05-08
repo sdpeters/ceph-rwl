@@ -65,27 +65,27 @@ void EventTrace::set_message_attrs(const Message *m, string& oid, string& contex
   }
 }
 
-EventTrace::EventTrace(CephContext *_ctx, const char *_file, const char *_func, int _line) :
+EventTrace::EventTrace(CephContext *_ctx, const char *_func) :
   ctx(_ctx),
-  file(_file),
-  func(_func),
-  line(_line)
+  func(_func)
 {
   if (unlikely(!ctx)) 
     return;
   last_ts = ceph_clock_now();
   init_tp(ctx);
 
-  lsubdout(ctx, eventtrace, LOG_LEVEL) << "ENTRY (" <<  func << ") " << file << ":" << line << dendl;
-  tracepoint(eventtrace, func_enter, file.c_str(), func.c_str(), line);
+  lsubdout(ctx, eventtrace, LOG_LEVEL) << "ENTRY (" <<  func << ") " << dendl;
+  //tracepoint(eventtrace, func_enter, func.c_str());
 }
 
 EventTrace::~EventTrace()
 {
   if (unlikely(!ctx)) 
     return;
-  lsubdout(ctx, eventtrace, LOG_LEVEL) << "EXIT (" << func << ") " << file << dendl;
-  tracepoint(eventtrace, func_exit, file.c_str(), func.c_str());
+  lsubdout(ctx, eventtrace, LOG_LEVEL) << "EXIT (" << func << ") " << dendl;
+  //tracepoint(eventtrace, func_exit,func.c_str());
+  string event = func + " FUNC-ELAPSED";
+  log_event_latency(event.c_str());
 }
 
 void EventTrace::log_event_latency(const char *event)
@@ -97,35 +97,35 @@ void EventTrace::log_event_latency(const char *event)
 }
 
 void EventTrace::trace_oid_event(const char *oid, const char *event, const char *context,
-  const char *file, const char *func, int line)
+  const char *func)
 {
   if (unlikely(!g_ceph_context))
     return;
   init_tp(g_ceph_context);
-  tracepoint(eventtrace, oid_event, oid, event, context, file, func, line);
+  tracepoint(eventtrace, oid_event, oid, event, context, func);
 }
 
-void EventTrace::trace_oid_event(const Message *m, const char *event, const char *file,
-  const char *func, int line, bool incl_oid)
+void EventTrace::trace_oid_event(const Message *m, const char *event,
+  const char *func, bool incl_oid)
 {
   string oid, context;
   set_message_attrs(m, oid, context, incl_oid);
-  trace_oid_event(oid.c_str(), event, context.c_str(), file, func, line);
+  trace_oid_event(oid.c_str(), event, context.c_str(), func);
 }
 
 void EventTrace::trace_oid_elapsed(const char *oid, const char *event, const char *context,
-  double elapsed, const char *file, const char *func, int line)
+  double elapsed, const char *func)
 {
   if (unlikely(!g_ceph_context))
     return;
   init_tp(g_ceph_context);
-  tracepoint(eventtrace, oid_elapsed, oid, event, context, elapsed, file, func, line);
+  tracepoint(eventtrace, oid_elapsed, oid, event, context, elapsed,  func);
 }
 
 void EventTrace::trace_oid_elapsed(const Message *m, const char *event, double elapsed,
-  const char *file, const char *func, int line, bool incl_oid)
+   const char *func,  bool incl_oid)
 {
   string oid, context;
   set_message_attrs(m, oid, context, incl_oid);
-  trace_oid_elapsed(oid.c_str(), event, context.c_str(), elapsed, file, func, line);
+  trace_oid_elapsed(oid.c_str(), event, context.c_str(), elapsed, func);
 }

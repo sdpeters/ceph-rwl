@@ -582,7 +582,7 @@ void ReplicatedBackend::op_applied(
   InProgressOp *op)
 {
   FUNCTRACE();
-  OID_EVENT_TRACE_WITH_MSG((op && op->op) ? op->op->get_req() : NULL, "OP_APPLIED_BEGIN", true);
+  //OID_EVENT_TRACE_WITH_MSG((op && op->op) ? op->op->get_req() : NULL, "OP_APPLIED_BEGIN", true);
   dout(10) << __func__ << ": " << op->tid << dendl;
   if (op->op)
     op->op->mark_event("op_applied");
@@ -604,7 +604,7 @@ void ReplicatedBackend::op_commit(
   InProgressOp *op)
 {
   FUNCTRACE();
-  OID_EVENT_TRACE_WITH_MSG((op && op->op) ? op->op->get_req() : NULL, "OP_COMMIT_BEGIN", true);
+  //OID_EVENT_TRACE_WITH_MSG((op && op->op) ? op->op->get_req() : NULL, "OP_COMMIT_BEGIN", true);
   dout(10) << __func__ << ": " << op->tid << dendl;
   if (op->op)
     op->op->mark_event("op_commit");
@@ -626,7 +626,6 @@ void ReplicatedBackend::do_repop_reply(OpRequestRef op)
   static_cast<MOSDRepOpReply*>(op->get_nonconst_req())->finish_decode();
   const MOSDRepOpReply *r = static_cast<const MOSDRepOpReply *>(op->get_req());
   assert(r->get_header().type == MSG_OSD_REPOPREPLY);
-
   op->mark_started();
 
   // must be replication.
@@ -637,6 +636,7 @@ void ReplicatedBackend::do_repop_reply(OpRequestRef op)
     map<ceph_tid_t, InProgressOp>::iterator iter =
       in_progress_ops.find(rep_tid);
     InProgressOp &ip_op = iter->second;
+    OID_ELAPSED("", (ceph_clock_now() - ip_op.start).to_nsec()/1000, "SUB_OP_LATENCY");
     const MOSDOp *m = NULL;
     if (ip_op.op)
       m = static_cast<const MOSDOp *>(ip_op.op->get_req());
@@ -1018,7 +1018,7 @@ void ReplicatedBackend::issue_op(
   InProgressOp *op,
   ObjectStore::Transaction &op_t)
 {
-
+  op->start = ceph_clock_now();
   if (parent->get_actingbackfill_shards().size() > 1) {
     ostringstream ss;
     set<pg_shard_t> replicas = parent->get_actingbackfill_shards();

@@ -79,6 +79,7 @@ using ceph::crypto::SHA1;
 
 #include "common/config.h"
 #include "common/blkdev.h"
+#include "common/EventTrace.h"
 
 #ifdef WITH_LTTNG
 #define TRACEPOINT_DEFINE
@@ -2065,6 +2066,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
 				  TrackedOpRef osd_op,
 				  ThreadPool::TPHandle *handle)
 {
+  FUNCTRACE();
   Context *onreadable;
   Context *ondisk;
   Context *onreadable_sync;
@@ -4310,6 +4312,7 @@ bool FileStore::debug_mdata_eio(const ghobject_t &oid) {
 int FileStore::getattr(const coll_t& _cid, const ghobject_t& oid, const char *name, bufferptr &bp)
 {
   tracepoint(objectstore, getattr_enter, _cid.c_str());
+  FUNCTRACE();
   const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
   dout(15) << "getattr " << cid << "/" << oid << " '" << name << "'" << dendl;
   FDRef fd;
@@ -4359,6 +4362,7 @@ int FileStore::getattr(const coll_t& _cid, const ghobject_t& oid, const char *na
 int FileStore::getattrs(const coll_t& _cid, const ghobject_t& oid, map<string,bufferptr>& aset)
 {
   tracepoint(objectstore, getattrs_enter, _cid.c_str());
+  FUNCTRACE();
   const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
   set<string> omap_attrs;
   map<string, bufferlist> omap_aset;

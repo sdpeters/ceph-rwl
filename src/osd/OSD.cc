@@ -6538,7 +6538,7 @@ void OSD::ms_fast_dispatch(Message *m)
       session->put();
     }
   }
-  OID_EVENT_TRACE_WITH_MSG(m, "MS_FAST_DISPATCH_END", false); 
+  //OID_EVENT_TRACE_WITH_MSG(m, "MS_FAST_DISPATCH_END", false); 
 }
 
 void OSD::ms_fast_preprocess(Message *m)
@@ -8914,6 +8914,7 @@ void OSD::enqueue_op(spg_t pg, OpRequestRef& op, epoch_t epoch)
 	   << " " << *(op->get_req()) << dendl;
   op->mark_queued_for_pg();
   op_shardedwq.queue(make_pair(pg, PGQueueable(op, epoch)));
+  op->set_enqueue_complete_time(ceph_clock_now());
 }
 
 
@@ -8926,11 +8927,12 @@ void OSD::dequeue_op(
   ThreadPool::TPHandle &handle)
 {
   FUNCTRACE();
-  OID_EVENT_TRACE_WITH_MSG(op->get_req(), "DEQUEUE_OP_BEGIN", false);
+  //OID_EVENT_TRACE_WITH_MSG(op->get_req(), "DEQUEUE_OP_BEGIN", false);
 
   utime_t now = ceph_clock_now();
   op->set_dequeued_time(now);
   utime_t latency = now - op->get_req()->get_recv_stamp();
+  OID_ELAPSED_WITH_MSG(op->get_req(), (now - op->get_enqueue_complete_time()).to_nsec()/1000, "TIME_TO_INQUEUE", false);
   dout(10) << "dequeue_op " << op << " prio " << op->get_req()->get_priority()
 	   << " cost " << op->get_req()->get_cost()
 	   << " latency " << latency
@@ -8953,7 +8955,12 @@ void OSD::dequeue_op(
 
   // finish
   dout(10) << "dequeue_op " << op << " finish" << dendl;
-  OID_EVENT_TRACE_WITH_MSG(op->get_req(), "DEQUEUE_OP_END", false);
+  //OID_EVENT_TRACE_WITH_MSG(op->get_req(), "DEQUEUE_OP_END", false);
+#if defined(WITH_LTTNG) && defined(WITH_EVENTTRACE)
+  double usecs_elapsed = (ceph_clock_now().to_nsec() - now.to_nsec())/1000;
+  OID_ELAPSED_WITH_MSG(op->get_req(), usecs_elapsed, "TIME_TO_PG_PROCESS", false);
+#endif
+
 }
 
 
@@ -9756,6 +9763,16 @@ void OSD::ShardedOpWQ::_enqueue(pair<spg_t, PGQueueable> item) {
     sdata->pqueue->enqueue(
       item.second.get_owner(),
       priority, cost, item);
+  if (boost::optional<OpRequestRef> _op = item.second.maybe_get_op()) {
+    OID_ELAPSED_WITH_MSG((*_op)->get_req(), (ceph_clock_now() - (*_op)->get_req()->get_recv_complete_stamp()).to_nsec()/1000, "TIME_TO_ENQUEUE", false);
+    (*_op)->set_enqueue_complete_time(ceph_clock_now());
+#if 0
+    ostringstream buf;
+    buf << "OSD_OPWQ" << shard_index;
+    OID_ELAPSED("",(double)sdata->pqueue->length(), buf.str().c_str());
+#endif
+  }
+
   sdata->sdata_op_ordering_lock.Unlock();
 
   sdata->sdata_lock.Lock();

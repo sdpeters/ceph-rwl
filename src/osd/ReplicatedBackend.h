@@ -337,6 +337,7 @@ private:
     Context *on_applied;
     OpRequestRef op;
     eversion_t v;
+    utime_t start;
     InProgressOp(
       ceph_tid_t tid, Context *on_commit, Context *on_applied,
       OpRequestRef op, eversion_t v)

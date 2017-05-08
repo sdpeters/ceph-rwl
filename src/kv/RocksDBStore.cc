@@ -28,6 +28,7 @@ using std::string;
 #include "RocksDBStore.h"
 
 #include "common/debug.h"
+#include "common/EventTrace.h"
 
 #define dout_context cct
 #define dout_subsys ceph_subsys_rocksdb
@@ -438,6 +439,7 @@ void RocksDBStore::get_statistics(Formatter *f)
 
 int RocksDBStore::submit_transaction(KeyValueDB::Transaction t)
 {
+  FUNCTRACE();
   utime_t start = ceph_clock_now();
   // enable rocksdb breakdown
   // considering performance overhead, default is disabled
@@ -491,6 +493,7 @@ int RocksDBStore::submit_transaction(KeyValueDB::Transaction t)
 
 int RocksDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
 {
+  FUNCTRACE();
   utime_t start = ceph_clock_now();
   // enable rocksdb breakdown
   // considering performance overhead, default is disabled

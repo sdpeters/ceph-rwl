@@ -88,6 +88,7 @@ private:
   uint8_t hit_flag_points;
   uint8_t latest_flag_point;
   utime_t dequeued_time;
+  utime_t enqueue_complete_time;
   static const uint8_t flag_queued_for_pg=1 << 0;
   static const uint8_t flag_reached_pg =  1 << 1;
   static const uint8_t flag_delayed =     1 << 2;
@@ -160,6 +161,12 @@ public:
   }
   void set_dequeued_time(utime_t deq_time) {
     dequeued_time = deq_time;
+  }
+  utime_t get_enqueue_complete_time() const {
+    return enqueue_complete_time;
+  }
+  void set_enqueue_complete_time(utime_t enq_time) {
+    enqueue_complete_time = enq_time;
   }
 
   osd_reqid_t get_reqid() const {

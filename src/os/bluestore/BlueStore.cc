@@ -2525,6 +2525,7 @@ void BlueStore::ExtentMap::fault_range(
   uint32_t offset,
   uint32_t length)
 {
+  FUNCTRACE();
   auto cct = onode->c->store->cct; //used by dout
   dout(30) << __func__ << " 0x" << std::hex << offset << "~" << length
 	   << std::dec << dendl;
@@ -3083,6 +3084,7 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
   const ghobject_t& oid,
   bool create)
 {
+  FUNCTRACE();
   assert(create ? lock.is_wlocked() : lock.is_locked());
 
   spg_t pgid;
@@ -6497,6 +6499,7 @@ int BlueStore::getattr(
   const char *name,
   bufferptr& value)
 {
+  FUNCTRACE();
   Collection *c = static_cast<Collection *>(c_.get());
   dout(15) << __func__ << " " << c->cid << " " << oid << " " << name << dendl;
   if (!c->exists)
@@ -6537,6 +6540,7 @@ int BlueStore::getattrs(
   const ghobject_t& oid,
   map<string,bufferptr>& aset)
 {
+  FUNCTRACE();
   CollectionHandle c = _get_collection(cid);
   if (!c)
     return -ENOENT;
@@ -7999,6 +8003,7 @@ void BlueStore::_kv_sync_thread()
       }
       utime_t after_flush = ceph_clock_now();
 
+      OID_ELAPSED("", (after_flush - start).to_nsec()/1000, "KV_BDEV_FLUSH");
       // we will use one final transaction to force a sync
       KeyValueDB::Transaction synct = db->get_transaction();
 
@@ -8165,6 +8170,8 @@ void BlueStore::_kv_sync_thread()
       // previously deferred "done" are now "stable" by virtue of this
       // commit cycle.
       deferred_stable_queue.swap(deferred_done);
+      finish = ceph_clock_now();
+      OID_ELAPSED("", (finish -start).to_nsec()/1000, "kv_sync_thread latency");
     }
   }
   dout(10) << __func__ << " finish" << dendl;
@@ -8211,6 +8218,7 @@ void BlueStore::_deferred_queue(TransContext *txc)
 
 void BlueStore::_deferred_try_submit()
 {
+  FUNCTRACE();
   dout(20) << __func__ << " " << deferred_queue.size() << " osrs, "
 	   << deferred_queue_size << " txcs" << dendl;
   for (auto& osr : deferred_queue) {
@@ -8273,6 +8281,7 @@ void BlueStore::_deferred_submit(OpSequencer *osr)
 
 void BlueStore::_deferred_aio_finish(OpSequencer *osr)
 {
+  FUNCTRACE();
   dout(10) << __func__ << " osr " << osr << dendl;
   assert(osr->deferred_running);
 
@@ -8444,6 +8453,7 @@ void BlueStore::_txc_aio_submit(TransContext *txc)
 
 void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)
 {
+  FUNCTRACE();
   Transaction::iterator i = t->begin();
 
   _dump_transaction(t);
@@ -9262,6 +9272,7 @@ void BlueStore::_do_write_big(
     bufferlist::iterator& blp,
     WriteContext *wctx)
 {
+  FUNCTRACE();
   dout(10) << __func__ << " 0x" << std::hex << offset << "~" << length
 	   << " target_blob_size 0x" << wctx->target_blob_size << std::dec
 	   << " compress " << (int)wctx->compress
@@ -9349,6 +9360,7 @@ int BlueStore::_do_alloc_write(
   OnodeRef o,
   WriteContext *wctx)
 {
+  FUNCTRACE();
   dout(20) << __func__ << " txc " << txc
 	   << " " << wctx->writes.size() << " blobs"
 	   << dendl;
@@ -9588,6 +9600,7 @@ void BlueStore::_wctx_finish(
   OnodeRef o,
   WriteContext *wctx)
 {
+  FUNCTRACE();
   auto oep = wctx->old_extents.begin();
   while (oep != wctx->old_extents.end()) {
     auto &lo = *oep;
@@ -9651,6 +9664,7 @@ void BlueStore::_do_write_data(
   bufferlist& bl,
   WriteContext *wctx)
 {
+  FUNCTRACE();
   uint64_t end = offset + length;
   bufferlist::iterator p = bl.begin();
 
@@ -9696,7 +9710,7 @@ int BlueStore::_do_write(
   uint32_t fadvise_flags)
 {
   int r = 0;
-
+  FUNCTRACE();
   dout(20) << __func__
 	   << " " << o->oid
 	   << " 0x" << std::hex << offset << "~" << length
@@ -10156,6 +10170,7 @@ int BlueStore::_omap_setkeys(TransContext *txc,
 			     OnodeRef& o,
 			     bufferlist &bl)
 {
+  FUNCTRACE();
   dout(15) << __func__ << " " << c->cid << " " << o->oid << dendl;
   int r;
   bufferlist::iterator p = bl.begin();

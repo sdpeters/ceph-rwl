@@ -36,7 +36,6 @@
 #include <sys/vfs.h>
 #endif
 #include "include/compat.h"
-
 // ---------------
 
 FS *FS::create(uint64_t f_type)

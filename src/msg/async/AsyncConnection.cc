@@ -2277,10 +2277,16 @@ ssize_t AsyncConnection::write_message(Message *m, bufferlist& bl, bool more)
   } else {
     ldout(async_msgr->cct, 10) << __func__ << " sending " << m << " continuely." << dendl;
   }
+#if 0
   if (m->get_type() == CEPH_MSG_OSD_OP)
     OID_EVENT_TRACE_WITH_MSG(m, "SEND_MSG_OSD_OP_END", false);
   else if (m->get_type() == CEPH_MSG_OSD_OPREPLY)
     OID_EVENT_TRACE_WITH_MSG(m, "SEND_MSG_OSD_OPREPLY_END", false);
+#endif
+  if (m->get_type() == CEPH_MSG_OSD_OPREPLY && m->get_recv_stamp() > utime_t()) {
+    OID_ELAPSED_WITH_MSG(m,  (ceph_clock_now().to_nsec() - m->get_recv_stamp().to_nsec()) / 1000, "TIME_TO_LIFE_CYCLE", true);
+  }
+
   m->put();
 
   return rc;
