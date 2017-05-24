@@ -264,7 +264,8 @@ void StupidPolicy<I>::tick() {
 
 template <typename I>
 int StupidPolicy<I>::get_entry_size() {
-  return sizeof(struct Entry);
+  //FIXME: switch to uint32_t
+  return sizeof(uint64_t);
 }
 
 template <typename I>
