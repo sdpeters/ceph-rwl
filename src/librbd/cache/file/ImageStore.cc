@@ -92,7 +92,7 @@ void ImageStore<I>::write_block(uint64_t cache_block,
     buffer_offset += extent.second;
 
     m_cache_file.write(m_metastore.block_to_offset(cache_block) + extent.first,
-                       std::move(sub_bl), false, ctx->new_sub());
+                       std::move(sub_bl), true, ctx->new_sub());
 
   }
   ctx->activate();
