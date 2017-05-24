@@ -637,18 +637,6 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
       }
       req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, &policy, req);
 
-      IOType io_type = static_cast<IOType>(block_io.io_type);
-      if ((io_type == IO_TYPE_WRITE || io_type == IO_TYPE_DISCARD) &&
-          block_io.tid == 0) {
-        // TODO support non-journal mode / writethrough-only
-        int r = journal_store.allocate_tid(&block_io.tid);
-        if (r < 0) {
-          ldout(cct, 20) << "journal full -- detaining block IO" << dendl;
-          append_detain_block(block_io);
-          return;
-        }
-      }
-
       if (block_io.partial_block) {
         // block needs to be promoted to cache but we require a
         // read-modify-write cycle to fully populate the block
@@ -656,11 +644,6 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
         // TODO optimize by only reading missing extents
         promote_buffers.emplace_back();
 
-        if (block_io.tid > 0 && (1 == policy.get_write_mode())) {
-          req = new C_AppendEventToJournal<I>(cct, journal_store, block_io.tid,
-                                              block_io.block, IO_TYPE_WRITE,
-                                              req);
-        }
         req = new C_PromoteToCache<I>(cct, image_store, block_io,
                                       promote_buffers.back(), req);
         req = new C_ModifyBlockBuffer(cct, block_io, bl,
@@ -684,12 +667,6 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
         }
       } else {
         // full block overwrite
-        if (block_io.tid > 0 && (1 == policy.get_write_mode())) {
-          req = new C_AppendEventToJournal<I>(cct, journal_store, block_io.tid,
-                                              block_io.block, IO_TYPE_WRITE,
-                                              req);
-        }
-
         req = new C_PromoteToCache<I>(cct, image_store, block_io,
                                       bl, req);
       }
@@ -1134,7 +1111,7 @@ void FileImageCache<I>::map_blocks(IOType io_type, Extents &&image_extents,
 
   // map block IO requests to the cache or backing image based upon policy
   for (auto &block_io : block_ios) {
-    map_block(true, std::move(block_io));
+    map_block(false, std::move(block_io));
   }
 
   // advance the policy statistics
@@ -1184,9 +1161,9 @@ void FileImageCache<I>::release_block(uint64_t block) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "block=" << block << dendl;
 
-  Mutex::Locker locker(m_lock);
-  m_block_guard.release(block, &m_detained_block_ios);
-  wake_up();
+  //Mutex::Locker locker(m_lock);
+  //m_block_guard.release(block, &m_detained_block_ios);
+  //wake_up();
 }
 
 template <typename I>
