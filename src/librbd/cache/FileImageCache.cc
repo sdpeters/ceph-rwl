@@ -11,6 +11,7 @@
 #include "librbd/cache/file/MetaStore.h"
 #include "librbd/cache/file/StupidPolicy.h"
 #include "librbd/cache/file/Types.h"
+#include "librbd/cache/Shmlock.h"
 #include <map>
 #include <vector>
 
@@ -464,14 +465,17 @@ struct C_ReadBlockRequest : public BlockGuard::C_BlockRequest {
       cache_ctx->m_parent_policy->map(IO_TYPE_READ, block_io.block_info->block,
                                       false, &parent_policy_map_result);
       switch (parent_policy_map_result) {
-      case POLICY_MAP_RESULT_HIT:
+      case POLICY_MAP_RESULT_HIT: {
+        boost::interprocess::sharable_lock<boost::interprocess::interprocess_upgradable_mutex> lock(cache_ctx->parent_lck->get_shared_data()->umtx_);
         req = new C_ReadFromCacheRequest<I>(cct, *cache_ctx->m_parent_image_store,
                                             cache_ctx->m_policy,
                                             std::move(block_io),
                                             &extent_buffers, req);
+        }
         break;
-      case POLICY_MAP_RESULT_NEW:
+      case POLICY_MAP_RESULT_NEW: {
         promote_buffers.emplace_back();
+        boost::interprocess::scoped_lock<boost::interprocess::interprocess_upgradable_mutex> lock(cache_ctx->parent_lck->get_shared_data()->umtx_);
         req = new C_WriteToMetaRequest<I>(cct, cache_ctx->m_parent_meta_store, block_io.block_info->block,
                                           cache_ctx->m_parent_policy, req);
         req = new C_CopyFromBlockBuffer(cct, block_io, promote_buffers.back(),
@@ -483,6 +487,7 @@ struct C_ReadBlockRequest : public BlockGuard::C_BlockRequest {
         req = new C_ReadBlockFromImageRequest<I>(cct, cache_ctx->m_parent_snap_image_writeback,
                                                  block_io.block_info->block,
                                                  &promote_buffers.back(), req);
+      }
         break;
       default:
         assert(false);
@@ -621,6 +626,7 @@ FileImageCache<I>::FileImageCache(ImageCtx &image_ctx)
   cct->lookup_or_create_singleton_object<ThreadPoolSingleton>(
     thread_pool_singleton, "librbd::cache::thread_pool");
   pcache_op_work_queue = thread_pool_singleton->pcache_op_work_queue; 
+  parent_lck = new shm_lck("librbdsharedreadonlycache");
   m_policy = new StupidPolicy<I>(image_ctx, p_cache_size);
   m_block_guard.set_block_map(m_policy->get_block_map());
 }
@@ -628,6 +634,7 @@ FileImageCache<I>::FileImageCache(ImageCtx &image_ctx)
 template <typename I>
 FileImageCache<I>::~FileImageCache() {
   delete m_policy;
+  delete parent_lck; //TODO:() handle crashed instance
 }
 
 template <typename I>

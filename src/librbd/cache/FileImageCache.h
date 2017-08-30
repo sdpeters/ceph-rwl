@@ -9,6 +9,7 @@
 #include "librbd/cache/BlockGuard.h"
 #include "librbd/cache/ImageWriteback.h"
 #include "librbd/cache/file/Policy.h"
+#include "librbd/cache/Shmlock.h"
 #include "common/WorkQueue.h"
 #include <functional>
 #include <list>
@@ -76,6 +77,7 @@ public:
   file::ImageStore<ImageCtx> *m_image_store = nullptr;
   file::ImageStore<ImageCtx> *m_parent_image_store = nullptr;
   ContextWQ* pcache_op_work_queue;
+  shm_lck* parent_lck;
 
 private:
   typedef std::function<void(uint64_t)> ReleaseBlock;
