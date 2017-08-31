@@ -107,7 +107,7 @@ struct MockImageCtx {
           image_ctx.mirroring_resync_after_disconnect),
       mirroring_replay_delay(image_ctx.mirroring_replay_delay),
       non_blocking_aio(image_ctx.non_blocking_aio),
-      blkin_trace_all(image_ctx.blkin_trace_all)
+      blkin_trace_all(image_ctx.blkin_trace_all),
       persistent_cache_enabled(false)
   {
     md_ctx.dup(image_ctx.md_ctx);
