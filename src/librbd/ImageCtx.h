@@ -201,6 +201,7 @@ namespace librbd {
     uint64_t qos_iops_limit;
 
     bool persistent_cache_enabled;
+    bool rwl_enabled;
 
     LibrbdAdminSocketHook *asok_hook;
 

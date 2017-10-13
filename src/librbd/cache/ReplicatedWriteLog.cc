@@ -44,6 +44,14 @@ bool is_block_aligned(const ImageCache::Extents &image_extents) {
   return true;
 }
 
+struct WriteLogEntry {
+  uint64_t image_offset_bytes;
+  uint64_t write_bytes;
+  WriteLogEntry(uint64_t image_offset_bytes, uint64_t write_bytes) 
+    : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes) {
+  }
+};
+  
 struct C_BlockIORequest : public Context {
   CephContext *cct;
   C_BlockIORequest *next_block_request;
@@ -820,7 +828,7 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx)
     m_lock("librbd::cache::ReplicatedWriteLog::m_lock") {
   CephContext *cct = m_image_ctx.cct;
   uint8_t write_mode = cct->_conf->get_val<bool>("rbd_persistent_cache_writeback")?1:0;
-  m_policy->set_write_mode(write_mode);
+  m_policy->set_write_mode(0);
 }
 
 template <typename I>
@@ -857,6 +865,16 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
       on_finish->complete(-EROFS);
       return;
     }
+  }
+
+  m_image_cache.aio_write(std::move(image_extents), std::move(bl), fadvise_flags, on_finish);
+
+  for (auto &extent : image_extents) {
+    /* Is there space in the write log for this entire write? */
+    /* If not, defer this IO */
+    /* Reserve log space for this write entry & data */
+    /* Allocate new write log entry */
+    WriteLogEntry *entry = new WriteLogEntry(extent.first, extent.second);
   }
 
   // TODO handle fadvise flags
@@ -985,6 +1003,10 @@ template <typename I>
 void ReplicatedWriteLog<I>::init(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
+
+  ldout(cct,5) << "rbd_rwl_enabled:" << cct->_conf->get_val<bool>("rbd_rwl_enabled") << dendl;
+  ldout(cct,5) << "rbd_rwl_size:" << cct->_conf->get_val<uint64_t>("rbd_rwl_size") << dendl;
+  ldout(cct,5) << "rbd_rwl_path:" << cct->_conf->get_val<std::string>("rbd_rwl_path") << dendl;
 
   bufferlist meta_bl;
   // chain the initialization of the meta, image, and journal stores

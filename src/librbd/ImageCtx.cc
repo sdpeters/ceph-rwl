@@ -781,7 +781,8 @@ public:
         "rbd_mirroring_replay_delay", false)(
         "rbd_skip_partial_discard", false)(
 	"rbd_qos_iops_limit", false)(
-        "rbd_persistent_cache_enabled", false);
+        "rbd_persistent_cache_enabled", false)(
+        "rbd_rwl_enabled", false);
 
     md_config_t local_config_t;
     std::map<std::string, bufferlist> res;
@@ -855,6 +856,7 @@ public:
 
     io_work_queue->apply_qos_iops_limit(qos_iops_limit);
     ASSIGN_OPTION(persistent_cache_enabled, bool);
+    ASSIGN_OPTION(rwl_enabled, bool);
   }
 
   ExclusiveLock<ImageCtx> *ImageCtx::create_exclusive_lock() {
