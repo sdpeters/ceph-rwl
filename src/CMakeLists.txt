@@ -301,6 +301,11 @@ if(HAVE_RDMA)
   list(APPEND EXTRALIBS ${RDMA_LIBRARIES} pthread)
 endif(HAVE_RDMA)
 
+if(WITH_PMEM)
+  list(APPEND EXTRALIBS "pmem")
+  list(APPEND EXTRALIBS "pmemobj")
+endif(WITH_PMEM)
+
 # sort out which allocator to use
 if(ALLOCATOR STREQUAL "tcmalloc")
   set(ALLOC_LIBS ${GPERFTOOLS_TCMALLOC_LIBRARY})
