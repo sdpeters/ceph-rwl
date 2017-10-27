@@ -2264,8 +2264,8 @@ bool compare_by_name(const child_info_t& c1, const child_info_t& c2)
     if (numcomp <= 0)
       return -EINVAL;
     CephContext *cct = ictx->cct;
-    ldout(cct, 20) << __func__ << " " << ictx << " numcomp = " << numcomp
-                   << dendl;
+    //ldout(cct, 20) << __func__ << " " << ictx << " numcomp = " << numcomp
+    //               << dendl;
     int i = 0;
     Mutex::Locker l(ictx->completed_reqs_lock);
     numcomp = std::min(numcomp, (int)ictx->completed_reqs.size());
