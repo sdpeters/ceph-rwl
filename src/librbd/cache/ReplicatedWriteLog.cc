@@ -383,11 +383,13 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
   } else {
     m_image_writeback.aio_read(std::move(image_extents), bl, fadvise_flags, on_finish);
   }
+#if 0
   // TODO handle fadvise flags
   BlockGuard::C_BlockRequest *req = new C_ReadBlockRequest<I>(
     m_image_ctx, m_image_writeback, *m_image_store, m_release_block, bl,
     on_finish);
   map_blocks(IO_TYPE_READ, std::move(image_extents), req);
+#endif
 }
 
 template <typename I>
@@ -1054,7 +1056,7 @@ void ReplicatedWriteLog<I>::init(Context *on_finish) {
 
   std::string log_pool_name = rwl_path + "/rbd-rwl." + m_image_ctx.id + ".pool";
   std::string log_poolset_name = rwl_path + "/rbd-rwl." + m_image_ctx.id + ".poolset";
-  m_log_pool_size = ceph::max(cct->_conf->get_val<uint64_t>("rbd_rwl_size"), MIN_POOL_SIZE);
+  m_log_pool_size = max(cct->_conf->get_val<uint64_t>("rbd_rwl_size"), MIN_POOL_SIZE);
   //m_policy->set_block_count(m_image_ctx.size / BLOCK_SIZE);
 
   if (access(log_poolset_name.c_str(), F_OK) == 0) {
