@@ -809,13 +809,15 @@ struct C_WritebackRequest : public Context {
 } // anonymous namespace
 
 template <typename I>
-FileImageCache<I>::FileImageCache(ImageCtx &image_ctx)
-  : m_image_ctx(image_ctx), m_image_writeback(image_ctx),
+FileImageCache<I>::FileImageCache(ImageCtx &image_ctx,
+				  ImageWriteback<I> *lower)
+  : m_image_ctx(image_ctx), m_image_writeback(lower),
     m_block_guard(image_ctx.cct, 256, BLOCK_SIZE),
     m_policy(new StupidPolicy<I>(m_image_ctx, m_block_guard)),
     m_release_block(std::bind(&FileImageCache<I>::release_block, this,
                               std::placeholders::_1)),
     m_lock("librbd::cache::FileImageCache::m_lock") {
+  assert(NULL != lower);
   CephContext *cct = m_image_ctx.cct;
   uint8_t write_mode = cct->_conf->get_val<bool>("rbd_persistent_cache_writeback")?1:0;
   m_policy->set_write_mode(write_mode);
@@ -824,6 +826,7 @@ FileImageCache<I>::FileImageCache(ImageCtx &image_ctx)
 template <typename I>
 FileImageCache<I>::~FileImageCache() {
   delete m_policy;
+  delete m_image_writeback;
 }
 
 template <typename I>
@@ -835,7 +838,7 @@ void FileImageCache<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 
   // TODO handle fadvise flags
   BlockGuard::C_BlockRequest *req = new C_ReadBlockRequest<I>(
-    m_image_ctx, m_image_writeback, *m_image_store, m_release_block, bl,
+    m_image_ctx, *m_image_writeback, *m_image_store, m_release_block, bl,
     on_finish);
   map_blocks(IO_TYPE_READ, std::move(image_extents), req);
 }
@@ -859,7 +862,7 @@ void FileImageCache<I>::aio_write(Extents &&image_extents,
 
   // TODO handle fadvise flags
   BlockGuard::C_BlockRequest *req = new C_WriteBlockRequest<I>(
-    m_image_ctx, m_image_writeback, *m_policy, *m_journal_store, *m_image_store,
+    m_image_ctx, *m_image_writeback, *m_policy, *m_journal_store, *m_image_store,
     *m_meta_store, m_release_block, m_detain_block, std::move(bl), BLOCK_SIZE, on_finish);
   map_blocks(IO_TYPE_WRITE, std::move(image_extents), req);
 }
@@ -894,7 +897,7 @@ void FileImageCache<I>::aio_discard(uint64_t offset, uint64_t length,
   C_Gather *ctx = new C_Gather(cct, on_finish);
   Context *invalidate_done_ctx = ctx->new_sub();
 
-  m_image_writeback.aio_discard(offset, length, skip_partial_discard, ctx->new_sub());
+  m_image_writeback->aio_discard(offset, length, skip_partial_discard, ctx->new_sub());
 
   ctx->activate();
 
@@ -923,7 +926,7 @@ void FileImageCache<I>::aio_flush(Context *on_finish) {
       if (r < 0) {
         on_finish->complete(r);
       }
-      m_image_writeback.aio_flush(on_finish);
+      m_image_writeback->aio_flush(on_finish);
     });
 
   flush(ctx);
@@ -970,7 +973,7 @@ void FileImageCache<I>::aio_compare_and_write(Extents &&image_extents,
 //  ldout(cct, 20) << "image_extents=" << image_extents << ", "
 //                 << "on_finish=" << on_finish << dendl;
 
-  m_image_writeback.aio_compare_and_write(
+  m_image_writeback->aio_compare_and_write(
     std::move(image_extents), std::move(cmp_bl), std::move(bl), mismatch_offset,
     fadvise_flags, on_finish);
 }
@@ -1013,9 +1016,17 @@ void FileImageCache<I>::init(Context *on_finish) {
       m_image_store = new ImageStore<I>(m_image_ctx, *m_meta_store);
       m_image_store->init(ctx);
     });
-  m_meta_store = new MetaStore<I>(m_image_ctx, BLOCK_SIZE);
-  m_meta_store->set_entry_size(m_policy->get_entry_size());
-  m_meta_store->init(&meta_bl, ctx);
+  ctx = new FunctionContext(
+    [this, meta_bl, ctx](int r) mutable {
+      if (r < 0) {
+        ctx->complete(r);
+        return;
+      }
+      m_meta_store = new MetaStore<I>(m_image_ctx, BLOCK_SIZE);
+      m_meta_store->set_entry_size(m_policy->get_entry_size());
+      m_meta_store->init(&meta_bl, ctx);
+    });
+  m_image_writeback->init(ctx);
 }
 
 template <typename I>
@@ -1032,6 +1043,17 @@ void FileImageCache<I>::shut_down(Context *on_finish) {
       delete m_image_store;
       delete m_meta_store;
       on_finish->complete(r);
+    });
+  ctx = new FunctionContext(
+    [this, ctx](int r) {
+      Context *next_ctx = ctx;
+      if (r < 0) {
+        next_ctx = new FunctionContext(
+          [r, ctx](int _r) {
+            ctx->complete(r);
+          });
+      }
+      m_image_writeback->shut_down(next_ctx);
     });
   ctx = new FunctionContext(
     [this, ctx](int r) {
@@ -1238,7 +1260,7 @@ void FileImageCache<I>::process_writeback_dirty_blocks() {
 
     // block is now detained -- safe for writeback
     C_WritebackRequest<I> *req = new C_WritebackRequest<I>(
-      m_image_ctx, m_image_writeback, *m_policy, *m_journal_store,
+      m_image_ctx, *m_image_writeback, *m_policy, *m_journal_store,
       *m_image_store, m_release_block, m_async_op_tracker, tid, block, io_type,
       demoted, BLOCK_SIZE);
     req->send();
