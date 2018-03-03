@@ -42,8 +42,11 @@ namespace rwl {
 
 /**** Write log entries ****/
 
-static const uint64_t DEFAULT_POOL_SIZE = 10u<<30;
-static const uint64_t MIN_POOL_SIZE = 1u<<20;
+static const unsigned int MAX_CONCURRENT_WRITES = 64;
+static const uint64_t DEFAULT_POOL_SIZE = 1u<<30;
+//static const uint64_t MIN_POOL_SIZE = 1u<<23;
+// force pools to be 1G until thread::arena init issue is resolved
+static const uint64_t MIN_POOL_SIZE = DEFAULT_POOL_SIZE;
 static const double USABLE_SIZE = (7.0 / 10);
 static const uint64_t BLOCK_ALLOC_OVERHEAD_BYTES = 16;
 static const uint8_t RWL_POOL_VERSION = 1;
@@ -137,7 +140,7 @@ public:
   };
 };
   
-typedef std::list<WriteLogEntry*> WriteLogEntries;
+typedef std::list<shared_ptr<WriteLogEntry>> WriteLogEntries;
 
 /**** Write log entries end ****/
 
@@ -177,23 +180,24 @@ public:
 class WriteLogOperationSet;
 class WriteLogOperation {
 public:
-  WriteLogEntry *log_entry;
+  shared_ptr<WriteLogEntry> log_entry;
   bufferlist bl;
-  pobj_action buffer_alloc_action;
+  pobj_action *buffer_alloc_action = nullptr;
   Context *on_write_persist; /* Completion for things waiting on this write to persist */
-  WriteLogOperation(WriteLogOperationSet *set, uint64_t image_offset_bytes, uint64_t write_bytes);
+  WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes);
   ~WriteLogOperation();
   WriteLogOperation(const WriteLogOperation&) = delete;
   WriteLogOperation &operator=(const WriteLogOperation&) = delete;
   friend std::ostream &operator<<(std::ostream &os,
 				  WriteLogOperation &op) {
     os << "log_entry=[" << *op.log_entry << "], "
-       << "bl=[" << op.bl << "]";
+       << "bl=[" << op.bl << "],"
+       << "buffer_alloc_action=" << op.buffer_alloc_action;
     return os;
   };
   void complete(int r);
 };
-typedef std::list<WriteLogOperation*> WriteLogOperations;
+typedef std::list<shared_ptr<WriteLogOperation>> WriteLogOperations;
 
 class WriteLogOperationSet {
 public:
@@ -205,7 +209,7 @@ public:
   C_Gather *m_extent_ops;
   Context *m_on_ops_persist;
   WriteLogOperations operations;
-  WriteLogOperationSet(CephContext *cct, SyncPoint *sync_point, bool persist_on_flush,
+  WriteLogOperationSet(CephContext *cct, shared_ptr<SyncPoint> sync_point, bool persist_on_flush,
 		       BlockExtent extent, Context *on_finish);
   ~WriteLogOperationSet();
   WriteLogOperationSet(const WriteLogOperationSet&) = delete;
@@ -222,25 +226,15 @@ public:
 
 class GuardedRequestFunctionContext : public Context {
 private:
-  std::atomic<bool> m_callback_invoked;
+  std::atomic<bool> m_callback_invoked = {false};
   boost::function<void(BlockGuardCell*)> m_callback;
 public:
-  GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*)> &&callback)
-    : m_callback_invoked(false), m_callback(std::move(callback)) { }
-
+  GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*)> &&callback);
+  ~GuardedRequestFunctionContext(void);
   GuardedRequestFunctionContext(const GuardedRequestFunctionContext&) = delete;
   GuardedRequestFunctionContext &operator=(const GuardedRequestFunctionContext&) = delete;
-
-  virtual void finish(int r) override {
-    assert(true == m_callback_invoked);
-  }
-  
-  void acquired(BlockGuardCell *cell) {
-    bool initial = false;
-    if (m_callback_invoked.compare_exchange_strong(initial, true)) {
-      m_callback(cell);
-    }
-  }
+  void finish(int r) override;
+  void acquired(BlockGuardCell *cell);
 };
 
 struct GuardedRequest {
@@ -266,11 +260,11 @@ typedef librbd::BlockGuard<GuardedRequest> WriteLogGuard;
 /* A WriteLogMapEntry refers to a portion of a WriteLogEntry */
 struct WriteLogMapEntry {
   BlockExtent block_extent;
-  WriteLogEntry *log_entry;
+  shared_ptr<WriteLogEntry> log_entry;
   
   WriteLogMapEntry(BlockExtent block_extent,
-		   WriteLogEntry *log_entry = nullptr);
-  WriteLogMapEntry(WriteLogEntry *log_entry);
+		   shared_ptr<WriteLogEntry> log_entry = nullptr);
+  WriteLogMapEntry(shared_ptr<WriteLogEntry> log_entry);
   friend std::ostream &operator<<(std::ostream &os,
 				  WriteLogMapEntry &e) {
     os << "block_extent=" << e.block_extent << ", "
@@ -286,16 +280,16 @@ public:
   WriteLogMap(const WriteLogMap&) = delete;
   WriteLogMap &operator=(const WriteLogMap&) = delete;
 
-  void add_log_entry(WriteLogEntry *log_entry);
+  void add_log_entry(shared_ptr<WriteLogEntry> log_entry);
   void add_log_entries(WriteLogEntries &log_entries);
-  void remove_log_entry(WriteLogEntry *log_entry);
+  void remove_log_entry(shared_ptr<WriteLogEntry> log_entry);
   void remove_log_entries(WriteLogEntries &log_entries);
   WriteLogEntries find_log_entries(BlockExtent block_extent);
   WriteLogMapEntries find_map_entries(BlockExtent block_extent);
   
 private:
-  void add_log_entry_locked(WriteLogEntry *log_entry);
-  void remove_log_entry_locked(WriteLogEntry *log_entry);
+  void add_log_entry_locked(shared_ptr<WriteLogEntry> log_entry);
+  void remove_log_entry_locked(shared_ptr<WriteLogEntry> log_entry);
   void add_map_entry_locked(WriteLogMapEntry &map_entry);
   void remove_map_entry_locked(WriteLogMapEntry &map_entry);
   void adjust_map_entry_locked(WriteLogMapEntry &map_entry, BlockExtent &new_extent);
@@ -367,6 +361,7 @@ private:
   typedef std::function<void(uint64_t)> ReleaseBlock;
   typedef std::function<void(BlockGuard::BlockIO)> AppendDetainedBlock;
   typedef std::list<Context *> Contexts;
+  typedef std::list<C_WriteRequest *> C_WriteRequests;
 
   const char* rwl_pool_layout_name = POBJ_LAYOUT_NAME(rbd_rwl);
 
@@ -392,7 +387,7 @@ private:
 
   /* Starts at 0 for a new write log. Incremented on every flush. */
   uint64_t m_current_sync_gen = 0;
-  SyncPoint *m_current_sync_point = nullptr;
+  shared_ptr<SyncPoint> m_current_sync_point = nullptr;
   /* Starts at 0 on each sync gen increase. Incremented before applied
      to an operation */
   uint64_t m_last_op_sequence_num = 0;
@@ -429,6 +424,12 @@ private:
 
   int m_flush_ops_in_flight = 0;
   int m_flush_bytes_in_flight = 0;
+
+  /* Writes that have left the block guard, but are waiting for resources */
+  C_WriteRequests m_deferred_writes;
+  /* Throttle writes concurrently allocating & replicating */
+  unsigned int m_free_lanes = MAX_CONCURRENT_WRITES;
+  unsigned int m_unpublished_reserves = 0;
   
   void rwl_init(Context *on_finish);
   void wake_up();
@@ -436,18 +437,22 @@ private:
   bool drain_context_list(Contexts &contexts, Mutex &contexts_lock);
 
   bool is_work_available() const;
-  bool can_flush_entry(WriteLogEntry *log_entry);
-  void flush_entry(WriteLogEntry *log_entry);
+  bool can_flush_entry(shared_ptr<WriteLogEntry> log_entry);
+  void flush_entry(shared_ptr<WriteLogEntry> log_entry);
   void process_writeback_dirty_blocks();
   void process_detained_block_ios();
   void process_deferred_block_ios();
 
   void invalidate(Extents&& image_extents, Context *on_finish);
 
-  void append_sync_point(SyncPoint *sync_point, int prior_write_status);
+  void append_sync_point(shared_ptr<SyncPoint> sync_point, int prior_write_status);
   void new_sync_point(void);
 
   void complete_write_req(C_WriteRequest *write_req, int result);
+  void dispatch_deferred_writes(void);
+  bool alloc_write_resources(C_WriteRequest *write_req);
+  void release_write_lanes(C_WriteRequest *write_req);
+  void alloc_and_dispatch_aio_write(C_WriteRequest *write_req);
   void dispatch_aio_write(C_WriteRequest *write_req);
   void append_scheduled_ops(void);
   void schedule_append(WriteLogOperations &ops);
