@@ -1681,6 +1681,9 @@ TEST_F(TestLibRBD, TestIO)
   rbd_aio_release(comp);
 
   ASSERT_PASSED(validate_object_map, image);
+
+  rbd_flush(image);
+
   ASSERT_EQ(0, rbd_close(image));
 
   rados_ioctx_destroy(ioctx);

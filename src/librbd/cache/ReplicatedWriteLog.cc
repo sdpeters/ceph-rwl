@@ -70,9 +70,9 @@ SyncPoint::~SyncPoint() {
   /* TODO: will m_prior_log_entries_persisted always delete itself? */
 }
 
-WriteLogOperation::WriteLogOperation(WriteLogOperationSet *set, uint64_t image_offset_bytes, uint64_t write_bytes)
-  : log_entry(new WriteLogEntry(image_offset_bytes, write_bytes)) {
-  on_write_persist = set->m_extent_ops->new_sub();
+WriteLogOperation::WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes)
+  : log_entry(make_shared<WriteLogEntry>(image_offset_bytes, write_bytes)) {
+  on_write_persist = set.m_extent_ops->new_sub();
 }
 
 WriteLogOperation::~WriteLogOperation() { }
@@ -80,10 +80,9 @@ WriteLogOperation::~WriteLogOperation() { }
 /* Called when the write log operation is completed in all log replicas */
 void WriteLogOperation::complete(int result) {
   on_write_persist->complete(result);
-  delete(this);
 }
 
-WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, SyncPoint *sync_point, bool persist_on_flush,
+WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, shared_ptr<SyncPoint> sync_point, bool persist_on_flush,
 					   BlockExtent extent, Context *on_finish)
   : m_cct(cct), m_extent(extent), m_on_finish(on_finish), m_persist_on_flush(persist_on_flush) {
   m_on_ops_persist = sync_point->m_prior_log_entries_persisted->new_sub();
@@ -93,18 +92,34 @@ WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, SyncPoint *sync_poi
 		     //ldout(m_cct, 6) << "m_extent_ops completed" << dendl;
 		     m_on_ops_persist->complete(r);
 		     m_on_finish->complete(r);
-		     delete(this);
 		   }));
 }
 
 WriteLogOperationSet::~WriteLogOperationSet() { }
 
+GuardedRequestFunctionContext::GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*)> &&callback)
+  : m_callback(std::move(callback)){ }
+
+GuardedRequestFunctionContext::~GuardedRequestFunctionContext(void) { }
+
+void GuardedRequestFunctionContext::finish(int r) {
+  assert(true == m_callback_invoked);
+}
+
+void GuardedRequestFunctionContext::acquired(BlockGuardCell *cell) {
+  bool initial = false;
+  if (m_callback_invoked.compare_exchange_strong(initial, true)) {
+    m_callback(cell);
+  }
+  complete(0);
+}
+
 WriteLogMapEntry::WriteLogMapEntry(BlockExtent block_extent,
-				   WriteLogEntry *log_entry)
+				   shared_ptr<WriteLogEntry> log_entry)
   : block_extent(block_extent) , log_entry(log_entry) {
 }
 
-WriteLogMapEntry::WriteLogMapEntry(WriteLogEntry *log_entry)
+WriteLogMapEntry::WriteLogMapEntry(shared_ptr<WriteLogEntry> log_entry)
   : block_extent(log_entry->block_extent()) , log_entry(log_entry) {
 }
 
@@ -125,7 +140,7 @@ WriteLogMap::WriteLogMap(CephContext *cct)
  * entry will be updated to remove the regions that overlap with
  * this.
  */
-void WriteLogMap::add_log_entry(WriteLogEntry *log_entry) {
+void WriteLogMap::add_log_entry(shared_ptr<WriteLogEntry> log_entry) {
   Mutex::Locker locker(m_lock);
   add_log_entry_locked(log_entry);
 }
@@ -142,7 +157,7 @@ void WriteLogMap::add_log_entries(WriteLogEntries &log_entries) {
  * Remove any map entries that refer to the supplied write log
  * entry.
  */
-void WriteLogMap::remove_log_entry(WriteLogEntry *log_entry) {
+void WriteLogMap::remove_log_entry(shared_ptr<WriteLogEntry> log_entry) {
   Mutex::Locker locker(m_lock);
   remove_log_entry_locked(log_entry);
 }
@@ -178,7 +193,7 @@ WriteLogMapEntries WriteLogMap::find_map_entries(BlockExtent block_extent) {
   return find_map_entries_locked(block_extent);
 }
   
-void WriteLogMap::add_log_entry_locked(WriteLogEntry *log_entry) {
+void WriteLogMap::add_log_entry_locked(shared_ptr<WriteLogEntry> log_entry) {
   WriteLogMapEntry map_entry(log_entry);
   ldout(m_cct, 20) << "block_extent=" << map_entry.block_extent 
 		   << dendl;
@@ -215,7 +230,7 @@ void WriteLogMap::add_log_entry_locked(WriteLogEntry *log_entry) {
   add_map_entry_locked(map_entry);
 }
 
-void WriteLogMap::remove_log_entry_locked(WriteLogEntry *log_entry) {
+void WriteLogMap::remove_log_entry_locked(shared_ptr<WriteLogEntry> log_entry) {
   ldout(m_cct, 20) << "*log_entry=" << *log_entry << dendl;
   assert(m_lock.is_locked_by_me());
 
@@ -384,7 +399,7 @@ struct C_BlockIORequest : public Context {
 
 /**
  * A request that can be deferred in a BlockGuard to sequence
- * overlapping operatoins.
+ * overlapping operations.
  */
 struct C_GuardedBlockIORequest : public C_BlockIORequest {
 private:
@@ -449,6 +464,15 @@ public:
   uint64_t last_image_byte;
   uint64_t first_block;
   uint64_t last_block;
+  friend std::ostream &operator<<(std::ostream &os,
+				  ExtentsSummary &s) {
+    os << "total_bytes=" << s.total_bytes << ", "
+       << "first_image_byte=" << s.first_image_byte << ", "
+       << "last_image_byte=" << s.last_image_byte << ", "
+       << "first_block=" << s.first_block << ", "
+       << "last_block=" << s.last_block<< "";
+    return os;
+  };
   ExtentsSummary(const ExtentsType &extents) {
     total_bytes = 0;
     first_image_byte = 0;
@@ -606,7 +630,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
       /* Offset into the log entry buffer of this read hit */
       uint64_t read_buffer_offset = map_entry_buffer_offset + entry_offset;
       /* Create buffer object referring to pmem pool for this read hit */
-      WriteLogEntry *log_entry = entry.log_entry;
+      shared_ptr<WriteLogEntry> log_entry = entry.log_entry;
       ldout(cct, 5) << "adding reader: log_entry=" << *log_entry << dendl;
       log_entry->add_reader();
       buffer::raw *hit_buf =
@@ -687,6 +711,17 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *cell)
   }
 }
 
+struct WriteBufferAllocation {
+  unsigned int allocation_size = 0;
+  pobj_action buffer_alloc_action;
+  TOID(uint8_t) buffer_oid = OID_NULL;
+};
+
+struct WriteRequestResources {
+  bool allocated = false;
+  std::vector<WriteBufferAllocation> buffers;
+};
+
 /**
  * This is the custodian of the BlockGuard cell for this write, and
  * the state information about the progress of this write. This object
@@ -705,6 +740,17 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
   Context *_on_finish = nullptr; /* Block guard release */
   std::atomic<bool> m_user_req_completed = {false};
   ExtentsSummary<Extents> m_image_extents_summary;
+  WriteRequestResources m_resources;
+  unique_ptr<WriteLogOperationSet> m_op_set = nullptr;
+  friend std::ostream &operator<<(std::ostream &os,
+				  C_WriteRequest &req) {
+    os << "m_image_extents=[" << req.m_image_extents << "], "
+       << "m_image_extents_summary=[" << req.m_image_extents_summary << "], "
+       << "bl=" << req.bl << ", "
+       << "user_req=" << req.user_req << ", "
+       << "m_user_req_completed=" << req.m_user_req_completed << "";
+    return os;
+  };
   C_WriteRequest(CephContext *cct, Extents &&image_extents,
 		 bufferlist&& bl, int fadvise_flags, Context *user_req)
     : C_GuardedBlockIORequest(cct), m_cct(cct), m_image_extents(std::move(image_extents)),
@@ -744,6 +790,7 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
   }  
 };
 
+const unsigned long int ops_appended_together = 8;
 /*
  * Performs the log event append operation for all of the scheduled
  * events.
@@ -753,29 +800,42 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 {
   WriteLogOperations ops;
   int append_result = 0;
-
-  {
-    Mutex::Locker locker(m_log_append_lock);
-
+  bool ops_remain = false;
+  do {
     {
-      Mutex::Locker locker(m_lock);
-      std::swap(ops, m_ops_to_append);
+      ops.clear();
+      Mutex::Locker locker(m_log_append_lock);
+
+      {
+	Mutex::Locker locker(m_lock);
+	if (m_ops_to_append.size()) {
+	  auto last_in_batch = m_ops_to_append.begin();
+	  unsigned int ops_to_append = m_ops_to_append.size();
+	  if (ops_to_append > ops_appended_together) {
+	    ops_to_append = ops_appended_together;
+	  }
+	  std::advance(last_in_batch, ops_to_append);
+	  ops.splice(ops.begin(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
+	  ops_remain = !m_ops_to_append.empty();
+	  ldout(m_image_ctx.cct, 6) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
+	}
+      }
+
+      if (ops.size()) {
+	alloc_op_log_entries(ops);
+	append_result = append_op_log_entries(ops);
+      }
     }
-    
+
     if (ops.size()) {
-      alloc_op_log_entries(ops);
-      append_result = append_op_log_entries(ops);
+      complete_op_log_entries(ops, append_result);
+      {
+	Mutex::Locker locker(m_lock);
+	/* New entries may be flushable */
+	wake_up();
+      }
     }
-  }
-
-  if (ops.size()) {
-    complete_op_log_entries(ops, append_result);
-    {
-      Mutex::Locker locker(m_lock);
-      /* New entries may be flushable */
-      wake_up();
-    }
-  }
+  } while (ops_remain);
 }
 
 /*
@@ -806,6 +866,7 @@ void ReplicatedWriteLog<I>::schedule_append(WriteLogOperations &ops)
   }
 }
 
+const unsigned long int ops_flushed_together = 4;
 /*
  * Performs the pmem buffer flush on all scheduled ops, then schedules
  * the log event append operation for all of them.
@@ -814,18 +875,33 @@ template <typename I>
 void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
 {
   WriteLogOperations ops;
-  {
-    Mutex::Locker locker(m_lock);
-    std::swap(ops, m_ops_to_flush);
-  }
+  bool ops_remain = false;
+  do {
+    {
+      ops.clear();
+      Mutex::Locker locker(m_lock);
+      if (m_ops_to_flush.size()) {
+	auto last_in_batch = m_ops_to_flush.begin();
+	unsigned int ops_to_flush = m_ops_to_flush.size();
+	if (ops_to_flush > ops_flushed_together) {
+	  ops_to_flush = ops_flushed_together;
+	}
+	ldout(m_image_ctx.cct, 6) << "should flush " << ops_to_flush << dendl;
+	std::advance(last_in_batch, ops_to_flush);
+	ops.splice(ops.begin(), m_ops_to_flush, m_ops_to_flush.begin(), last_in_batch);
+	ops_remain = !m_ops_to_flush.empty();
+	ldout(m_image_ctx.cct, 6) << "flushing " << ops.size() << ", " << m_ops_to_flush.size() << " remain" << dendl;
+      }
+    }
 
-  /* Ops subsequently scheduled for flush may finish before these,
-   * which is fine. We're unconcerned with completion order until we
-   * get to the log message append step. */
-  if (ops.size()) {
-    flush_pmem_buffer(ops);
-    schedule_append(ops);
-  }
+    /* Ops subsequently scheduled for flush may finish before these,
+     * which is fine. We're unconcerned with completion order until we
+     * get to the log message append step. */
+    if (ops.size()) {
+      flush_pmem_buffer(ops);
+      schedule_append(ops);
+    }
+  } while (ops_remain);
 }
 
 /*
@@ -892,6 +968,10 @@ void ReplicatedWriteLog<I>::alloc_op_log_entries(WriteLogOperations &ops)
       operation->log_entry->ram_entry.entry_valid = 1;
       m_log_entries.push_back(operation->log_entry);
       m_dirty_log_entries.push_back(operation->log_entry);
+      ldout(m_image_ctx.cct, 6) << "log_entry_index=" << operation->log_entry->log_entry_index << " "
+				<< "pmem_entry=" << operation->log_entry->pmem_entry << " "
+				<< "pool->log_entries=" << pmem_log_entries << " "
+				<< "operation=[" << *operation << "]" << dendl;
     }
   }
 }
@@ -909,6 +989,10 @@ void ReplicatedWriteLog<I>::flush_op_log_entries(WriteLogOperations &ops)
     assert(ops.front()->log_entry->pmem_entry < ops.back()->log_entry->pmem_entry);
   }
   
+  ldout(m_image_ctx.cct, 15) << "entry count=" << ops.size() << " "
+			    << "start address=" << ops.front()->log_entry->pmem_entry << " "
+			    << "bytes=" << ops.size() * sizeof(*(ops.front()->log_entry->pmem_entry))
+			    << dendl;
   pmemobj_flush(m_log_pool,
 		ops.front()->log_entry->pmem_entry,
 		ops.size() * sizeof(*(ops.front()->log_entry->pmem_entry)));
@@ -926,6 +1010,9 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
   WriteLogOperations entries_to_flush;
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
+  int ret = 0;
+
+  assert(m_log_append_lock.is_locked_by_me());
   
   if (ops.empty()) return 0;
 
@@ -936,10 +1023,17 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
        * tail of the ring */
       if (entries_to_flush.back()->log_entry->log_entry_index >
 	  operation->log_entry->log_entry_index) {
+	ldout(m_image_ctx.cct, 6) << "entries to flush wrap around the end of the ring at "
+				  << "operation=[" << *operation << "]" << dendl;
 	flush_op_log_entries(entries_to_flush);
 	entries_to_flush.clear();
       }
     }
+    ldout(m_image_ctx.cct, 6) << "Copying entry for operation at index="
+			      << operation->log_entry->log_entry_index << " "
+			      << "from " << &operation->log_entry->ram_entry << " "
+			      << "to " << operation->log_entry->pmem_entry << " "
+			      << "operation=[" << *operation << "]" << dendl;
     *operation->log_entry->pmem_entry = operation->log_entry->ram_entry;
     entries_to_flush.push_back(operation);
   }
@@ -955,16 +1049,24 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
   TX_BEGIN(m_log_pool) {
     D_RW(pool_root)->first_free_entry = m_first_free_entry;
     for (auto &operation : ops) {
-      pmemobj_tx_publish(&operation->buffer_alloc_action, 1);
-    }  
+      pmemobj_tx_publish(operation->buffer_alloc_action, 1);
+    }
   } TX_ONCOMMIT {
   } TX_ONABORT {
-    lderr(cct) << "failed to commit log entries (" << m_log_pool_name << ")" << dendl;
-    return(-EIO);
+    lderr(cct) << "failed to commit " << ops.size() << " log entries (" << m_log_pool_name << ")" << dendl;
+    ret = -EIO;
   } TX_FINALLY {
   } TX_END;
-  
-  return 0;
+
+  {
+    Mutex::Locker locker(m_lock);
+    m_unpublished_reserves -= ops.size();
+    if (0 == m_unpublished_reserves) {
+      ldout(cct, 5) << "All pmem reserves published" << dendl;
+    }
+  }
+
+  return ret;
 }
 
 /*
@@ -974,7 +1076,7 @@ template <typename I>
 void ReplicatedWriteLog<I>::complete_op_log_entries(WriteLogOperations &ops, int result)
 {
   for (auto &operation : ops) {
-    WriteLogOperation *op = operation;
+    shared_ptr<WriteLogOperation> op = operation;
     m_on_persist_finisher.queue(new FunctionContext([this, op, result](int r) {
 	  op->complete(result);
 	}));
@@ -988,11 +1090,170 @@ void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequest *write_req, int re
   ldout(cct, 6) << "write_req=" << write_req << dendl;
   ldout(cct, 6) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
   assert(write_req->get_cell());
+  release_write_lanes(write_req);
   release_guarded_request(write_req->get_cell());
 }
 
 /**
- * Takes custody of write_req.
+ * Attempts to allocate log resources for a write. Returns true if successful.
+ *
+ * Resources include 1 lane per extent, 1 log entry per extent, and the payload
+ * data space for each extent.
+ *
+ * Lanes are released after the write persists via release_write_lanes()
+ *
+ * Caller holds m_lock
+ */
+template <typename I>
+bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
+{
+  bool alloc_succeeds = true;
+
+  assert(m_lock.is_locked_by_me());
+  assert(!write_req->m_resources.allocated);
+  write_req->m_resources.buffers.reserve(write_req->m_image_extents.size());
+  if (m_free_lanes < write_req->m_image_extents.size()) {
+    ldout(m_image_ctx.cct, 6) << "not enough free lanes (need "
+			      <<  write_req->m_image_extents.size()
+			      << ", have " << m_free_lanes << ") "
+			      << *write_req << dendl;
+    return false;
+  }
+  if (m_free_log_entries < write_req->m_image_extents.size()) {
+    ldout(m_image_ctx.cct, 6) << "not enough free entries (need "
+			      <<  write_req->m_image_extents.size()
+			      << ", have " << m_free_log_entries << ") "
+			      << *write_req << dendl;
+    return false;
+  }
+  for (auto &extent : write_req->m_image_extents) {
+    write_req->m_resources.buffers.emplace_back();
+    struct WriteBufferAllocation &buffer = write_req->m_resources.buffers.back();
+    buffer.allocation_size = MIN_WRITE_ALLOC_SIZE;
+    if (extent.second > buffer.allocation_size) {
+      buffer.allocation_size = extent.second;
+    }
+    buffer.buffer_oid = pmemobj_reserve(m_log_pool,
+					&buffer.buffer_alloc_action,
+					buffer.allocation_size,
+					0 /* Object type */);
+    if (TOID_IS_NULL(buffer.buffer_oid)) {
+      ldout(m_image_ctx.cct, 6) << "can't allocate all data buffers: "
+				<< pmemobj_errormsg() << ". "
+				<< *write_req << dendl;
+      alloc_succeeds = false;
+      write_req->m_resources.buffers.pop_back();
+      assert(m_free_lanes < MAX_CONCURRENT_WRITES);
+      break;
+    }
+    m_unpublished_reserves++;
+  }
+
+  if (alloc_succeeds) {
+    /* We need one free log entry per extent (each is a separate entry), and
+     * one free "lane" for remote replication. */
+    if ((m_free_lanes >= write_req->m_image_extents.size()) &&
+	(m_free_log_entries >= write_req->m_image_extents.size())) {
+      m_free_lanes -= write_req->m_image_extents.size();
+      m_free_log_entries -= write_req->m_image_extents.size();
+      write_req->m_resources.allocated = true;
+    } else {
+      alloc_succeeds = false;
+    }
+  }
+
+  if (!alloc_succeeds) {
+    /* On alloc failure, free any buffers we did allocate */
+    for (auto &buffer : write_req->m_resources.buffers) {
+      pmemobj_cancel(m_log_pool, &buffer.buffer_alloc_action, 1);
+    }
+    write_req->m_resources.buffers.clear();
+  }
+
+  return alloc_succeeds;
+}
+
+/**
+ * Dispatch as many deferred writes as possible
+ */
+template <typename I>
+void ReplicatedWriteLog<I>::dispatch_deferred_writes(void)
+{
+  C_WriteRequest *write_req = nullptr;
+  bool allocated = false;
+
+  do {
+    {
+      Mutex::Locker locker(m_lock);
+      if (m_deferred_writes.size()) {
+	write_req = m_deferred_writes.front();
+	allocated = alloc_write_resources(write_req);
+	if (allocated) {
+	  m_deferred_writes.pop_front();
+	  /* If there are more, wake up the work function */
+	  if (m_deferred_writes.size()) {
+	    ldout(m_image_ctx.cct, 6) << "deferred writes: " << m_deferred_writes.size() << dendl;
+	    wake_up();
+	  }
+	}
+      } else {
+	write_req = nullptr;
+	allocated = false;
+      }
+    }
+    if (allocated) {
+      // TODO: punt to a workq if we've already dispatched one here?
+      dispatch_aio_write(write_req);
+    }
+  } while (allocated);
+}
+
+/**
+ * Returns the lanes used by this write, and attempts to dispatch the next
+ * deferred write
+ */
+template <typename I>
+void ReplicatedWriteLog<I>::release_write_lanes(C_WriteRequest *write_req)
+{
+  {
+    Mutex::Locker locker(m_lock);
+    assert(write_req->m_resources.allocated);
+    m_free_lanes += write_req->m_image_extents.size();
+    write_req->m_resources.allocated = false;
+  }
+  dispatch_deferred_writes();
+}
+
+/**
+ * Attempts to allocate log resources for a write. Write is dispatched if
+ * resources are available, or queued if they aren't.
+ */
+template <typename I>
+void ReplicatedWriteLog<I>::alloc_and_dispatch_aio_write(C_WriteRequest *write_req)
+{
+  bool dispatch_here = false;
+
+  {
+    /* If there are already deferred writes, queue behind them for resources */
+    Mutex::Locker locker(m_lock);
+    if (m_deferred_writes.empty() &&
+	alloc_write_resources(write_req)) {
+      dispatch_here = true;
+    } else {
+      m_deferred_writes.push_back(write_req);
+      ldout(m_image_ctx.cct, 6) << "deferred writes: " << m_deferred_writes.size() << dendl;
+    }
+  }
+
+  if (dispatch_here) {
+    dispatch_aio_write(write_req);
+  } else {
+    dispatch_deferred_writes();
+  }
+}
+
+/**
+ * Takes custody of write_req. Resources must already be allocated.
  *
  * Locking:
  * Acquires m_lock
@@ -1002,7 +1263,6 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
 {
   CephContext *cct = m_image_ctx.cct;
   WriteLogEntries log_entries;
-  WriteLogOperationSet *set;
   
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
@@ -1013,56 +1273,42 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
   {
     uint64_t buffer_offset = 0;
     Mutex::Locker locker(m_lock);
-    set = new WriteLogOperationSet(cct, m_current_sync_point, m_persist_on_flush,
-				   BlockExtent(write_req->m_image_extents_summary.first_block,
-					       write_req->m_image_extents_summary.last_block),
-				   new C_OnFinisher(write_req, &m_on_persist_finisher));
-    /* TODO: If there isn't space for this whole write, defer it */
-    if (m_free_log_entries < write_req->m_image_extents.size()) {
-      ldout(cct, 6) << "wait for " << write_req->m_image_extents.size() << " log entries" << dendl;
-    } else {
-      for (auto &extent : write_req->m_image_extents) {
-	/* operation->on_write_persist connected to m_prior_log_entries_persisted Gather */
-	WriteLogOperation *operation =
-	  new WriteLogOperation(set, extent.first, extent.second);
-	set->operations.emplace_back(operation);
-	log_entries.emplace_back(operation->log_entry);
+    write_req->m_op_set =
+      make_unique<WriteLogOperationSet>(cct, m_current_sync_point, m_persist_on_flush,
+					BlockExtent(write_req->m_image_extents_summary.first_block,
+						    write_req->m_image_extents_summary.last_block),
+					new C_OnFinisher(write_req, &m_on_persist_finisher));
+    assert(write_req->m_resources.allocated);
+    auto allocation = write_req->m_resources.buffers.begin();
+    for (auto &extent : write_req->m_image_extents) {
+      /* operation->on_write_persist connected to m_prior_log_entries_persisted Gather */
+      shared_ptr<WriteLogOperation> operation =
+	make_shared<WriteLogOperation>(*write_req->m_op_set, extent.first, extent.second);
+      write_req->m_op_set->operations.emplace_back(operation);
+      log_entries.emplace_back(operation->log_entry);
 
-	/* Reserve both log entry and data block space */
-	m_free_log_entries--;
-
-	/* Allocate data blocks */
-	operation->log_entry->ram_entry.has_data = 1;
-	/* TODO: Handle failure */
-	unsigned int alloc_bytes = MIN_WRITE_ALLOC_SIZE;
-	if (operation->log_entry->ram_entry.write_bytes > alloc_bytes) {
-	  alloc_bytes = operation->log_entry->ram_entry.write_bytes;
-	}
-	operation->log_entry->ram_entry.write_data = pmemobj_reserve(m_log_pool,
-								     &operation->buffer_alloc_action,
-								     alloc_bytes,
-								     0 /* Object type */);
-	if (TOID_IS_NULL(operation->log_entry->ram_entry.write_data)) {
-	  lderr(cct) << "pmemobj_reserve() failed: " << pmemobj_errormsg() << dendl;
-	}
-	assert(!TOID_IS_NULL(operation->log_entry->ram_entry.write_data));
-	operation->log_entry->pmem_buffer = D_RW(operation->log_entry->ram_entry.write_data);
-	operation->log_entry->ram_entry.sync_gen_number = m_current_sync_gen;
-	if (set->m_persist_on_flush) {
-	  /* Persist on flush. Sequence #0 is never used. */
-	  operation->log_entry->ram_entry.write_sequence_number = 0;
-	} else {
-	  /* Persist on write */
-	  operation->log_entry->ram_entry.write_sequence_number = ++m_last_op_sequence_num;
-	  operation->log_entry->ram_entry.sequenced = 1;
-	}
-	operation->log_entry->ram_entry.sync_point = 0;
-	operation->log_entry->ram_entry.unmap = 0;
-	operation->bl.substr_of(write_req->bl, buffer_offset,
-				operation->log_entry->ram_entry.write_bytes);
-	buffer_offset += operation->log_entry->ram_entry.write_bytes;
-	ldout(cct, 6) << "operation=[" << *operation << "]" << dendl;
+      operation->log_entry->ram_entry.has_data = 1;
+      operation->log_entry->ram_entry.write_data = allocation->buffer_oid;
+      // TODO: make shared_ptr
+      operation->buffer_alloc_action = &allocation->buffer_alloc_action;
+      assert(!TOID_IS_NULL(operation->log_entry->ram_entry.write_data));
+      operation->log_entry->pmem_buffer = D_RW(operation->log_entry->ram_entry.write_data);
+      operation->log_entry->ram_entry.sync_gen_number = m_current_sync_gen;
+      if (write_req->m_op_set->m_persist_on_flush) {
+	/* Persist on flush. Sequence #0 is never used. */
+	operation->log_entry->ram_entry.write_sequence_number = 0;
+      } else {
+	/* Persist on write */
+	operation->log_entry->ram_entry.write_sequence_number = ++m_last_op_sequence_num;
+	operation->log_entry->ram_entry.sequenced = 1;
       }
+      operation->log_entry->ram_entry.sync_point = 0;
+      operation->log_entry->ram_entry.unmap = 0;
+      operation->bl.substr_of(write_req->bl, buffer_offset,
+			      operation->log_entry->ram_entry.write_bytes);
+      buffer_offset += operation->log_entry->ram_entry.write_bytes;
+      ldout(cct, 6) << "operation=[" << *operation << "]" << dendl;
+      allocation++;
     }
   }
 
@@ -1074,18 +1320,25 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
       });
 
   /* All extent ops subs created */
-  set->m_extent_ops->activate();
+  write_req->m_op_set->m_extent_ops->activate();
   
   /* Write data */
-  for (auto &operation : set->operations) {
+  for (auto &operation : write_req->m_op_set->operations) {
     bufferlist::iterator i(&operation->bl);
     ldout(cct, 6) << operation->bl << dendl;
     i.copy((unsigned)operation->log_entry->ram_entry.write_bytes, (char*)operation->log_entry->pmem_buffer);
   }
 
   m_blocks_to_log_entries.add_log_entries(log_entries);
-  
-  if (set->m_persist_on_flush) {
+
+  /*
+   * Entries are added to m_log_entries in alloc_op_log_entries() when their
+   * order is established. They're added to m_dirty_log_entries when the write
+   * completes to all replicas (they must not be flushed before then, and
+   * shouldn't be read until then either).
+   */
+
+  if (write_req->m_op_set->m_persist_on_flush) {
     /* 
      * We're done with the caller's buffer, and not guaranteeing
      * persistence until the next flush. The block guard for this
@@ -1095,18 +1348,15 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
     write_req->complete_user_request(0);
   }
   
-  WriteLogOperations ops_copy = set->operations;
-  schedule_flush_and_append(ops_copy);
+  schedule_flush_and_append(write_req->m_op_set->operations);
 }
 
 template <typename I>
 void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
-                                  bufferlist&& bl,
-                                  int fadvise_flags,
-                                  Context *on_finish) {
+				      bufferlist&& bl,
+				      int fadvise_flags,
+				      Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  //ldout(cct, 20) << "image_extents=" << image_extents << ", "
-  //               << "on_finish=" << on_finish << dendl;
 
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
@@ -1141,14 +1391,12 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
       assert(cell);
       write_req->set_cell(cell);
 
-      /* TODO: Defer write_req until log resources available */
-      dispatch_aio_write(write_req);
+      alloc_and_dispatch_aio_write(write_req);
     });
 
-  GuardedRequest guarded(write_req->m_image_extents_summary.first_block,
-			 write_req->m_image_extents_summary.last_block,
-			 guarded_ctx);
-  detain_guarded_request(std::move(guarded));
+  detain_guarded_request(GuardedRequest(write_req->m_image_extents_summary.first_block,
+					write_req->m_image_extents_summary.last_block,
+					guarded_ctx));
 }
 
 template <typename I>
@@ -1302,7 +1550,7 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
  * Called when the specified sync point can be appended to the log
  */
 template <typename I>
-void ReplicatedWriteLog<I>::append_sync_point(SyncPoint *sync_point, int status) {
+void ReplicatedWriteLog<I>::append_sync_point(shared_ptr<SyncPoint> sync_point, int status) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
@@ -1319,8 +1567,8 @@ void ReplicatedWriteLog<I>::append_sync_point(SyncPoint *sync_point, int status)
 template <typename I>
 void ReplicatedWriteLog<I>::new_sync_point(void) {
   CephContext *cct = m_image_ctx.cct;
-  SyncPoint *old_sync_point = m_current_sync_point;
-  SyncPoint *new_sync_point;
+  shared_ptr<SyncPoint> old_sync_point = m_current_sync_point;
+  shared_ptr<SyncPoint> new_sync_point;
   ldout(cct, 20) << dendl;
 
   assert(m_lock.is_locked_by_me());
@@ -1329,7 +1577,7 @@ void ReplicatedWriteLog<I>::new_sync_point(void) {
     /* Advance the sync gen num unless this is the first sync point */
     ++m_current_sync_gen;
   }
-  new_sync_point = new SyncPoint(cct, m_current_sync_gen);
+  new_sync_point = make_shared<SyncPoint>(cct, m_current_sync_gen);
   m_current_sync_point = new_sync_point;
   
   if (old_sync_point) {
@@ -1456,7 +1704,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
   }
 
   /* Start the sync point following the last one seen in the log */
-  m_current_sync_point = new SyncPoint(cct, m_current_sync_gen);
+  m_current_sync_point = make_shared<SyncPoint>(cct, m_current_sync_gen);
   ldout(cct,6) << "new sync point = [" << m_current_sync_point << "]" << dendl;
 
   on_finish->complete(0);
@@ -1573,6 +1821,7 @@ void ReplicatedWriteLog<I>::wake_up() {
   m_image_ctx.op_work_queue->queue(new FunctionContext(
     [this](int r) {
       process_work();
+      m_async_op_tracker.finish_op();
     }), 0);
 }
 
@@ -1588,9 +1837,10 @@ void ReplicatedWriteLog<I>::process_work() {
       Mutex::Locker locker(m_lock);
       m_wake_up_requested = false;
     }
+    dispatch_deferred_writes();
     process_writeback_dirty_blocks();
-    process_detained_block_ios();
-    process_deferred_block_ios();
+    //process_detained_block_ios();
+    //process_deferred_block_ios();
 
     /* Do the work postponed from the work functions above */
     if (drain_context_list(m_post_work_contexts, m_lock)) {
@@ -1606,7 +1856,6 @@ void ReplicatedWriteLog<I>::process_work() {
   {
     Mutex::Locker locker(m_lock);
     m_wake_up_scheduled = false;
-    m_async_op_tracker.finish_op();
     /* Reschedule if it's still requested */
     if (m_wake_up_requested) {
       wake_up();
@@ -1641,7 +1890,7 @@ bool ReplicatedWriteLog<I>::is_work_available() const {
 }
 
 template <typename I>
-bool ReplicatedWriteLog<I>::can_flush_entry(WriteLogEntry *log_entry) {
+bool ReplicatedWriteLog<I>::can_flush_entry(shared_ptr<WriteLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 20) << "" << dendl;
@@ -1650,7 +1899,7 @@ bool ReplicatedWriteLog<I>::can_flush_entry(WriteLogEntry *log_entry) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::flush_entry(WriteLogEntry *log_entry) {
+void ReplicatedWriteLog<I>::flush_entry(shared_ptr<WriteLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 20) << "" << dendl;
