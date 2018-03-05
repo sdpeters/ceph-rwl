@@ -567,7 +567,9 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 
   bl->clear();
 
-  // TODO: Handle unaligned IO.
+  // TODO: Handle unaligned IO:
+  // - Inflate read extents to block bounds, and submit onward
+  // - On read completion, discard leading/trailing buffer to match unaligned request
   if (!is_block_aligned(image_extents)) {
     lderr(cct) << "unaligned read fails" << dendl;
     for (auto &extent : image_extents) {
@@ -587,7 +589,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
    * also produce an ImageExtentBufs for all the extents (hit or miss) in this
    * read. When the read from the lower cache layer completes, we iterate
    * through the ImageExtentBufs and insert buffers for each cache hit at the
-   * appropriate spot in the buferlist returned from below for the miss
+   * appropriate spot in the bufferlist returned from below for the miss
    * read. The buffers we insert here refer directly to regions of various
    * write log entry data buffers.
    *
@@ -728,7 +730,7 @@ struct WriteRequestResources {
  * lives until the write is persisted in all (live) log replicas.
  * User write op may be completed from here before the write
  * persists. Block guard is not released until the write persists
- * everywhere (this is how we guarantee to each log repica that they
+ * everywhere (this is how we guarantee to each log replica that they
  * will never see overlapping writes).
  */
 struct C_WriteRequest : public C_GuardedBlockIORequest {
@@ -945,7 +947,7 @@ void ReplicatedWriteLog<I>::flush_pmem_buffer(WriteLogOperations &ops)
 }
 
 /*
- * Allocate the (already resrved) write log entries for a set of operations.
+ * Allocate the (already reserved) write log entries for a set of operations.
  *
  * Locking:
  * Acquires m_lock
@@ -978,7 +980,7 @@ void ReplicatedWriteLog<I>::alloc_op_log_entries(WriteLogOperations &ops)
 
 /*
  * Flush the persistent write log entries set of ops. The entries must
- * be contiguous in persistemt memory.
+ * be contiguous in persistent memory.
  */
 template <typename I>
 void ReplicatedWriteLog<I>::flush_op_log_entries(WriteLogOperations &ops)
@@ -1075,12 +1077,12 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
 template <typename I>
 void ReplicatedWriteLog<I>::complete_op_log_entries(WriteLogOperations &ops, int result)
 {
-  for (auto &operation : ops) {
-    shared_ptr<WriteLogOperation> op = operation;
-    m_on_persist_finisher.queue(new FunctionContext([this, op, result](int r) {
+  m_on_persist_finisher.queue(new FunctionContext([this, ops, result](int r) {
+	for (auto &operation : ops) {
+	  shared_ptr<WriteLogOperation> op = operation;
 	  op->complete(result);
-	}));
-  }
+	}
+      }));
 }
 
 template <typename I>
@@ -1346,9 +1348,13 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
      * everywhere.
      */
     write_req->complete_user_request(0);
+    schedule_flush_and_append(write_req->m_op_set->operations);
+  } else {
+    /* This caller is waiting for persist, so we'll use their thread to
+     * expedite it */
+    flush_pmem_buffer(write_req->m_op_set->operations);
+    schedule_append(write_req->m_op_set->operations);
   }
-  
-  schedule_flush_and_append(write_req->m_op_set->operations);
 }
 
 template <typename I>
@@ -1366,9 +1372,14 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
     }
   }
 
-  // TODO: Handle unaligned IO. RMW must block overlapping writes (to
-  // the limits of the read phase) and wait for prior overlaping
-  // writes to complete.
+  // TODO: Handle unaligned IO.
+  //
+  // - Inflate write extent to block bounds
+  // - Submit inflated write to blockguard
+  // - After blockguard dispatch reads through RWL for each unaligned extent edge
+  // - Reads complete to a gather
+  // - On read completion, write request is adjusted to block bounds using read data
+  // - Dispatch write request normally, appending completion context to discard read buffers
   if (!is_block_aligned(image_extents)) {
     lderr(cct) << "unaligned write fails" << dendl;
     for (auto &extent : image_extents) {
@@ -1558,7 +1569,7 @@ void ReplicatedWriteLog<I>::append_sync_point(shared_ptr<SyncPoint> sync_point, 
   sync_point->m_prior_log_entries_persisted_status = status;
   /* TODO: Write sync point, complete and free
      m_on_sync_point_persisted, and delete this sync point (log entry
-     object for sync point will remain until redired). */
+     object for sync point will remain until retired). */
 }
 
 /**
@@ -1670,6 +1681,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
     } TX_FINALLY {
     } TX_END;
   } else {
+    /* Open existing pool */
     if ((m_log_pool =
 	 pmemobj_open(m_log_pool_name.c_str(),
 		      rwl_pool_layout_name)) == NULL) {
@@ -1699,7 +1711,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
     ldout(cct,5) << "pool " << m_log_pool_name << "has " << D_RO(pool_root)->num_log_entries <<
       " log entries" << dendl;
     if (m_first_free_entry == m_first_valid_entry) {
-      ldout(cct,5) << "write log is empy" << dendl;
+      ldout(cct,5) << "write log is empty" << dendl;
     }
   }
 
@@ -1839,8 +1851,6 @@ void ReplicatedWriteLog<I>::process_work() {
     }
     dispatch_deferred_writes();
     process_writeback_dirty_blocks();
-    //process_detained_block_ios();
-    //process_deferred_block_ios();
 
     /* Do the work postponed from the work functions above */
     if (drain_context_list(m_post_work_contexts, m_lock)) {
@@ -1880,13 +1890,6 @@ bool ReplicatedWriteLog<I>::drain_context_list(Contexts &contexts, Mutex &contex
     return true;
   }
   return false;
-}
-
-template <typename I>
-bool ReplicatedWriteLog<I>::is_work_available() const {
-  Mutex::Locker locker(m_lock);
-  return (!m_detained_block_ios.empty() ||
-          !m_deferred_block_ios.empty());
 }
 
 template <typename I>
@@ -1983,38 +1986,6 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_blocks() {
   if (all_clean) {
     /* All flushing complete, drain outside lock */
     drain_context_list(m_flush_complete_contexts, m_lock);
-  }
-}
-
-template <typename I>
-void ReplicatedWriteLog<I>::process_detained_block_ios() {
-  BlockGuard::BlockIOs block_ios;
-  {
-    Mutex::Locker locker(m_lock);
-    std::swap(block_ios, m_detained_block_ios);
-  }
-
-  CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "block_ios=" << block_ios.size() << dendl;
-  for (auto &block_io : block_ios) {
-    ldout(cct, 20) << "block_io=" << &block_io << dendl;
-    //map_block(false, std::move(block_io));
-  }
-}
-
-template <typename I>
-void ReplicatedWriteLog<I>::process_deferred_block_ios() {
-  BlockGuard::BlockIOs block_ios;
-  {
-    Mutex::Locker locker(m_lock);
-    std::swap(block_ios, m_deferred_block_ios);
-  }
-
-  CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "block_ios=" << block_ios.size() << dendl;
-  for (auto &block_io : block_ios) {
-    ldout(cct, 20) << "block_io=" << &block_io << dendl;
-    //map_block(true, std::move(block_io));
   }
 }
 

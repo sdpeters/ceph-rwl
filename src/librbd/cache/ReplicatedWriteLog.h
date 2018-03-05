@@ -34,7 +34,7 @@ static const uint32_t MIN_WRITE_ALLOC_SIZE =
   (MIN_WRITE_SIZE > MIN_MIN_WRITE_ALLOC_SIZE ?
    MIN_WRITE_SIZE : MIN_MIN_WRITE_ALLOC_SIZE);
 
-/* Crash consistent flusher ignores these, and must flush in FIFO ordrer */
+/* Crash consistent flusher ignores these, and must flush in FIFO order */
 static const int IN_FLIGHT_FLUSH_WRITE_LIMIT = 8;
 static const int IN_FLIGHT_FLUSH_BYTES_LIMIT = (1 * 1024 * 1024);
 
@@ -42,7 +42,7 @@ namespace rwl {
 
 /**** Write log entries ****/
 
-static const unsigned int MAX_CONCURRENT_WRITES = 64;
+static const unsigned int MAX_CONCURRENT_WRITES = 256;
 static const uint64_t DEFAULT_POOL_SIZE = 1u<<30;
 //static const uint64_t MIN_POOL_SIZE = 1u<<23;
 // force pools to be 1G until thread::arena init issue is resolved
@@ -401,9 +401,6 @@ private:
   mutable Mutex m_log_append_lock;
   mutable Mutex m_lock;
   
-  BlockGuard::BlockIOs m_deferred_block_ios;
-  BlockGuard::BlockIOs m_detained_block_ios;
-
   bool m_wake_up_requested = false;
   bool m_wake_up_scheduled = false;
 
@@ -436,12 +433,9 @@ private:
   void process_work();
   bool drain_context_list(Contexts &contexts, Mutex &contexts_lock);
 
-  bool is_work_available() const;
   bool can_flush_entry(shared_ptr<WriteLogEntry> log_entry);
   void flush_entry(shared_ptr<WriteLogEntry> log_entry);
   void process_writeback_dirty_blocks();
-  void process_detained_block_ios();
-  void process_deferred_block_ios();
 
   void invalidate(Extents&& image_extents, Context *on_finish);
 
