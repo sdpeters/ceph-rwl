@@ -355,13 +355,14 @@ public:
   void invalidate(Context *on_finish) override;
   void flush(Context *on_finish) override;
 
-  void detain_guarded_request(GuardedRequest &&req);
-  void release_guarded_request(BlockGuardCell *cell);
 private:
   typedef std::function<void(uint64_t)> ReleaseBlock;
   typedef std::function<void(BlockGuard::BlockIO)> AppendDetainedBlock;
   typedef std::list<Context *> Contexts;
   typedef std::list<C_WriteRequest *> C_WriteRequests;
+
+  void detain_guarded_request(GuardedRequest &&req);
+  void release_guarded_request(BlockGuardCell *cell);
 
   const char* rwl_pool_layout_name = POBJ_LAYOUT_NAME(rbd_rwl);
 
@@ -403,6 +404,7 @@ private:
   
   bool m_wake_up_requested = false;
   bool m_wake_up_scheduled = false;
+  bool m_wake_up_enabled = true;
 
   Contexts m_post_work_contexts;
   Contexts m_flush_complete_contexts;
