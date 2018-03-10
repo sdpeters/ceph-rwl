@@ -457,10 +457,19 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
 
 template <typename I>
 ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
-  m_persist_finisher.wait_for_empty();
-  m_log_append_finisher.wait_for_empty();
-  m_on_persist_finisher.wait_for_empty();
-  delete m_image_writeback;
+  ldout(m_image_ctx.cct, 6) << "enter" << dendl;
+  {
+    Mutex::Locker append_locker(m_log_append_lock);
+    Mutex::Locker locker(m_lock);
+    delete m_image_writeback;
+    m_image_writeback = nullptr;
+    assert(m_deferred_writes.size() == 0);
+    assert(m_ops_to_flush.size() == 0);
+    assert(m_ops_to_append.size() == 0);
+    assert(m_flush_ops_in_flight == 0);
+    assert(m_unpublished_reserves == 0);
+  }
+  ldout(m_image_ctx.cct, 6) << "exit" << dendl;
 }
 
 template <typename ExtentsType>
@@ -1816,19 +1825,23 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
-  // TODO flush all in-flight IO and pending writeback prior to shut down
-
   Context *ctx = new FunctionContext(
     [this, on_finish](int r) {
-      Context *next_ctx = on_finish;
+      ldout(m_image_ctx.cct, 6) << "shutdown complete" << dendl;
+      on_finish->complete(r);
+    });
+  ctx = new FunctionContext(
+    [this, ctx](int r) {
+      Context *next_ctx = ctx;
       if (r < 0) {
 	/* Override on_finish status with this error */
 	next_ctx = new FunctionContext(
-	  [r, on_finish](int _r) {
-	    on_finish->complete(r);
+	  [r, ctx](int _r) {
+	    ctx->complete(r);
 	  });
       }
       /* Shut down the cache layer below */
+      ldout(m_image_ctx.cct, 6) << "shutting down lower cache" << dendl;
       m_image_writeback->shut_down(next_ctx);
     });
   ctx = new FunctionContext(
@@ -1841,7 +1854,26 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    ctx->complete(r);
 	  });
       }
+      ldout(m_image_ctx.cct, 6) << "stopping finishers" << dendl;
+      m_persist_finisher.wait_for_empty();
+      m_persist_finisher.stop();
+      m_log_append_finisher.wait_for_empty();
+      m_log_append_finisher.stop();
+      m_on_persist_finisher.wait_for_empty();
+      m_on_persist_finisher.stop();
+      {
+	Mutex::Locker locker(m_lock);
+	assert(m_dirty_log_entries.size() == 0);
+	for (auto entry : m_log_entries) {
+	  m_blocks_to_log_entries.remove_log_entry(entry);
+	  assert(entry->referring_map_entries == 0);
+	  assert(entry->reader_count == 0);
+	  assert(!entry->flushing);
+	}
+	m_log_entries.clear();
+      }
       if (m_log_pool) {
+	ldout(m_image_ctx.cct, 6) << "closing pmem pool" << dendl;
 	pmemobj_close(m_log_pool);
 	r = -errno;
       }
@@ -1857,6 +1889,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    ctx->complete(r);
 	  });
       }
+      ldout(m_image_ctx.cct, 6) << "waiting for internal async operations" << dendl;
       Mutex::Locker locker(m_lock);
       // Second op tracker wait after flush completion for process_work()
       m_wake_up_enabled = false;
@@ -1873,9 +1906,11 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	  });
       }
       // flush all writes to OSDs
+      ldout(m_image_ctx.cct, 6) << "flushing" << dendl;
       flush(next_ctx);
     });
   {
+    ldout(m_image_ctx.cct, 6) << "waiting for in flight operations" << dendl;
     Mutex::Locker locker(m_lock);
     // Wait for in progress IOs to complete
     m_async_op_tracker.wait(m_image_ctx, ctx);
@@ -1889,6 +1924,7 @@ void ReplicatedWriteLog<I>::wake_up() {
 
   if (!m_wake_up_enabled) {
     // wake_up is disabled during shutdown after flushing completes
+    ldout(m_image_ctx.cct, 6) << "deferred processing disabled" << dendl;
     return;
   }
 
