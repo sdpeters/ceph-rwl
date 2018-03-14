@@ -40,8 +40,6 @@ enum {
   // All write requests
   l_librbd_rwl_wr_req,             // write requests
   l_librbd_rwl_wr_bytes,           // bytes written
-  l_librbd_rwl_wr_latency,         // average req (persist) completion latency
-  l_librbd_rwl_wr_caller_latency,  // average req completion (to caller) latency
 
   // Write log operations (1 .. n per write request)
   l_librbd_rwl_log_ops,            // log append ops
@@ -49,41 +47,56 @@ enum {
 
   /*
 
-   Op average latencies to the beginning of and over various phases:
+   Req and op average latencies to the beginning of and over various phases:
 
    +------------------------------+------+-------------------------------+
    | Phase                        | Name | Description                   |
    +------------------------------+------+-------------------------------+
-   | Arrive at RWL                | arr  |possibly as one of many        |
+   | Arrive at RWL                | arr  |Arrives as a request           |
    +------------------------------+------+-------------------------------+
    | Allocate resources           | all  |time spent in block guard for  |
    |                              |      |overlap sequencing occurs      |
    |                              |      |before this point              |
    +------------------------------+------+-------------------------------+
-   | Dispatch                     | dis  |time spent in allocation       |
-   |                              |      |waiting for resources occurs   |
-   |                              |      |before this point              |
+   | Dispatch                     | dis  |Op lifetime begins here. time  |
+   |                              |      |spent in allocation waiting for|
+   |                              |      |resources occurs before this   |
+   |                              |      |point                          |
    +------------------------------+------+-------------------------------+
    | Payload buffer persist and   | buf  |time spent queued for          |
    |replicate                     |      |replication occurs before here |
    +------------------------------+------+-------------------------------+
+   | Payload buffer persist       | bufc |bufc - buf is just the persist |
+   |complete                      |      |time                           |
+   +------------------------------+------+-------------------------------+
    | Log append                   | app  |time spent queued for append   |
    |                              |      |occurs before here             |
+   +------------------------------+------+-------------------------------+
+   | Append complete              | appc |appc - app is just the time    |
+   |                              |      |spent in the append operation  |
    +------------------------------+------+-------------------------------+
    | Complete                     | cmp  |write persisted, replciated,   |
    |                              |      |and globally visible           |
    +------------------------------+------+-------------------------------+
 
   */
-  l_librbd_rwl_log_op_arr_to_all_t, // arrival to allocation elapsed time - same as time deferred in block guard
-  l_librbd_rwl_log_op_arr_to_dis_t, // arrival to dispatch elapsed time
-  l_librbd_rwl_log_op_arr_to_buf_t, // arrival to buffer persist elapsed time
-  l_librbd_rwl_log_op_arr_to_app_t, // arrival to log append elapsed time
-  l_librbd_rwl_log_op_arr_to_cmp_t, // arrival to persist completion elapsed time
 
-  l_librbd_rwl_log_op_all_to_dis_t, // Time spent allocating or waiting to allocate resources
-  l_librbd_rwl_log_op_buf_to_app_t, // data buf persist / replicate elapsed time
-  l_librbd_rwl_log_op_app_to_cmp_t, // log entry append / replicate elapsed time
+  /* Request times */
+  l_librbd_rwl_req_arr_to_all_t,   // arrival to allocation elapsed time - same as time deferred in block guard
+  l_librbd_rwl_req_arr_to_dis_t,   // arrival to dispatch elapsed time
+  l_librbd_rwl_req_all_to_dis_t,   // Time spent allocating or waiting to allocate resources
+  l_librbd_rwl_wr_latency,         // average req (persist) completion latency
+  l_librbd_rwl_wr_caller_latency,  // average req completion (to caller) latency
+
+  /* Log operation times */
+  l_librbd_rwl_log_op_dis_to_buf_t, // dispatch to buffer persist elapsed time
+  l_librbd_rwl_log_op_dis_to_app_t, // diapatch to log append elapsed time
+  l_librbd_rwl_log_op_dis_to_cmp_t, // dispatch to persist completion elapsed time
+
+  l_librbd_rwl_log_op_buf_to_app_t, // data buf persist + append wait time
+  l_librbd_rwl_log_op_buf_to_bufc_t,// data buf persist / replicate elapsed time
+  l_librbd_rwl_log_op_app_to_cmp_t, // log entry append + completion wait time
+  l_librbd_rwl_log_op_app_to_appc_t, // log entry append / replicate elapsed time
 
   l_librbd_rwl_discard,
   l_librbd_rwl_discard_bytes,
@@ -268,6 +281,11 @@ public:
   bufferlist bl;
   pobj_action *buffer_alloc_action = nullptr;
   Context *on_write_persist; /* Completion for things waiting on this write to persist */
+  utime_t m_dispatch_time; // When op created
+  utime_t m_buf_persist_time; // When buffer persist begins
+  utime_t m_buf_persist_comp_time; // When buffer persist completes
+  utime_t m_log_append_time; // When log append begins
+  utime_t m_log_append_comp_time; // When log append completes
   WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes);
   ~WriteLogOperation();
   WriteLogOperation(const WriteLogOperation&) = delete;
@@ -293,7 +311,8 @@ public:
   C_Gather *m_extent_ops;
   Context *m_on_ops_persist;
   WriteLogOperations operations;
-  WriteLogOperationSet(CephContext *cct, shared_ptr<SyncPoint> sync_point, bool persist_on_flush,
+  utime_t m_dispatch_time; // When set created
+  WriteLogOperationSet(CephContext *cct, utime_t dispatched, shared_ptr<SyncPoint> sync_point, bool persist_on_flush,
 		       BlockExtent extent, Context *on_finish);
   ~WriteLogOperationSet();
   WriteLogOperationSet(const WriteLogOperationSet&) = delete;
