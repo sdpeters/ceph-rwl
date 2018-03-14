@@ -21,6 +21,90 @@
 #include "common/Finisher.h"
 #include "include/assert.h"
 
+enum {
+  l_librbd_rwl_first = 26500,
+
+  // All read requests
+  l_librbd_rwl_rd_req,           // read requests
+  l_librbd_rwl_rd_bytes,         // bytes read
+  l_librbd_rwl_rd_latency,       // average req completion latency
+
+  // Read requests completed from RWL (no misses)
+  l_librbd_rwl_rd_hit_req,       // read requests
+  l_librbd_rwl_rd_hit_bytes,     // bytes read
+  l_librbd_rwl_rd_hit_latency,   // average req completion latency
+
+  // Reed requests with hit and miss extents
+  l_librbd_rwl_rd_part_hit_req,  // read ops
+
+  // All write requests
+  l_librbd_rwl_wr_req,             // write requests
+  l_librbd_rwl_wr_bytes,           // bytes written
+  l_librbd_rwl_wr_latency,         // average req (persist) completion latency
+  l_librbd_rwl_wr_caller_latency,  // average req completion (to caller) latency
+
+  // Write log operations (1 .. n per write request)
+  l_librbd_rwl_log_ops,            // log append ops
+  l_librbd_rwl_log_op_bytes,       // average bytes written per log op
+
+  /*
+
+   Op average latencies to the beginning of and over various phases:
+
+   +------------------------------+------+-------------------------------+
+   | Phase                        | Name | Description                   |
+   +------------------------------+------+-------------------------------+
+   | Arrive at RWL                | arr  |possibly as one of many        |
+   +------------------------------+------+-------------------------------+
+   | Allocate resources           | all  |time spent in block guard for  |
+   |                              |      |overlap sequencing occurs      |
+   |                              |      |before this point              |
+   +------------------------------+------+-------------------------------+
+   | Dispatch                     | dis  |time spent in allocation       |
+   |                              |      |waiting for resources occurs   |
+   |                              |      |before this point              |
+   +------------------------------+------+-------------------------------+
+   | Payload buffer persist and   | buf  |time spent queued for          |
+   |replicate                     |      |replication occurs before here |
+   +------------------------------+------+-------------------------------+
+   | Log append                   | app  |time spent queued for append   |
+   |                              |      |occurs before here             |
+   +------------------------------+------+-------------------------------+
+   | Complete                     | cmp  |write persisted, replciated,   |
+   |                              |      |and globally visible           |
+   +------------------------------+------+-------------------------------+
+
+  */
+  l_librbd_rwl_log_op_arr_to_all_t, // arrival to allocation elapsed time - same as time deferred in block guard
+  l_librbd_rwl_log_op_arr_to_dis_t, // arrival to dispatch elapsed time
+  l_librbd_rwl_log_op_arr_to_buf_t, // arrival to buffer persist elapsed time
+  l_librbd_rwl_log_op_arr_to_app_t, // arrival to log append elapsed time
+  l_librbd_rwl_log_op_arr_to_cmp_t, // arrival to persist completion elapsed time
+
+  l_librbd_rwl_log_op_all_to_dis_t, // Time spent allocating or waiting to allocate resources
+  l_librbd_rwl_log_op_buf_to_app_t, // data buf persist / replicate elapsed time
+  l_librbd_rwl_log_op_app_to_cmp_t, // log entry append / replicate elapsed time
+
+  l_librbd_rwl_discard,
+  l_librbd_rwl_discard_bytes,
+  l_librbd_rwl_discard_latency,
+
+  l_librbd_rwl_aio_flush,
+  l_librbd_rwl_aio_flush_latency,
+  l_librbd_rwl_ws,
+  l_librbd_rwl_ws_bytes,
+  l_librbd_rwl_ws_latency,
+
+  l_librbd_rwl_cmp,
+  l_librbd_rwl_cmp_bytes,
+  l_librbd_rwl_cmp_latency,
+
+  l_librbd_rwl_flush,
+  l_librbd_rwl_invalidate_cache,
+
+  l_librbd_rwl_last,
+};
+
 namespace librbd {
 
 struct ImageCtx;
@@ -73,8 +157,8 @@ struct WriteLogPmemEntry {
     uint8_t unmap :1;       /* has_data will be 0 if this
 			       is an unmap */
   };
-  WriteLogPmemEntry(uint64_t image_offset_bytes, uint64_t write_bytes) 
-    : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes), 
+  WriteLogPmemEntry(uint64_t image_offset_bytes, uint64_t write_bytes)
+    : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes),
       entry_valid(0), sync_point(0), sequenced(0), has_data(0), unmap(0) {
   }
   BlockExtent block_extent();
@@ -96,12 +180,12 @@ struct WriteLogPmemEntry {
 struct WriteLogPoolRoot {
   union {
     struct {
-      uint8_t layout_version;    /* Version of this structure (RWL_POOL_VERSION) */ 
+      uint8_t layout_version;    /* Version of this structure (RWL_POOL_VERSION) */
     };
     uint64_t _u64;
   } header;
   TOID(struct WriteLogPmemEntry) log_entries;   /* contiguous array of log entries */
-  uint32_t block_size;			         /* block size */
+  uint32_t block_size;				 /* block size */
   uint32_t num_log_entries;
   uint32_t first_free_entry;     /* Entry following the newest valid entry */
   uint32_t first_valid_entry;    /* Index of the oldest valid entry in the log */
@@ -119,7 +203,7 @@ public:
   /* TODO: flush state: portions flushed, in-progress flushes */
   bool flushing = false;
   bool flushed = false;
-  WriteLogEntry(uint64_t image_offset_bytes, uint64_t write_bytes) 
+  WriteLogEntry(uint64_t image_offset_bytes, uint64_t write_bytes)
     : ram_entry(image_offset_bytes, write_bytes) {
   }
   WriteLogEntry(const WriteLogEntry&) = delete;
@@ -139,7 +223,7 @@ public:
     return os;
   };
 };
-  
+
 typedef std::list<shared_ptr<WriteLogEntry>> WriteLogEntries;
 
 /**** Write log entries end ****/
@@ -162,7 +246,7 @@ public:
    * is a sub-operation of the next sync point's
    * m_prior_log_entries_persisted Gather. */
   Context *m_on_sync_point_persisted = nullptr;
-  
+
   SyncPoint(CephContext *cct, uint64_t sync_gen_num);
   ~SyncPoint();
   SyncPoint(const SyncPoint&) = delete;
@@ -241,7 +325,7 @@ struct GuardedRequest {
   uint64_t first_block_num;
   uint64_t last_block_num;
   GuardedRequestFunctionContext *on_guard_acquire; /* Work to do when guard on range obtained */
-  
+
   GuardedRequest(uint64_t first_block_num, uint64_t last_block_num, GuardedRequestFunctionContext *on_guard_acquire)
     : first_block_num(first_block_num), last_block_num(last_block_num), on_guard_acquire(on_guard_acquire) {
   }
@@ -252,7 +336,7 @@ typedef librbd::BlockGuard<GuardedRequest> WriteLogGuard;
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::cache::rwl::WriteLogMap: " << this << " " \
-                           <<  __func__ << ": "
+			   <<  __func__ << ": "
 /**
  * WriteLogMap: maps block extents to WriteLogEntries
  *
@@ -261,7 +345,7 @@ typedef librbd::BlockGuard<GuardedRequest> WriteLogGuard;
 struct WriteLogMapEntry {
   BlockExtent block_extent;
   shared_ptr<WriteLogEntry> log_entry;
-  
+
   WriteLogMapEntry(BlockExtent block_extent,
 		   shared_ptr<WriteLogEntry> log_entry = nullptr);
   WriteLogMapEntry(shared_ptr<WriteLogEntry> log_entry);
@@ -286,7 +370,7 @@ public:
   void remove_log_entries(WriteLogEntries &log_entries);
   WriteLogEntries find_log_entries(BlockExtent block_extent);
   WriteLogMapEntries find_map_entries(BlockExtent block_extent);
-  
+
 private:
   void add_log_entry_locked(shared_ptr<WriteLogEntry> log_entry);
   void remove_log_entry_locked(shared_ptr<WriteLogEntry> log_entry);
@@ -299,7 +383,7 @@ private:
 
   struct WriteLogMapEntryCompare {
     bool operator()(const WriteLogMapEntry &lhs,
-                    const WriteLogMapEntry &rhs) const;
+		    const WriteLogMapEntry &rhs) const;
   };
 
   typedef std::set<WriteLogMapEntry,
@@ -334,19 +418,19 @@ public:
 
   /// client AIO methods
   void aio_read(Extents&& image_extents, ceph::bufferlist *bl,
-                int fadvise_flags, Context *on_finish) override;
+		int fadvise_flags, Context *on_finish) override;
   void aio_write(Extents&& image_extents, ceph::bufferlist&& bl,
-                 int fadvise_flags, Context *on_finish) override;
+		 int fadvise_flags, Context *on_finish) override;
   void aio_discard(uint64_t offset, uint64_t length,
-                   bool skip_partial_discard, Context *on_finish);
+		   bool skip_partial_discard, Context *on_finish);
   void aio_flush(Context *on_finish) override;
   void aio_writesame(uint64_t offset, uint64_t length,
-                     ceph::bufferlist&& bl,
-                     int fadvise_flags, Context *on_finish) override;
+		     ceph::bufferlist&& bl,
+		     int fadvise_flags, Context *on_finish) override;
   void aio_compare_and_write(Extents&& image_extents,
-                             ceph::bufferlist&& cmp_bl, ceph::bufferlist&& bl,
-                             uint64_t *mismatch_offset,int fadvise_flags,
-                             Context *on_finish) override;
+			     ceph::bufferlist&& cmp_bl, ceph::bufferlist&& bl,
+			     uint64_t *mismatch_offset,int fadvise_flags,
+			     Context *on_finish) override;
 
   /// internal state methods
   void init(Context *on_finish) override;
@@ -371,14 +455,14 @@ private:
   std::string m_log_pool_name;
   PMEMobjpool *m_log_pool = nullptr;
   uint64_t m_log_pool_size;
-  
+
   uint32_t m_total_log_entries = 0;
   uint32_t m_free_log_entries = 0;
 
   ImageCache<ImageCtxT> *m_image_writeback;
   WriteLogGuard m_write_log_guard;
-  
-  /* 
+
+  /*
    * When m_first_free_entry == m_first_valid_entry, the log is
    * empty. There is always at least one free entry, which can't be
    * used.
@@ -396,12 +480,12 @@ private:
   bool m_persist_on_write_until_flush = true;
   bool m_persist_on_flush = false; /* If false, persist each write before completion */
   bool m_flush_seen = false;
-  
+
   util::AsyncOpTracker m_async_op_tracker;
 
   mutable Mutex m_log_append_lock;
   mutable Mutex m_lock;
-  
+
   bool m_wake_up_requested = false;
   bool m_wake_up_scheduled = false;
   bool m_wake_up_enabled = true;
@@ -411,7 +495,7 @@ private:
   Finisher m_persist_finisher;
   Finisher m_log_append_finisher;
   Finisher m_on_persist_finisher;
-  
+
   WriteLogOperations m_ops_to_flush; /* Write ops needing flush in local log */
   WriteLogOperations m_ops_to_append; /* Write ops needing event append in local log */
 
@@ -429,7 +513,12 @@ private:
   /* Throttle writes concurrently allocating & replicating */
   unsigned int m_free_lanes = MAX_CONCURRENT_WRITES;
   unsigned int m_unpublished_reserves = 0;
-  
+  PerfCounters *m_perfcounter = nullptr;
+
+  void perf_start(std::string name);
+  void perf_stop();
+  void log_perf();
+
   void rwl_init(Context *on_finish);
   void wake_up();
   void process_work();

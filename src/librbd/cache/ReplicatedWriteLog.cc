@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "ReplicatedWriteLog.h"
+#include "common/perf_counters.h"
 #include "include/buffer.h"
 #include "include/Context.h"
 #include "common/deleter.h"
@@ -582,6 +583,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 		<< "on_finish=" << on_finish << dendl;
 
   bl->clear();
+  m_perfcounter->inc(l_librbd_rwl_rd_req, 1);
 
   // TODO: Handle unaligned IO:
   // - Inflate read extents to block bounds, and submit onward
@@ -758,6 +760,9 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
   Context *_on_finish = nullptr; /* Block guard release */
   std::atomic<bool> m_user_req_completed = {false};
   ExtentsSummary<Extents> m_image_extents_summary;
+  utime_t m_arrived_time;
+  utime_t m_allocated_time; // When allocation began
+  utime_t m_user_req_completed_time;
   WriteRequestResources m_resources;
   unique_ptr<WriteLogOperationSet> m_op_set = nullptr;
   friend std::ostream &operator<<(std::ostream &os,
@@ -769,11 +774,11 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
        << "m_user_req_completed=" << req.m_user_req_completed << "";
     return os;
   };
-  C_WriteRequest(CephContext *cct, Extents &&image_extents,
+  C_WriteRequest(CephContext *cct, utime_t arrived, Extents &&image_extents,
 		 bufferlist&& bl, int fadvise_flags, Context *user_req)
     : C_GuardedBlockIORequest(cct), m_cct(cct), m_image_extents(std::move(image_extents)),
       bl(std::move(bl)), fadvise_flags(fadvise_flags),
-      user_req(user_req), m_image_extents_summary(m_image_extents) {
+      user_req(user_req), m_image_extents_summary(m_image_extents), m_arrived_time(arrived) {
     ldout(m_cct, 99) << this << dendl;
   }
 
@@ -785,8 +790,9 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
     bool initial = false;
     if (m_user_req_completed.compare_exchange_strong(initial, true)) {
       ldout(m_cct, 15) << this << " completing user req" << dendl;
+      m_user_req_completed_time = ceph_clock_now();
       user_req->complete(r);
-    } else {
+  } else {
       ldout(m_cct, 20) << this << " user req already completed" << dendl;
     }
   }
@@ -1111,11 +1117,18 @@ template <typename I>
 void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequest *write_req, int result)
 {
   CephContext *cct = m_image_ctx.cct;
+  utime_t now = ceph_clock_now();
+
   ldout(cct, 6) << "write_req=" << write_req << dendl;
   ldout(cct, 6) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
   assert(write_req->get_cell());
+  if (!write_req->m_op_set->m_persist_on_flush) {
+    write_req->complete_user_request(result);
+  }
   release_write_lanes(write_req);
   release_guarded_request(write_req->get_cell());
+  m_perfcounter->tinc(l_librbd_rwl_wr_latency, now - write_req->m_arrived_time);
+  m_perfcounter->tinc(l_librbd_rwl_wr_caller_latency, write_req->m_user_req_completed_time - write_req->m_arrived_time);
 }
 
 /**
@@ -1132,7 +1145,8 @@ template <typename I>
 bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
 {
   bool alloc_succeeds = true;
-
+  utime_t now = ceph_clock_now();
+  
   assert(m_lock.is_locked_by_me());
   assert(!write_req->m_resources.allocated);
   write_req->m_resources.buffers.reserve(write_req->m_image_extents.size());
@@ -1194,6 +1208,7 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
     write_req->m_resources.buffers.clear();
   }
 
+  write_req->m_allocated_time = now;
   return alloc_succeeds;
 }
 
@@ -1287,7 +1302,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
 {
   CephContext *cct = m_image_ctx.cct;
   WriteLogEntries log_entries;
-
+    
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
 
@@ -1310,6 +1325,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
 	make_shared<WriteLogOperation>(*write_req->m_op_set, extent.first, extent.second);
       write_req->m_op_set->operations.emplace_back(operation);
       log_entries.emplace_back(operation->log_entry);
+      m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
 
       operation->log_entry->ram_entry.has_data = 1;
       operation->log_entry->ram_entry.write_data = allocation->buffer_oid;
@@ -1349,6 +1365,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
   /* Write data */
   for (auto &operation : write_req->m_op_set->operations) {
     bufferlist::iterator i(&operation->bl);
+    m_perfcounter->inc(l_librbd_rwl_log_op_bytes, operation->log_entry->ram_entry.write_bytes);
     ldout(cct, 6) << operation->bl << dendl;
     i.copy((unsigned)operation->log_entry->ram_entry.write_bytes, (char*)operation->log_entry->pmem_buffer);
   }
@@ -1385,6 +1402,8 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
 				      int fadvise_flags,
 				      Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
+  utime_t now = ceph_clock_now();
+  m_perfcounter->inc(l_librbd_rwl_wr_req, 1);
 
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
@@ -1412,7 +1431,8 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
   }
 
   C_WriteRequest *write_req =
-    new C_WriteRequest(cct, std::move(image_extents), std::move(bl), fadvise_flags, on_finish);
+    new C_WriteRequest(cct, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish);
+  m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
 
   /* The lambda below will be called when the block guard for all
    * blocks affected by this write is obtained */
@@ -1437,6 +1457,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 					bool skip_partial_discard, Context *on_finish) {
   Extent discard_extent = {offset, length};
   Extent adjusted_discard_extent;
+  m_perfcounter->inc(l_librbd_rwl_discard, 1);
 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "offset=" << offset << ", "
@@ -1540,6 +1561,7 @@ template <typename I>
 void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "on_finish=" << on_finish << dendl;
+  m_perfcounter->inc(l_librbd_rwl_aio_flush, 1);
 
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
@@ -1585,6 +1607,7 @@ void ReplicatedWriteLog<I>::aio_writesame(uint64_t offset, uint64_t length,
 					  bufferlist&& bl, int fadvise_flags,
 					  Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
+  m_perfcounter->inc(l_librbd_rwl_ws, 1);
   ldout(cct, 20) << "offset=" << offset << ", "
 		 << "length=" << length << ", "
 		 << "data_len=" << bl.length() << ", "
@@ -1620,6 +1643,8 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 						  uint64_t *mismatch_offset,
 						  int fadvise_flags,
 						  Context *on_finish) {
+
+  m_perfcounter->inc(l_librbd_rwl_cmp, 1);
 
   // TBD: Must pass through block guard. Dispatch read through RWL. In completion
   // compare to cmp_bl. On match dispatch write.
@@ -1695,6 +1720,80 @@ void ReplicatedWriteLog<I>::new_sync_point(void) {
     ldout(cct,6) << "first sync point = [" << m_current_sync_point
 		 << "]" << dendl;
   }
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::perf_start(std::string name) {
+  PerfCountersBuilder plb(m_image_ctx.cct, name, l_librbd_rwl_first, l_librbd_rwl_last);
+
+  plb.add_u64_counter(l_librbd_rwl_rd_req, "rd", "Reads");
+  plb.add_u64_counter(l_librbd_rwl_rd_bytes, "rd_bytes", "Data size in reads");
+  plb.add_time_avg(l_librbd_rwl_rd_latency, "rd_latency", "Latency of reads");
+
+  plb.add_u64_counter(l_librbd_rwl_rd_hit_req, "hit_rd", "Reads completely hitting RWL");
+  plb.add_u64_counter(l_librbd_rwl_rd_hit_bytes, "rd_hit_bytes", "Bytes read from RWL");
+  plb.add_time_avg(l_librbd_rwl_rd_hit_latency, "hit_rd_latency", "Latency of read hits");
+
+  plb.add_u64_counter(l_librbd_rwl_rd_part_hit_req, "part_hit_rd", "reads partially hitting RWL");
+
+  plb.add_u64_counter(l_librbd_rwl_wr_req, "wr", "Writes");
+  plb.add_u64_counter(l_librbd_rwl_wr_bytes, "wr_bytes", "Data size in writes");
+  plb.add_time_avg(l_librbd_rwl_wr_latency, "wr_latency", "Latency of writes (persistent completion)");
+  plb.add_time_avg(l_librbd_rwl_wr_caller_latency, "caller_wr_latency", "Latency of write completion to caller");
+
+  plb.add_u64_counter(l_librbd_rwl_log_ops, "log_ops", "Log appends");
+  plb.add_u64_avg(l_librbd_rwl_log_op_bytes, "log_op_bytes", "Average log append bytes");
+
+  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_all_t, "op_arr_to_all_t", "Average arrival to allocation time (time deferred for overlap)");
+  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_dis_t, "op_arr_to_dis_t", "Average arrival to dispatch time");
+  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_buf_t, "op_arr_to_buf_t", "Average arrival to buffer persist time");
+  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_app_t, "op_arr_to_app_t", "Average arrival to log append time");
+  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_cmp_t, "op_arr_to_cmp_t", "Average arrival to persist completion time");
+
+  plb.add_time_avg(l_librbd_rwl_log_op_all_to_dis_t, "op_all_to_dis_t", "Average allocation to dispatch time (time waiting for log resources)");
+  plb.add_time_avg(l_librbd_rwl_log_op_buf_to_app_t, "op_buf_to_app_t", "Average buffer persist to log append time (write data persist/replicate time)");
+  plb.add_time_avg(l_librbd_rwl_log_op_app_to_cmp_t, "op_arr_to_all_t", "Average log append to persist complete time (log entry append/replicate time)");
+
+  plb.add_u64_counter(l_librbd_rwl_discard, "discard", "Discards");
+  plb.add_u64_counter(l_librbd_rwl_discard_bytes, "discard_bytes", "Bytes discarded");
+  plb.add_time_avg(l_librbd_rwl_discard_latency, "discard_lat", "Discard latency");
+  
+  plb.add_u64_counter(l_librbd_rwl_aio_flush, "aio_flush", "AIO flush (flush to RWL)");
+  plb.add_time_avg(l_librbd_rwl_aio_flush_latency, "aio_flush_lat", "AIO flush latency");
+
+  plb.add_u64_counter(l_librbd_rwl_ws,"ws", "Write Sames");
+  plb.add_u64_counter(l_librbd_rwl_ws_bytes, "ws_bytes", "Write Same bytes to image");
+  plb.add_time_avg(l_librbd_rwl_ws_latency, "ws_lat", "Write Same latency");
+
+  plb.add_u64_counter(l_librbd_rwl_cmp, "cmp", "Compare and Write");
+  plb.add_u64_counter(l_librbd_rwl_cmp_bytes, "cmp_bytes", "Compare and Write bytes written");
+  plb.add_time_avg(l_librbd_rwl_cmp_latency, "cmp_lat", "Compare and Write latecy");
+
+  plb.add_u64_counter(l_librbd_rwl_flush, "flush", "Flush (flush RWL)");
+  plb.add_u64_counter(l_librbd_rwl_invalidate_cache, "invalidate", "Invalidate RWL");
+
+  m_perfcounter = plb.create_perf_counters();
+  m_image_ctx.cct->get_perfcounters_collection()->add(m_perfcounter);
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::perf_stop() {
+  assert(m_perfcounter);
+  m_image_ctx.cct->get_perfcounters_collection()->remove(m_perfcounter);
+  delete m_perfcounter;
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::log_perf() {
+  bufferlist bl;
+  Formatter *f = Formatter::create("json-pretty");
+  ldout(m_image_ctx.cct, 1) << "--- Begin perf dump ---" << dendl;
+  m_image_ctx.cct->get_perfcounters_collection()->dump_formatted(f, 0);
+  f->flush(bl);
+  delete f;
+  bl.append('\0');
+  ldout(m_image_ctx.cct, 1) << bl.c_str() << dendl;
+  ldout(m_image_ctx.cct, 1) << "--- End perf dump ---" << dendl;
 }
 
 template <typename I>
@@ -1796,6 +1895,8 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
     }
   }
 
+  perf_start(m_image_ctx.id);
+  
   /* Start the sync point following the last one seen in the log */
   m_current_sync_point = make_shared<SyncPoint>(cct, m_current_sync_gen);
   ldout(cct,6) << "new sync point = [" << m_current_sync_point << "]" << dendl;
@@ -1854,6 +1955,9 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    ctx->complete(r);
 	  });
       }
+      if (m_perfcounter) {
+	log_perf();
+      }
       ldout(m_image_ctx.cct, 6) << "stopping finishers" << dendl;
       m_persist_finisher.wait_for_empty();
       m_persist_finisher.stop();
@@ -1876,6 +1980,9 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	ldout(m_image_ctx.cct, 6) << "closing pmem pool" << dendl;
 	pmemobj_close(m_log_pool);
 	r = -errno;
+      }
+      if (m_perfcounter) {
+	perf_stop();
       }
       next_ctx->complete(r);
     });
@@ -2107,6 +2214,7 @@ template <typename I>
 void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   Extent invalidate_extent = {0, m_image_ctx.size};
+  m_perfcounter->inc(l_librbd_rwl_invalidate_cache, 1);
   ldout(cct, 20) << dendl;
 
   assert(is_block_aligned(invalidate_extent));
@@ -2188,6 +2296,7 @@ template <typename I>
 void ReplicatedWriteLog<I>::flush(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   bool all_clean = false;
+  m_perfcounter->inc(l_librbd_rwl_flush, 1);
 
   {
     Mutex::Locker locker(m_lock);
