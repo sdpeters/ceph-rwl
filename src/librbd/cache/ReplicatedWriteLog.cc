@@ -72,7 +72,8 @@ SyncPoint::~SyncPoint() {
 }
 
 WriteLogOperation::WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes)
-  : log_entry(make_shared<WriteLogEntry>(image_offset_bytes, write_bytes)) {
+  : log_entry(make_shared<WriteLogEntry>(image_offset_bytes, write_bytes)),
+    m_dispatch_time(set.m_dispatch_time) {
   on_write_persist = set.m_extent_ops->new_sub();
 }
 
@@ -83,9 +84,10 @@ void WriteLogOperation::complete(int result) {
   on_write_persist->complete(result);
 }
 
-WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, shared_ptr<SyncPoint> sync_point, bool persist_on_flush,
-					   BlockExtent extent, Context *on_finish)
-  : m_cct(cct), m_extent(extent), m_on_finish(on_finish), m_persist_on_flush(persist_on_flush) {
+WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, utime_t dispatched, shared_ptr<SyncPoint> sync_point,
+					   bool persist_on_flush, BlockExtent extent, Context *on_finish)
+  : m_cct(cct), m_extent(extent), m_on_finish(on_finish),
+    m_persist_on_flush(persist_on_flush), m_dispatch_time(dispatched) {
   m_on_ops_persist = sync_point->m_prior_log_entries_persisted->new_sub();
   m_extent_ops =
     new C_Gather(cct,
@@ -528,9 +530,12 @@ struct C_ReadRequest : public Context {
   ImageExtentBufs m_read_extents;
   bufferlist m_miss_bl;
   bufferlist *m_out_bl;
+  utime_t m_arrived_time;
+  PerfCounters *m_perfcounter;
 
-  C_ReadRequest(CephContext *cct, bufferlist *out_bl, Context *on_finish)
-    : m_cct(cct), m_on_finish(on_finish), m_out_bl(out_bl) {
+  C_ReadRequest(CephContext *cct, utime_t arrived, PerfCounters *perfcounter, bufferlist *out_bl, Context *on_finish)
+    : m_cct(cct), m_on_finish(on_finish), m_out_bl(out_bl),
+      m_arrived_time(arrived), m_perfcounter(perfcounter) {
     ldout(m_cct, 99) << this << dendl;
   }
   ~C_ReadRequest() {
@@ -539,6 +544,10 @@ struct C_ReadRequest : public Context {
 
   virtual void finish(int r) override {
     ldout(m_cct, 20) << "(" << get_name() << "): r=" << r << dendl;
+    int hits = 0;
+    int misses = 0;
+    int hit_bytes = 0;
+    int miss_bytes = 0;
     if (r >= 0) {
       /*
        * At this point the miss read has completed. We'll iterate through
@@ -550,11 +559,15 @@ struct C_ReadRequest : public Context {
       for (auto &extent : m_read_extents) {
 	if (extent.m_buf) {
 	  /* This was a hit */
+	  ++hits;
+	  hit_bytes += extent.second;
 	  bufferlist hit_extent_bl;
 	  hit_extent_bl.append(extent.m_buf);
 	  m_out_bl->claim_append(hit_extent_bl);
 	} else {
 	  /* This was a miss. */
+	  ++misses;
+	  miss_bytes += extent.second;
 	  bufferlist miss_extent_bl;
 	  miss_extent_bl.substr_of(m_miss_bl, miss_bl_offset, extent.second);
 	  /* Add this read miss bullerlist to the output bufferlist */
@@ -565,7 +578,19 @@ struct C_ReadRequest : public Context {
       }
     }
     ldout(m_cct, 20) << "(" << get_name() << "): r=" << r << " bl=" << *m_out_bl << dendl;
+    utime_t now = ceph_clock_now();
     m_on_finish->complete(r);
+    m_perfcounter->inc(l_librbd_rwl_rd_bytes, hit_bytes + miss_bytes);
+    m_perfcounter->inc(l_librbd_rwl_rd_hit_bytes, hit_bytes);
+    m_perfcounter->tinc(l_librbd_rwl_rd_latency, now - m_arrived_time);
+    if (!misses) {
+      m_perfcounter->inc(l_librbd_rwl_rd_hit_req, 1);
+      m_perfcounter->tinc(l_librbd_rwl_rd_hit_latency, now - m_arrived_time);
+    } else {
+      if (hits) {
+	m_perfcounter->inc(l_librbd_rwl_rd_part_hit_req, 1);
+      }
+    }
   }
 
   virtual const char *get_name() const {
@@ -577,7 +602,8 @@ template <typename I>
 void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 				 int fadvise_flags, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  C_ReadRequest *read_ctx = new C_ReadRequest(cct, bl, on_finish);
+  utime_t now = ceph_clock_now();
+  C_ReadRequest *read_ctx = new C_ReadRequest(cct, now, m_perfcounter, bl, on_finish);
   ldout(cct, 5) << "image_extents=" << image_extents << ", "
 		<< "bl=" << bl << ", "
 		<< "on_finish=" << on_finish << dendl;
@@ -762,6 +788,7 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
   ExtentsSummary<Extents> m_image_extents_summary;
   utime_t m_arrived_time;
   utime_t m_allocated_time; // When allocation began
+  utime_t m_dispatched_time; // When dispatch began
   utime_t m_user_req_completed_time;
   WriteRequestResources m_resources;
   unique_ptr<WriteLogOperationSet> m_op_set = nullptr;
@@ -966,10 +993,17 @@ template <typename I>
 void ReplicatedWriteLog<I>::flush_pmem_buffer(WriteLogOperations &ops)
 {
   for (auto &operation : ops) {
+    operation->m_buf_persist_time = ceph_clock_now();
     pmemobj_flush(m_log_pool, operation->log_entry->pmem_buffer, operation->log_entry->ram_entry.write_bytes);
   }
+
   /* Drain once for all */
   pmemobj_drain(m_log_pool);
+
+  utime_t now = ceph_clock_now();
+  for (auto &operation : ops) {
+    operation->m_buf_persist_comp_time = now;
+  }
 }
 
 /*
@@ -1039,6 +1073,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
   int ret = 0;
+  utime_t now = ceph_clock_now();
 
   assert(m_log_append_lock.is_locked_by_me());
 
@@ -1055,6 +1090,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
 				  << "operation=[" << *operation << "]" << dendl;
 	flush_op_log_entries(entries_to_flush);
 	entries_to_flush.clear();
+	now = ceph_clock_now();
       }
     }
     ldout(m_image_ctx.cct, 6) << "Copying entry for operation at index="
@@ -1062,6 +1098,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
 			      << "from " << &operation->log_entry->ram_entry << " "
 			      << "to " << operation->log_entry->pmem_entry << " "
 			      << "operation=[" << *operation << "]" << dendl;
+    operation->m_log_append_time = now;
     *operation->log_entry->pmem_entry = operation->log_entry->ram_entry;
     entries_to_flush.push_back(operation);
   }
@@ -1094,6 +1131,11 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
     }
   }
 
+  now = ceph_clock_now();
+  for (auto &operation : ops) {
+    operation->m_log_append_comp_time = now;
+  }
+
   return ret;
 }
 
@@ -1107,7 +1149,15 @@ void ReplicatedWriteLog<I>::complete_op_log_entries(WriteLogOperations &ops, int
   m_on_persist_finisher.queue(new FunctionContext([this, ops, result](int r) {
 	for (auto &operation : ops) {
 	  shared_ptr<WriteLogOperation> op = operation;
+	  utime_t now = ceph_clock_now();
 	  op->complete(result);
+	  m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_buf_t, op->m_buf_persist_time - op->m_dispatch_time);
+	  m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_app_t, op->m_log_append_time - op->m_dispatch_time);
+	  m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_cmp_t, now - op->m_dispatch_time);
+	  m_perfcounter->tinc(l_librbd_rwl_log_op_buf_to_bufc_t, op->m_buf_persist_comp_time - op->m_buf_persist_time);
+	  m_perfcounter->tinc(l_librbd_rwl_log_op_buf_to_app_t, op->m_log_append_time - op->m_buf_persist_time);
+	  m_perfcounter->tinc(l_librbd_rwl_log_op_app_to_appc_t, op->m_log_append_comp_time - op->m_log_append_time);
+	  m_perfcounter->tinc(l_librbd_rwl_log_op_app_to_cmp_t, now - op->m_log_append_time);
 	}
 	m_async_op_tracker.finish_op();
       }));
@@ -1127,6 +1177,9 @@ void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequest *write_req, int re
   }
   release_write_lanes(write_req);
   release_guarded_request(write_req->get_cell());
+  m_perfcounter->tinc(l_librbd_rwl_req_arr_to_all_t, write_req->m_allocated_time - write_req->m_arrived_time);
+  m_perfcounter->tinc(l_librbd_rwl_req_all_to_dis_t, write_req->m_dispatched_time - write_req->m_allocated_time);
+  m_perfcounter->tinc(l_librbd_rwl_req_arr_to_dis_t, write_req->m_dispatched_time - write_req->m_arrived_time);
   m_perfcounter->tinc(l_librbd_rwl_wr_latency, now - write_req->m_arrived_time);
   m_perfcounter->tinc(l_librbd_rwl_wr_caller_latency, write_req->m_user_req_completed_time - write_req->m_arrived_time);
 }
@@ -1146,7 +1199,7 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
 {
   bool alloc_succeeds = true;
   utime_t now = ceph_clock_now();
-  
+
   assert(m_lock.is_locked_by_me());
   assert(!write_req->m_resources.allocated);
   write_req->m_resources.buffers.reserve(write_req->m_image_extents.size());
@@ -1302,7 +1355,9 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
 {
   CephContext *cct = m_image_ctx.cct;
   WriteLogEntries log_entries;
-    
+  utime_t now = ceph_clock_now();
+  write_req->m_dispatched_time = now;
+
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
 
@@ -1313,7 +1368,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
     uint64_t buffer_offset = 0;
     Mutex::Locker locker(m_lock);
     write_req->m_op_set =
-      make_unique<WriteLogOperationSet>(cct, m_current_sync_point, m_persist_on_flush,
+      make_unique<WriteLogOperationSet>(cct, now, m_current_sync_point, m_persist_on_flush,
 					BlockExtent(write_req->m_image_extents_summary.first_block,
 						    write_req->m_image_extents_summary.last_block),
 					new C_OnFinisher(write_req, &m_on_persist_finisher));
@@ -1738,26 +1793,29 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
 
   plb.add_u64_counter(l_librbd_rwl_wr_req, "wr", "Writes");
   plb.add_u64_counter(l_librbd_rwl_wr_bytes, "wr_bytes", "Data size in writes");
-  plb.add_time_avg(l_librbd_rwl_wr_latency, "wr_latency", "Latency of writes (persistent completion)");
-  plb.add_time_avg(l_librbd_rwl_wr_caller_latency, "caller_wr_latency", "Latency of write completion to caller");
 
   plb.add_u64_counter(l_librbd_rwl_log_ops, "log_ops", "Log appends");
   plb.add_u64_avg(l_librbd_rwl_log_op_bytes, "log_op_bytes", "Average log append bytes");
 
-  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_all_t, "op_arr_to_all_t", "Average arrival to allocation time (time deferred for overlap)");
-  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_dis_t, "op_arr_to_dis_t", "Average arrival to dispatch time");
-  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_buf_t, "op_arr_to_buf_t", "Average arrival to buffer persist time");
-  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_app_t, "op_arr_to_app_t", "Average arrival to log append time");
-  plb.add_time_avg(l_librbd_rwl_log_op_arr_to_cmp_t, "op_arr_to_cmp_t", "Average arrival to persist completion time");
+  plb.add_time_avg(l_librbd_rwl_req_arr_to_all_t, "req_arr_to_all_t", "Average arrival to allocation time (time deferred for overlap)");
+  plb.add_time_avg(l_librbd_rwl_req_arr_to_dis_t, "req_arr_to_dis_t", "Average arrival to dispatch time (includes time deferred for overlaps and allocation)");
+  plb.add_time_avg(l_librbd_rwl_req_all_to_dis_t, "req_all_to_dis_t", "Average allocation to dispatch time (time deferred for log resources)");
+  plb.add_time_avg(l_librbd_rwl_wr_latency, "wr_latency", "Latency of writes (persistent completion)");
+  plb.add_time_avg(l_librbd_rwl_wr_caller_latency, "caller_wr_latency", "Latency of write completion to caller");
 
-  plb.add_time_avg(l_librbd_rwl_log_op_all_to_dis_t, "op_all_to_dis_t", "Average allocation to dispatch time (time waiting for log resources)");
-  plb.add_time_avg(l_librbd_rwl_log_op_buf_to_app_t, "op_buf_to_app_t", "Average buffer persist to log append time (write data persist/replicate time)");
-  plb.add_time_avg(l_librbd_rwl_log_op_app_to_cmp_t, "op_arr_to_all_t", "Average log append to persist complete time (log entry append/replicate time)");
+  plb.add_time_avg(l_librbd_rwl_log_op_dis_to_buf_t, "op_dis_to_buf_t", "Average dispatch to buffer persist time");
+  plb.add_time_avg(l_librbd_rwl_log_op_dis_to_app_t, "op_dis_to_app_t", "Average dispatch to log append time");
+  plb.add_time_avg(l_librbd_rwl_log_op_dis_to_cmp_t, "op_dis_to_cmp_t", "Average dispatch to persist completion time");
+
+  plb.add_time_avg(l_librbd_rwl_log_op_buf_to_app_t, "op_buf_to_app_t", "Average buffer persist to log append time (write data persist/replicate + wait for append time)");
+  plb.add_time_avg(l_librbd_rwl_log_op_buf_to_bufc_t, "op_buf_to_bufc_t", "Average buffer persist time (write data persist/replicate time)");
+  plb.add_time_avg(l_librbd_rwl_log_op_app_to_cmp_t, "op_app_to_cmp_t", "Average log append to persist complete time (log entry append/replicate + wait for complete time)");
+  plb.add_time_avg(l_librbd_rwl_log_op_app_to_appc_t, "op_app_to_appc_t", "Average log append to persist complete time (log entry append/replicate time)");
 
   plb.add_u64_counter(l_librbd_rwl_discard, "discard", "Discards");
   plb.add_u64_counter(l_librbd_rwl_discard_bytes, "discard_bytes", "Bytes discarded");
   plb.add_time_avg(l_librbd_rwl_discard_latency, "discard_lat", "Discard latency");
-  
+
   plb.add_u64_counter(l_librbd_rwl_aio_flush, "aio_flush", "AIO flush (flush to RWL)");
   plb.add_time_avg(l_librbd_rwl_aio_flush_latency, "aio_flush_lat", "AIO flush latency");
 
@@ -1896,7 +1954,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
   }
 
   perf_start(m_image_ctx.id);
-  
+
   /* Start the sync point following the last one seen in the log */
   m_current_sync_point = make_shared<SyncPoint>(cct, m_current_sync_gen);
   ldout(cct,6) << "new sync point = [" << m_current_sync_point << "]" << dendl;
@@ -2167,7 +2225,7 @@ void ReplicatedWriteLog<I>::flush_entry(shared_ptr<WriteLogEntry> log_entry) {
 	    wake_up();
 	  }
 	});
-      
+
       bufferlist entry_bl;
       entry_bl.push_back(entry_buf);
       ldout(cct, 20) << "flushing:" << log_entry << dendl;
