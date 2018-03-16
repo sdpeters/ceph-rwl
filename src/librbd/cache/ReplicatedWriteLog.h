@@ -86,6 +86,7 @@ enum {
   l_librbd_rwl_req_arr_to_dis_t,   // arrival to dispatch elapsed time
   l_librbd_rwl_req_all_to_dis_t,   // Time spent allocating or waiting to allocate resources
   l_librbd_rwl_wr_latency,         // average req (persist) completion latency
+  l_librbd_rwl_wr_latency_hist,    // Histogram of write req (persist) completion latency vs. bytes written
   l_librbd_rwl_wr_caller_latency,  // average req completion (to caller) latency
 
   /* Log operation times */
@@ -95,8 +96,10 @@ enum {
 
   l_librbd_rwl_log_op_buf_to_app_t, // data buf persist + append wait time
   l_librbd_rwl_log_op_buf_to_bufc_t,// data buf persist / replicate elapsed time
+  l_librbd_rwl_log_op_buf_to_bufc_t_hist,// data buf persist time vs bytes hisogram
   l_librbd_rwl_log_op_app_to_cmp_t, // log entry append + completion wait time
   l_librbd_rwl_log_op_app_to_appc_t, // log entry append / replicate elapsed time
+  l_librbd_rwl_log_op_app_to_appc_t_hist, // log entry append time (vs. op bytes) histogram
 
   l_librbd_rwl_discard,
   l_librbd_rwl_discard_bytes,
@@ -124,18 +127,19 @@ struct ImageCtx;
 
 namespace cache {
 
+namespace rwl {
+
 static const uint32_t MIN_WRITE_SIZE = 1;
 static const uint32_t BLOCK_SIZE = MIN_WRITE_SIZE;
 static const uint32_t MIN_MIN_WRITE_ALLOC_SIZE = 512;
 static const uint32_t MIN_WRITE_ALLOC_SIZE =
   (MIN_WRITE_SIZE > MIN_MIN_WRITE_ALLOC_SIZE ?
    MIN_WRITE_SIZE : MIN_MIN_WRITE_ALLOC_SIZE);
+/* Enables use of dedicated finishers for some RWL work */
+static const bool use_finishers = false; 
 
-/* Crash consistent flusher ignores these, and must flush in FIFO order */
 static const int IN_FLIGHT_FLUSH_WRITE_LIMIT = 8;
 static const int IN_FLIGHT_FLUSH_BYTES_LIMIT = (1 * 1024 * 1024);
-
-namespace rwl {
 
 /**** Write log entries ****/
 
