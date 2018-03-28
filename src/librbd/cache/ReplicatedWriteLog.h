@@ -136,7 +136,7 @@ static const uint32_t MIN_WRITE_ALLOC_SIZE =
   (MIN_WRITE_SIZE > MIN_MIN_WRITE_ALLOC_SIZE ?
    MIN_WRITE_SIZE : MIN_MIN_WRITE_ALLOC_SIZE);
 /* Enables use of dedicated finishers for some RWL work */
-static const bool use_finishers = false; 
+static const bool use_finishers = false;
 
 static const int IN_FLIGHT_FLUSH_WRITE_LIMIT = 8;
 static const int IN_FLIGHT_FLUSH_BYTES_LIMIT = (1 * 1024 * 1024);
@@ -174,6 +174,7 @@ struct WriteLogPmemEntry {
     uint8_t unmap :1;       /* has_data will be 0 if this
 			       is an unmap */
   };
+  uint64_t _unused = 0;     /* Padding to 64 bytes */
   WriteLogPmemEntry(uint64_t image_offset_bytes, uint64_t write_bytes)
     : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes),
       entry_valid(0), sync_point(0), sequenced(0), has_data(0), unmap(0) {
@@ -193,6 +194,8 @@ struct WriteLogPmemEntry {
     return os;
   };
 };
+
+static_assert(sizeof(WriteLogPmemEntry) == 64);
 
 struct WriteLogPoolRoot {
   union {
@@ -548,8 +551,9 @@ private:
   bool drain_context_list(Contexts &contexts, Mutex &contexts_lock);
 
   bool can_flush_entry(shared_ptr<WriteLogEntry> log_entry);
-  void flush_entry(shared_ptr<WriteLogEntry> log_entry);
-  void process_writeback_dirty_blocks();
+  Context *construct_flush_entry_ctx(shared_ptr<WriteLogEntry> log_entry);
+  void process_writeback_dirty_entries();
+  void retire_entries();
 
   void invalidate(Extents&& image_extents, Context *on_finish);
 

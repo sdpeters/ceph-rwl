@@ -2191,12 +2191,11 @@ void ReplicatedWriteLog<I>::process_work() {
       m_wake_up_requested = false;
     }
     dispatch_deferred_writes();
-    process_writeback_dirty_blocks();
+    process_writeback_dirty_entries();
+    retire_entries();
 
     /* Do the work postponed from the work functions above */
-    if (drain_context_list(m_post_work_contexts, m_lock)) {
-      continue;
-    }
+    drain_context_list(m_post_work_contexts, m_lock);
 
     {
       Mutex::Locker locker(m_lock);
@@ -2247,7 +2246,7 @@ bool ReplicatedWriteLog<I>::can_flush_entry(shared_ptr<WriteLogEntry> log_entry)
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::flush_entry(shared_ptr<WriteLogEntry> log_entry) {
+Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(shared_ptr<WriteLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 20) << "" << dendl;
@@ -2268,8 +2267,9 @@ void ReplicatedWriteLog<I>::flush_entry(shared_ptr<WriteLogEntry> log_entry) {
 						      << *log_entry << dendl;
 					log_entry->remove_reader();
 				      }));
-  /* We'll send the flush write later when we're not holding m_lock */
-  m_post_work_contexts.push_back(new FunctionContext(
+
+  /* The caller will send the flush write later when we're not holding m_lock */
+  return new FunctionContext(
     [this, cct, log_entry, entry_buf](int r) {
       /* Flush write completion action */
       Context *ctx = new FunctionContext(
@@ -2283,7 +2283,6 @@ void ReplicatedWriteLog<I>::flush_entry(shared_ptr<WriteLogEntry> log_entry) {
 	      lderr(cct) << "failed to flush write log entry"
 			 << cpp_strerror(r) << dendl;
 	      m_dirty_log_entries.push_front(log_entry);
-	      return;
 	    } else {
 	      log_entry->flushed = true;
 	      ldout(cct, 20) << "flushed:" << log_entry << dendl;
@@ -2298,12 +2297,13 @@ void ReplicatedWriteLog<I>::flush_entry(shared_ptr<WriteLogEntry> log_entry) {
       m_image_writeback->aio_write({{log_entry->ram_entry.image_offset_bytes,
 				     log_entry->ram_entry.write_bytes}},
 				   std::move(entry_bl), 0, ctx);
-    }));
+    });
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::process_writeback_dirty_blocks() {
+void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
   CephContext *cct = m_image_ctx.cct;
+  Contexts flush_contexts;
   bool all_clean = false;
 
   ldout(cct, 20) << "Look for dirty entries" << dendl;
@@ -2315,7 +2315,8 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_blocks() {
 	break;
       }
       if (can_flush_entry(m_dirty_log_entries.front())) {
-	flush_entry(m_dirty_log_entries.front());
+	flush_contexts.push_back(construct_flush_entry_ctx(m_dirty_log_entries.front()));
+	//m_post_work_contexts.push_back(construct_flush_entry_ctx(m_dirty_log_entries.front()));
 	m_dirty_log_entries.pop_front();
       } else {
 	ldout(cct, 20) << "Next dirty entry isn't flushable yet" << dendl;
@@ -2328,9 +2329,29 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_blocks() {
 		 m_dirty_log_entries.empty());
   }
 
+  for (auto ctx : flush_contexts) {
+    ctx->complete(0);
+  }
+
   if (all_clean) {
     /* All flushing complete, drain outside lock */
     drain_context_list(m_flush_complete_contexts, m_lock);
+  }
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::retire_entries() {
+  CephContext *cct = m_image_ctx.cct;
+
+  ldout(cct, 20) << "Look for entries to retire" << dendl;
+  {
+    Mutex::Locker locker(m_lock);
+    //while (true) {
+      if (m_dirty_log_entries.empty()) {
+	ldout(cct, 20) << "Nothing new to retire" << dendl;
+	//break;
+      }
+      //}
   }
 }
 
