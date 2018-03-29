@@ -639,10 +639,10 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
    * read. The buffers we insert here refer directly to regions of various
    * write log entry data buffers.
    *
-   * TBD: These buffer objects hold a reference on those write log entries to
-   * prevent them from being retired from the log while the read is
-   * completing. The WriteLogEntry references are released by the buffer
-   * destructor.
+   * TBD: Locking. These buffer objects hold a reference on those
+   * write log entries to prevent them from being retired from the log
+   * while the read is completing. The WriteLogEntry references are
+   * released by the buffer destructor.
    */
   for (auto &extent : image_extents) {
     uint64_t extent_offset = 0;
@@ -843,7 +843,7 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
   }
 };
 
-const unsigned long int ops_appended_together = 8;
+const unsigned long int ops_appended_together = MAX_ALLOC_PER_TRANSACTION;
 /*
  * Performs the log event append operation for all of the scheduled
  * events.
@@ -1752,7 +1752,7 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
  * Called when the specified sync point can be appended to the log
  */
 template <typename I>
-void ReplicatedWriteLog<I>::append_sync_point(shared_ptr<SyncPoint> sync_point, int status) {
+void ReplicatedWriteLog<I>::append_sync_point(shared_ptr<SyncPoint> sync_point, const int status) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
@@ -2192,7 +2192,7 @@ void ReplicatedWriteLog<I>::process_work() {
     }
     dispatch_deferred_writes();
     process_writeback_dirty_entries();
-    retire_entries();
+    while (retire_entries());
 
     /* Do the work postponed from the work functions above */
     drain_context_list(m_post_work_contexts, m_lock);
@@ -2340,19 +2340,82 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::retire_entries() {
+bool ReplicatedWriteLog<I>::can_retire_entry(shared_ptr<WriteLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
+
+  ldout(cct, 20) << "" << dendl;
+  assert(m_lock.is_locked_by_me());
+  return (log_entry->flushed &&
+	  0 == log_entry->reader_count);
+}
+
+/**
+ * Retire up to MAX_ALLOC_PER_TRANSACTION of the oldest log entries
+ * that are eligible to be retired. Returns true if anything was
+ * retired.
+ */
+template <typename I>
+bool ReplicatedWriteLog<I>::retire_entries() {
+  CephContext *cct = m_image_ctx.cct;
+  WriteLogEntries retiring_entries;
+  uint32_t first_valid_entry;
 
   ldout(cct, 20) << "Look for entries to retire" << dendl;
   {
     Mutex::Locker locker(m_lock);
-    //while (true) {
-      if (m_dirty_log_entries.empty()) {
-	ldout(cct, 20) << "Nothing new to retire" << dendl;
-	//break;
-      }
-      //}
+    first_valid_entry = m_first_valid_entry;
+    shared_ptr<WriteLogEntry> entry = m_log_entries.front();
+    while (!m_log_entries.empty() &&
+	   retiring_entries.size() < MAX_ALLOC_PER_TRANSACTION &&
+	   can_retire_entry(entry)) {
+      assert(entry->log_entry_index == first_valid_entry);
+      first_valid_entry = (first_valid_entry + 1) % m_total_log_entries;
+      m_log_entries.pop_front();
+      retiring_entries.push_back(entry);
+      /* Remove entry from map so there will be no more readers */
+      m_blocks_to_log_entries.remove_log_entry(entry);
+      assert(!entry->reader_count);
+      assert(!entry->referring_map_entries);
+      assert(!entry->flushing);
+      assert(entry->flushed);
+      entry = m_log_entries.front();
+    }
   }
+
+  if (retiring_entries.size()) {
+    ldout(cct, 20) << "Retiring " << retiring_entries.size() << " entries" << dendl;
+    TOID(struct WriteLogPoolRoot) pool_root;
+    pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
+
+    /* Advance first valid entry and release buffers */
+    {
+      Mutex::Locker locker(m_log_append_lock);
+
+      TX_BEGIN(m_log_pool) {
+	D_RW(pool_root)->first_valid_entry = first_valid_entry;
+	for (auto &entry: retiring_entries) {
+	  TX_FREE(entry->ram_entry.write_data);
+	}
+      } TX_ONCOMMIT {
+      } TX_ONABORT {
+	lderr(cct) << "failed to commit free of" << retiring_entries.size() << " log entries (" << m_log_pool_name << ")" << dendl;
+	assert(false);
+      } TX_FINALLY {
+      } TX_END;
+    }
+
+    /* Update runtime copy of first_valid, and free entries counts */
+    {
+      Mutex::Locker locker(m_lock);
+
+      m_first_valid_entry = first_valid_entry;
+      m_free_log_entries += retiring_entries.size();
+    }
+  } else {
+    ldout(cct, 20) << "Nothing to retire" << dendl;
+    return false;
+  }
+  return true;
 }
 
 template <typename I>
