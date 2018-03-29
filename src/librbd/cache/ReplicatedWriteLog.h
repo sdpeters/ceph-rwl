@@ -143,6 +143,7 @@ static const int IN_FLIGHT_FLUSH_BYTES_LIMIT = (1 * 1024 * 1024);
 
 /**** Write log entries ****/
 
+static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 8;
 static const unsigned int MAX_CONCURRENT_WRITES = 256;
 static const uint64_t DEFAULT_POOL_SIZE = 1u<<30;
 //static const uint64_t MIN_POOL_SIZE = 1u<<23;
@@ -221,6 +222,7 @@ public:
   uint32_t reader_count = 0;
   /* TODO: occlusion by subsequent writes */
   /* TODO: flush state: portions flushed, in-progress flushes */
+  bool completed = false;
   bool flushing = false;
   bool flushed = false;
   WriteLogEntry(uint64_t image_offset_bytes, uint64_t write_bytes)
@@ -541,7 +543,7 @@ private:
   unsigned int m_unpublished_reserves = 0;
   PerfCounters *m_perfcounter = nullptr;
 
-  void perf_start(std::string name);
+  void perf_start(const std::string name);
   void perf_stop();
   void log_perf();
 
@@ -550,17 +552,18 @@ private:
   void process_work();
   bool drain_context_list(Contexts &contexts, Mutex &contexts_lock);
 
-  bool can_flush_entry(shared_ptr<WriteLogEntry> log_entry);
+  bool can_flush_entry(const shared_ptr<WriteLogEntry> log_entry);
   Context *construct_flush_entry_ctx(shared_ptr<WriteLogEntry> log_entry);
   void process_writeback_dirty_entries();
-  void retire_entries();
+  bool can_retire_entry(const shared_ptr<WriteLogEntry> log_entry);
+  bool retire_entries();
 
   void invalidate(Extents&& image_extents, Context *on_finish);
 
-  void append_sync_point(shared_ptr<SyncPoint> sync_point, int prior_write_status);
+  void append_sync_point(shared_ptr<SyncPoint> sync_point, const int prior_write_status);
   void new_sync_point(void);
 
-  void complete_write_req(C_WriteRequest *write_req, int result);
+  void complete_write_req(C_WriteRequest *write_req, const int result);
   void dispatch_deferred_writes(void);
   bool alloc_write_resources(C_WriteRequest *write_req);
   void release_write_lanes(C_WriteRequest *write_req);
@@ -574,7 +577,7 @@ private:
   void alloc_op_log_entries(WriteLogOperations &ops);
   void flush_op_log_entries(WriteLogOperations &ops);
   int append_op_log_entries(WriteLogOperations &ops);
-  void complete_op_log_entries(WriteLogOperations &ops, int r);
+  void complete_op_log_entries(WriteLogOperations &ops, const int r);
 };
 
 } // namespace cache
