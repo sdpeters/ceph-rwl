@@ -39,6 +39,7 @@ enum {
 
   // All write requests
   l_librbd_rwl_wr_req,             // write requests
+  l_librbd_rwl_wr_req_def,         // write requests deferred for resources
   l_librbd_rwl_wr_bytes,           // bytes written
 
   // Write log operations (1 .. n per write request)
@@ -152,6 +153,7 @@ static const uint64_t MIN_POOL_SIZE = DEFAULT_POOL_SIZE;
 static const double USABLE_SIZE = (7.0 / 10);
 static const uint64_t BLOCK_ALLOC_OVERHEAD_BYTES = 16;
 static const uint8_t RWL_POOL_VERSION = 1;
+static const uint64_t MAX_LOG_ENTRIES = (1024 * 1024);
 
 POBJ_LAYOUT_BEGIN(rbd_rwl);
 POBJ_LAYOUT_ROOT(rbd_rwl, struct WriteLogPoolRoot);

@@ -62,7 +62,7 @@ void WriteLogEntry::remove_reader() { reader_count--; }
 SyncPoint::SyncPoint(CephContext *cct, uint64_t sync_gen_num)
   : m_cct(cct), m_sync_gen_num(sync_gen_num) {
   m_prior_log_entries_persisted = new C_Gather(cct, nullptr);
-  ldout(cct, 6) << "sync point" << m_sync_gen_num << dendl;
+  ldout(cct, 5) << "sync point" << m_sync_gen_num << dendl;
   /* TODO: Connect m_prior_log_entries_persisted finisher to append this
      sync point and on persist complete call on_sync_point_persisted
      and delete this object */
@@ -679,7 +679,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
       uint64_t read_buffer_offset = map_entry_buffer_offset + entry_offset;
       /* Create buffer object referring to pmem pool for this read hit */
       shared_ptr<WriteLogEntry> log_entry = entry.log_entry;
-      ldout(cct, 5) << "adding reader: log_entry=" << *log_entry << dendl;
+      ldout(cct, 15) << "adding reader: log_entry=" << *log_entry << dendl;
       log_entry->add_reader();
       buffer::raw *hit_buf =
 	buffer::claim_buffer(entry_hit_length,
@@ -687,7 +687,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 			     make_deleter([this, log_entry]
 					  {
 					    CephContext *cct = m_image_ctx.cct;
-					    ldout(cct, 5) << "removing reader: log_entry="
+					    ldout(cct, 15) << "removing reader: log_entry="
 							  << *log_entry << dendl;
 					    log_entry->remove_reader();
 					  }));
@@ -712,7 +712,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
     }
   }
 
-  ldout(cct, 5) << "miss_extents=" << read_ctx->m_miss_extents << ", "
+  ldout(cct, 10) << "miss_extents=" << read_ctx->m_miss_extents << ", "
 		<< "miss_bl=" << read_ctx->m_miss_bl << dendl;
 
   if (read_ctx->m_miss_extents.empty()) {
@@ -735,13 +735,13 @@ void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
 				   &req, &cell);
   assert(r>=0);
   if (r > 0) {
-    ldout(cct, 6) << "detaining guarded request due to in-flight requests: "
+    ldout(cct, 5) << "detaining guarded request due to in-flight requests: "
 		   << "start=" << req.first_block_num << ", "
 		   << "end=" << req.last_block_num << dendl;
     return;
   }
 
-  ldout(cct, 6) << "in-flight request cell: " << cell << dendl;
+  ldout(cct, 15) << "in-flight request cell: " << cell << dendl;
   req.on_guard_acquire->acquired(cell);
 }
 
@@ -749,7 +749,7 @@ template <typename I>
 void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *cell)
 {
   CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 6) << "cell=" << cell << dendl;
+  ldout(cct, 15) << "cell=" << cell << dendl;
 
   WriteLogGuard::BlockOperations block_ops;
   m_write_log_guard.release(cell, &block_ops);
@@ -828,7 +828,7 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
 
   virtual void send() override {
     /* Should never be called */
-    ldout(m_cct, 6) << this << " unexpected" << dendl;
+    ldout(m_cct, 2) << this << " unexpected" << dendl;
   }
 
   virtual void finish(int r) {
@@ -870,7 +870,7 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 	  std::advance(last_in_batch, ops_to_append);
 	  ops.splice(ops.begin(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
 	  ops_remain = !m_ops_to_append.empty();
-	  ldout(m_image_ctx.cct, 6) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
+	  ldout(m_image_ctx.cct, 10) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
 	}
       }
 
@@ -947,11 +947,11 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
 	if (ops_to_flush > ops_flushed_together) {
 	  ops_to_flush = ops_flushed_together;
 	}
-	ldout(m_image_ctx.cct, 6) << "should flush " << ops_to_flush << dendl;
+	ldout(m_image_ctx.cct, 10) << "should flush " << ops_to_flush << dendl;
 	std::advance(last_in_batch, ops_to_flush);
 	ops.splice(ops.begin(), m_ops_to_flush, m_ops_to_flush.begin(), last_in_batch);
 	ops_remain = !m_ops_to_flush.empty();
-	ldout(m_image_ctx.cct, 6) << "flushing " << ops.size() << ", " << m_ops_to_flush.size() << " remain" << dendl;
+	ldout(m_image_ctx.cct, 10) << "flushing " << ops.size() << ", " << m_ops_to_flush.size() << " remain" << dendl;
       }
     }
 
@@ -983,7 +983,7 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(WriteLogOperations &ops)
     num_to_flush = m_ops_to_flush.size();
   }
 
-  ldout(cct, 6) << "ops_to_flush=" << num_to_flush << dendl;
+  ldout(cct, 10) << "ops_to_flush=" << num_to_flush << dendl;
 
   if (need_finisher) {
     m_async_op_tracker.start_op();
@@ -1043,10 +1043,10 @@ void ReplicatedWriteLog<I>::alloc_op_log_entries(WriteLogOperations &ops)
       operation->log_entry->ram_entry.entry_valid = 1;
       m_log_entries.push_back(operation->log_entry);
       m_dirty_log_entries.push_back(operation->log_entry);
-      ldout(m_image_ctx.cct, 6) << "log_entry_index=" << operation->log_entry->log_entry_index << " "
-				<< "pmem_entry=" << operation->log_entry->pmem_entry << " "
-				<< "pool->log_entries=" << pmem_log_entries << " "
-				<< "operation=[" << *operation << "]" << dendl;
+      ldout(m_image_ctx.cct, 20) << "log_entry_index=" << operation->log_entry->log_entry_index << " "
+				 << "pmem_entry=" << operation->log_entry->pmem_entry << " "
+				 << "pool->log_entries=" << pmem_log_entries << " "
+				 << "operation=[" << *operation << "]" << dendl;
     }
   }
 }
@@ -1099,14 +1099,14 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
        * tail of the ring */
       if (entries_to_flush.back()->log_entry->log_entry_index >
 	  operation->log_entry->log_entry_index) {
-	ldout(m_image_ctx.cct, 6) << "entries to flush wrap around the end of the ring at "
+	ldout(m_image_ctx.cct, 10) << "entries to flush wrap around the end of the ring at "
 				  << "operation=[" << *operation << "]" << dendl;
 	flush_op_log_entries(entries_to_flush);
 	entries_to_flush.clear();
 	now = ceph_clock_now();
       }
     }
-    ldout(m_image_ctx.cct, 6) << "Copying entry for operation at index="
+    ldout(m_image_ctx.cct, 20) << "Copying entry for operation at index="
 			      << operation->log_entry->log_entry_index << " "
 			      << "from " << &operation->log_entry->ram_entry << " "
 			      << "to " << operation->log_entry->pmem_entry << " "
@@ -1132,6 +1132,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(WriteLogOperations &ops)
   } TX_ONCOMMIT {
   } TX_ONABORT {
     lderr(cct) << "failed to commit " << ops.size() << " log entries (" << m_log_pool_name << ")" << dendl;
+    assert(false);
     ret = -EIO;
   } TX_FINALLY {
   } TX_END;
@@ -1155,6 +1156,7 @@ void ReplicatedWriteLog<I>::complete_op_log_entries(WriteLogOperations &ops, int
       for (auto &operation : ops) {
 	shared_ptr<WriteLogOperation> op = operation;
 	utime_t now = ceph_clock_now();
+	op->log_entry->completed = true;
 	op->complete(result);
 	m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_buf_t, op->m_buf_persist_time - op->m_dispatch_time);
 	m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_app_t, op->m_log_append_time - op->m_dispatch_time);
@@ -1184,7 +1186,6 @@ void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequest *write_req, int re
 {
   CephContext *cct = m_image_ctx.cct;
 
-  ldout(cct, 6) << "write_req=" << write_req << dendl;
   ldout(cct, 6) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
   assert(write_req->get_cell());
   if (!write_req->m_op_set->m_persist_on_flush) {
@@ -1224,14 +1225,14 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
   assert(!write_req->m_resources.allocated);
   write_req->m_resources.buffers.reserve(write_req->m_image_extents.size());
   if (m_free_lanes < write_req->m_image_extents.size()) {
-    ldout(m_image_ctx.cct, 6) << "not enough free lanes (need "
+    ldout(m_image_ctx.cct, 5) << "not enough free lanes (need "
 			      <<  write_req->m_image_extents.size()
 			      << ", have " << m_free_lanes << ") "
 			      << *write_req << dendl;
     return false;
   }
   if (m_free_log_entries < write_req->m_image_extents.size()) {
-    ldout(m_image_ctx.cct, 6) << "not enough free entries (need "
+    ldout(m_image_ctx.cct, 5) << "not enough free entries (need "
 			      <<  write_req->m_image_extents.size()
 			      << ", have " << m_free_log_entries << ") "
 			      << *write_req << dendl;
@@ -1249,14 +1250,15 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
 					buffer.allocation_size,
 					0 /* Object type */);
     if (TOID_IS_NULL(buffer.buffer_oid)) {
-      ldout(m_image_ctx.cct, 6) << "can't allocate all data buffers: "
+      ldout(m_image_ctx.cct, 5) << "can't allocate all data buffers: "
 				<< pmemobj_errormsg() << ". "
 				<< *write_req << dendl;
       alloc_succeeds = false;
       write_req->m_resources.buffers.pop_back();
-      assert(m_free_lanes < MAX_CONCURRENT_WRITES);
       break;
     }
+    ldout(m_image_ctx.cct, 20) << "Allocated " << buffer.buffer_oid.oid.pool_uuid_lo <<
+      "." << buffer.buffer_oid.oid.off << ", size=" << buffer.allocation_size << dendl;
     m_unpublished_reserves++;
   }
 
@@ -1277,6 +1279,7 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
     /* On alloc failure, free any buffers we did allocate */
     for (auto &buffer : write_req->m_resources.buffers) {
       pmemobj_cancel(m_log_pool, &buffer.buffer_alloc_action, 1);
+      m_unpublished_reserves--;
     }
     write_req->m_resources.buffers.clear();
   }
@@ -1353,6 +1356,7 @@ void ReplicatedWriteLog<I>::alloc_and_dispatch_aio_write(C_WriteRequest *write_r
       dispatch_here = true;
     } else {
       m_deferred_writes.push_back(write_req);
+      m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
       ldout(m_image_ctx.cct, 6) << "deferred writes: " << m_deferred_writes.size() << dendl;
     }
   }
@@ -1834,6 +1838,7 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
   plb.add_u64_counter(l_librbd_rwl_rd_part_hit_req, "part_hit_rd", "reads partially hitting RWL");
 
   plb.add_u64_counter(l_librbd_rwl_wr_req, "wr", "Writes");
+  plb.add_u64_counter(l_librbd_rwl_wr_req_def, "wr_def", "Writes deferred for resources");
   plb.add_u64_counter(l_librbd_rwl_wr_bytes, "wr_bytes", "Data size in writes");
 
   plb.add_u64_counter(l_librbd_rwl_log_ops, "log_ops", "Log appends");
@@ -1951,13 +1956,18 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
     size_t effective_pool_size = (size_t)(m_log_pool_size * USABLE_SIZE);
     size_t small_write_size = MIN_WRITE_ALLOC_SIZE + BLOCK_ALLOC_OVERHEAD_BYTES + sizeof(struct WriteLogPmemEntry);
     uint64_t num_small_writes = (uint64_t)(effective_pool_size / small_write_size);
+    if (num_small_writes > MAX_LOG_ENTRIES) {
+      num_small_writes = MAX_LOG_ENTRIES;
+    }
     /* Log ring empty */
     m_first_free_entry = 0;
     m_first_valid_entry = 0;
     TX_BEGIN(m_log_pool) {
       TX_ADD(pool_root);
       D_RW(pool_root)->header.layout_version = RWL_POOL_VERSION;
-      D_RW(pool_root)->log_entries = TX_ZALLOC(struct WriteLogPmemEntry, num_small_writes);
+      D_RW(pool_root)->log_entries =
+	TX_ZALLOC(struct WriteLogPmemEntry,
+		  sizeof(struct WriteLogPmemEntry) * num_small_writes);
       D_RW(pool_root)->block_size = MIN_WRITE_ALLOC_SIZE;
       D_RW(pool_root)->num_log_entries = num_small_writes-1; // leave one free
       D_RW(pool_root)->first_free_entry = m_first_free_entry;
@@ -2235,7 +2245,8 @@ bool ReplicatedWriteLog<I>::can_flush_entry(shared_ptr<WriteLogEntry> log_entry)
   // For OWB we can ony flush one write at a time.
   //return (0 == m_flush_ops_in_flight);
   // temp hack: just flush ignoring observed concurrency
-  return ((m_flush_ops_in_flight <= IN_FLIGHT_FLUSH_WRITE_LIMIT) &&
+  return (log_entry->completed &&
+	  (m_flush_ops_in_flight <= IN_FLIGHT_FLUSH_WRITE_LIMIT) &&
 	  (m_flush_bytes_in_flight <= IN_FLIGHT_FLUSH_BYTES_LIMIT));
 }
 
@@ -2257,7 +2268,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(shared_ptr<WriteLogEnt
 			 make_deleter([this, log_entry]
 				      {
 					CephContext *cct = m_image_ctx.cct;
-					ldout(cct, 5) << "removing reader: log_entry="
+					ldout(cct, 15) << "removing reader: log_entry="
 						      << *log_entry << dendl;
 					log_entry->remove_reader();
 				      }));
@@ -2362,6 +2373,9 @@ bool ReplicatedWriteLog<I>::retire_entries() {
     while (!m_log_entries.empty() &&
 	   retiring_entries.size() < MAX_ALLOC_PER_TRANSACTION &&
 	   can_retire_entry(entry)) {
+      assert(!entry->flushing);
+      assert(entry->flushed);
+      assert(entry->completed);
       assert(entry->log_entry_index == first_valid_entry);
       first_valid_entry = (first_valid_entry + 1) % m_total_log_entries;
       m_log_entries.pop_front();
@@ -2370,8 +2384,6 @@ bool ReplicatedWriteLog<I>::retire_entries() {
       m_blocks_to_log_entries.remove_log_entry(entry);
       assert(!entry->reader_count);
       assert(!entry->referring_map_entries);
-      assert(!entry->flushing);
-      assert(entry->flushed);
       entry = m_log_entries.front();
     }
   }
@@ -2383,11 +2395,13 @@ bool ReplicatedWriteLog<I>::retire_entries() {
 
     /* Advance first valid entry and release buffers */
     {
-      Mutex::Locker locker(m_log_append_lock);
+      Mutex::Locker append_locker(m_log_append_lock);
 
       TX_BEGIN(m_log_pool) {
 	D_RW(pool_root)->first_valid_entry = first_valid_entry;
 	for (auto &entry: retiring_entries) {
+	  ldout(cct, 20) << "Freeing " << entry->ram_entry.write_data.oid.pool_uuid_lo <<
+	    "." << entry->ram_entry.write_data.oid.off << dendl;
 	  TX_FREE(entry->ram_entry.write_data);
 	}
       } TX_ONCOMMIT {
