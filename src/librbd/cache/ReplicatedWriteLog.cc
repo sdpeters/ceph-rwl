@@ -100,7 +100,7 @@ WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, utime_t dispatched,
 
 WriteLogOperationSet::~WriteLogOperationSet() { }
 
-GuardedRequestFunctionContext::GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*)> &&callback)
+GuardedRequestFunctionContext::GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*,bool)> &&callback)
   : m_callback(std::move(callback)){ }
 
 GuardedRequestFunctionContext::~GuardedRequestFunctionContext(void) { }
@@ -109,10 +109,10 @@ void GuardedRequestFunctionContext::finish(int r) {
   assert(true == m_callback_invoked);
 }
 
-void GuardedRequestFunctionContext::acquired(BlockGuardCell *cell) {
+void GuardedRequestFunctionContext::acquired(BlockGuardCell *cell, bool detained) {
   bool initial = false;
   if (m_callback_invoked.compare_exchange_strong(initial, true)) {
-    m_callback(cell);
+    m_callback(cell, detained);
   }
   complete(0);
 }
@@ -750,7 +750,7 @@ void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
   }
 
   ldout(cct, 15) << "in-flight request cell: " << cell << dendl;
-  req.on_guard_acquire->acquired(cell);
+  req.on_guard_acquire->acquired(cell, req.detained);
 }
 
 template <typename I>
@@ -763,6 +763,7 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *cell)
   m_write_log_guard.release(cell, &block_ops);
 
   for (auto &op : block_ops) {
+    op.detained = true;
     detain_guarded_request(std::move(op));
   }
 }
@@ -802,6 +803,7 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
   utime_t m_user_req_completed_time;
   WriteRequestResources m_resources;
   unique_ptr<WriteLogOperationSet> m_op_set = nullptr;
+  bool detained = false;
   friend std::ostream &operator<<(std::ostream &os,
 				  C_WriteRequest &req) {
     os << "m_image_extents=[" << req.m_image_extents << "], "
@@ -879,6 +881,8 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 	  ops.splice(ops.begin(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
 	  ops_remain = !m_ops_to_append.empty();
 	  ldout(m_image_ctx.cct, 10) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
+	} else {
+	  ops_remain = false;
 	}
       }
 
@@ -1544,13 +1548,16 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
   /* The lambda below will be called when the block guard for all
    * blocks affected by this write is obtained */
   GuardedRequestFunctionContext *guarded_ctx =
-    new GuardedRequestFunctionContext([this, write_req](BlockGuardCell *cell) {
+    new GuardedRequestFunctionContext([this, write_req](BlockGuardCell *cell, bool detained) {
       CephContext *cct = m_image_ctx.cct;
       ldout(cct, 6) << "write_req=" << write_req << " cell=" << cell << dendl;
 
       assert(cell);
+      write_req->detained = detained;
       write_req->set_cell(cell);
-
+      if (detained) {
+	m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
+      }
       alloc_and_dispatch_aio_write(write_req);
     });
 
@@ -1615,7 +1622,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
   // (possibly unpredictable) content.
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext(
-      [this, skip_partial_discard, on_finish, discard_extent, adjusted_discard_extent](BlockGuardCell *cell) {
+      [this, skip_partial_discard, on_finish, discard_extent, adjusted_discard_extent](BlockGuardCell *cell, bool detained) {
 	CephContext *cct = m_image_ctx.cct;
 	ldout(cct, 6) << "discard_extent=" << discard_extent << " "
 		      << "adjusted_discard_extent=" << adjusted_discard_extent << " "
@@ -1863,6 +1870,7 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
 
   plb.add_u64_counter(l_librbd_rwl_wr_req, "wr", "Writes");
   plb.add_u64_counter(l_librbd_rwl_wr_req_def, "wr_def", "Writes deferred for resources");
+  plb.add_u64_counter(l_librbd_rwl_wr_req_overlap, "wr_overlap", "Writes overlapping with prior in-progress writes");
   plb.add_u64_counter(l_librbd_rwl_wr_bytes, "wr_bytes", "Data size in writes");
 
   plb.add_u64_counter(l_librbd_rwl_log_ops, "log_ops", "Log appends");
@@ -2468,7 +2476,7 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
    * results. */
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext(
-      [this, on_finish, invalidate_extent](BlockGuardCell *cell) {
+      [this, on_finish, invalidate_extent](BlockGuardCell *cell, bool detained) {
 	CephContext *cct = m_image_ctx.cct;
 	ldout(cct, 6) << "invalidate_extent=" << invalidate_extent << " "
 		      << "cell=" << cell << dendl;

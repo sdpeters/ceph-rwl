@@ -40,6 +40,7 @@ enum {
   // All write requests
   l_librbd_rwl_wr_req,             // write requests
   l_librbd_rwl_wr_req_def,         // write requests deferred for resources
+  l_librbd_rwl_wr_req_overlap,     // write requests detained for overlap
   l_librbd_rwl_wr_bytes,           // bytes written
 
   // Write log operations (1 .. n per write request)
@@ -341,17 +342,18 @@ public:
 class GuardedRequestFunctionContext : public Context {
 private:
   std::atomic<bool> m_callback_invoked = {false};
-  boost::function<void(BlockGuardCell*)> m_callback;
+  boost::function<void(BlockGuardCell*,bool)> m_callback;
 public:
-  GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*)> &&callback);
+  GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*,bool)> &&callback);
   ~GuardedRequestFunctionContext(void);
   GuardedRequestFunctionContext(const GuardedRequestFunctionContext&) = delete;
   GuardedRequestFunctionContext &operator=(const GuardedRequestFunctionContext&) = delete;
   void finish(int r) override;
-  void acquired(BlockGuardCell *cell);
+  void acquired(BlockGuardCell *cell, bool detained);
 };
 
 struct GuardedRequest {
+  bool detained = false;
   uint64_t first_block_num;
   uint64_t last_block_num;
   GuardedRequestFunctionContext *on_guard_acquire; /* Work to do when guard on range obtained */
