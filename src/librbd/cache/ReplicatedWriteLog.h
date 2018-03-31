@@ -221,7 +221,7 @@ public:
   uint8_t *pmem_buffer = nullptr;
   uint32_t log_entry_index = 0;
   uint32_t referring_map_entries = 0;
-  uint32_t reader_count = 0;
+  std::atomic<int> reader_count = {0};
   /* TODO: occlusion by subsequent writes */
   /* TODO: flush state: portions flushed, in-progress flushes */
   bool completed = false;
@@ -513,7 +513,14 @@ private:
 
   util::AsyncOpTracker m_async_op_tracker;
 
-  mutable Mutex m_log_append_lock;
+  /* Acquire locks in order declared here */
+  mutable RWLock m_entry_reader_lock; /* Hold a read lock on this to add
+				       * readers to log entry bufs. Hold a
+				       * write lock to remove log entrys from
+				       * the map. No lock required to remove
+				       * readers. */
+  mutable Mutex m_log_append_lock; /* Hold this while appending or retiring log
+				    * entries. */
   mutable Mutex m_lock;
 
   bool m_wake_up_requested = false;
