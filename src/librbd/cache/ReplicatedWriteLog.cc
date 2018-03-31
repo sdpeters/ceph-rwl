@@ -447,8 +447,12 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
     m_log_pool_size(DEFAULT_POOL_SIZE),
     m_image_writeback(lower), m_write_log_guard(image_ctx.cct),
     m_entry_reader_lock("librbd::cache::ReplicatedWriteLog::m_entry_reader_lock"),
-    m_log_append_lock("librbd::cache::ReplicatedWriteLog::m_log_append_lock"),
-    m_lock("librbd::cache::ReplicatedWriteLog::m_lock"),
+    m_deferred_dispatch_lock("librbd::cache::ReplicatedWriteLog::m_deferred_dispatch_lock",
+			     false, true, true, image_ctx.cct),
+    m_log_append_lock("librbd::cache::ReplicatedWriteLog::m_log_append_lock",
+		      false, true, true, image_ctx.cct),
+    m_lock("librbd::cache::ReplicatedWriteLog::m_lock",
+	   false, true, true, image_ctx.cct),
     m_persist_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_persist_finisher", "pfin_rwl"),
     m_log_append_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_log_append_finisher", "afin_rwl"),
     m_on_persist_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_on_persist_finisher", "opfin_rwl"),
@@ -465,6 +469,8 @@ template <typename I>
 ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
   ldout(m_image_ctx.cct, 6) << "enter" << dendl;
   {
+    RWLock::WLocker reader_locker(m_entry_reader_lock);
+    Mutex::Locker dispatch_locker(m_deferred_dispatch_lock);
     Mutex::Locker append_locker(m_log_append_lock);
     Mutex::Locker locker(m_lock);
     delete m_image_writeback;
@@ -882,11 +888,12 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
       }
     }
 
-    if (ops.size()) {
+    int num_ops = ops.size();
+    if (num_ops) {
       complete_op_log_entries(ops, append_result);
       {
 	Mutex::Locker locker(m_lock);
-	m_unpublished_reserves -= ops.size();
+	m_unpublished_reserves -= num_ops;
 	/* New entries may be flushable */
 	wake_up();
       }
@@ -965,6 +972,7 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
       schedule_append(ops);
     }
   } while (ops_remain);
+  append_scheduled_ops();
 }
 
 /*
@@ -1214,8 +1222,6 @@ void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequest *write_req, int re
  * data space for each extent.
  *
  * Lanes are released after the write persists via release_write_lanes()
- *
- * Caller holds m_lock
  */
 template <typename I>
 bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
@@ -1223,22 +1229,25 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
   bool alloc_succeeds = true;
   utime_t now = ceph_clock_now();
 
-  assert(m_lock.is_locked_by_me());
+  assert(!m_lock.is_locked_by_me());
   assert(!write_req->m_resources.allocated);
   write_req->m_resources.buffers.reserve(write_req->m_image_extents.size());
-  if (m_free_lanes < write_req->m_image_extents.size()) {
-    ldout(m_image_ctx.cct, 5) << "not enough free lanes (need "
-			      <<  write_req->m_image_extents.size()
-			      << ", have " << m_free_lanes << ") "
-			      << *write_req << dendl;
-    return false;
-  }
-  if (m_free_log_entries < write_req->m_image_extents.size()) {
-    ldout(m_image_ctx.cct, 5) << "not enough free entries (need "
-			      <<  write_req->m_image_extents.size()
-			      << ", have " << m_free_log_entries << ") "
-			      << *write_req << dendl;
-    return false;
+  {
+    Mutex::Locker locker(m_lock);
+    if (m_free_lanes < write_req->m_image_extents.size()) {
+      ldout(m_image_ctx.cct, 5) << "not enough free lanes (need "
+				<<  write_req->m_image_extents.size()
+				<< ", have " << m_free_lanes << ") "
+				<< *write_req << dendl;
+      return false;
+    }
+    if (m_free_log_entries < write_req->m_image_extents.size()) {
+      ldout(m_image_ctx.cct, 5) << "not enough free entries (need "
+				<<  write_req->m_image_extents.size()
+				<< ", have " << m_free_log_entries << ") "
+				<< *write_req << dendl;
+      return false;
+    }
   }
   for (auto &extent : write_req->m_image_extents) {
     write_req->m_resources.buffers.emplace_back();
@@ -1261,16 +1270,18 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
     }
     ldout(m_image_ctx.cct, 20) << "Allocated " << buffer.buffer_oid.oid.pool_uuid_lo <<
       "." << buffer.buffer_oid.oid.off << ", size=" << buffer.allocation_size << dendl;
-    m_unpublished_reserves++;
   }
 
   if (alloc_succeeds) {
+    unsigned int num_extents = write_req->m_image_extents.size();
+    Mutex::Locker locker(m_lock);
     /* We need one free log entry per extent (each is a separate entry), and
      * one free "lane" for remote replication. */
-    if ((m_free_lanes >= write_req->m_image_extents.size()) &&
-	(m_free_log_entries >= write_req->m_image_extents.size())) {
-      m_free_lanes -= write_req->m_image_extents.size();
-      m_free_log_entries -= write_req->m_image_extents.size();
+    if ((m_free_lanes >= num_extents) &&
+	(m_free_log_entries >= num_extents)) {
+      m_free_lanes -= num_extents;
+      m_free_log_entries -= num_extents;
+      m_unpublished_reserves += num_extents;
       write_req->m_resources.allocated = true;
     } else {
       alloc_succeeds = false;
@@ -1281,7 +1292,6 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
     /* On alloc failure, free any buffers we did allocate */
     for (auto &buffer : write_req->m_resources.buffers) {
       pmemobj_cancel(m_log_pool, &buffer.buffer_alloc_action, 1);
-      m_unpublished_reserves--;
     }
     write_req->m_resources.buffers.clear();
   }
@@ -1301,11 +1311,20 @@ void ReplicatedWriteLog<I>::dispatch_deferred_writes(void)
 
   do {
     {
-      Mutex::Locker locker(m_lock);
-      if (m_deferred_writes.size()) {
-	write_req = m_deferred_writes.front();
+      Mutex::Locker deferred_dispatch(m_deferred_dispatch_lock);
+      {
+	Mutex::Locker locker(m_lock);
+	if (m_deferred_writes.size()) {
+	  write_req = m_deferred_writes.front();
+	} else {
+	  write_req = nullptr;
+	}
+      }
+      if (write_req) {
 	allocated = alloc_write_resources(write_req);
 	if (allocated) {
+	  Mutex::Locker locker(m_lock);
+	  assert(m_deferred_writes.front() == write_req);
 	  m_deferred_writes.pop_front();
 	  /* If there are more, wake up the work function */
 	  if (m_deferred_writes.size()) {
@@ -1352,21 +1371,24 @@ void ReplicatedWriteLog<I>::alloc_and_dispatch_aio_write(C_WriteRequest *write_r
 
   {
     /* If there are already deferred writes, queue behind them for resources */
-    Mutex::Locker locker(m_lock);
-    if (m_deferred_writes.empty() &&
-	alloc_write_resources(write_req)) {
-      dispatch_here = true;
+    {
+      Mutex::Locker locker(m_lock);
+      dispatch_here = m_deferred_writes.empty();
+    }
+    if (dispatch_here) {
+      dispatch_here = alloc_write_resources(write_req);
+    }
+    if (dispatch_here) {
+      dispatch_aio_write(write_req);
     } else {
-      m_deferred_writes.push_back(write_req);
+      {
+	Mutex::Locker locker(m_lock);
+	m_deferred_writes.push_back(write_req);
+      }
       m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
       ldout(m_image_ctx.cct, 6) << "deferred writes: " << m_deferred_writes.size() << dendl;
+      dispatch_deferred_writes();
     }
-  }
-
-  if (dispatch_here) {
-    dispatch_aio_write(write_req);
-  } else {
-    dispatch_deferred_writes();
   }
 }
 

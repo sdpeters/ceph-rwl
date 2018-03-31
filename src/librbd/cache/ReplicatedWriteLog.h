@@ -519,6 +519,8 @@ private:
 				       * write lock to remove log entrys from
 				       * the map. No lock required to remove
 				       * readers. */
+  mutable Mutex m_deferred_dispatch_lock; /* Hold this while consuming from
+					   * m_deferred_writes. */
   mutable Mutex m_log_append_lock; /* Hold this while appending or retiring log
 				    * entries. */
   mutable Mutex m_lock;
