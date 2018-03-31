@@ -446,6 +446,7 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
   : m_image_ctx(image_ctx),
     m_log_pool_size(DEFAULT_POOL_SIZE),
     m_image_writeback(lower), m_write_log_guard(image_ctx.cct),
+    m_entry_reader_lock("librbd::cache::ReplicatedWriteLog::m_entry_reader_lock"),
     m_log_append_lock("librbd::cache::ReplicatedWriteLog::m_log_append_lock"),
     m_lock("librbd::cache::ReplicatedWriteLog::m_lock"),
     m_persist_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_persist_finisher", "pfin_rwl"),
@@ -646,6 +647,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
    */
   for (auto &extent : image_extents) {
     uint64_t extent_offset = 0;
+    RWLock::RLocker entry_reader_locker(m_entry_reader_lock);
     WriteLogMapEntries map_entries = m_blocks_to_log_entries.find_map_entries(block_extent(extent));
     for (auto &entry : map_entries) {
       Extent entry_image_extent(image_extent(entry.block_extent));
@@ -2255,6 +2257,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(shared_ptr<WriteLogEnt
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 20) << "" << dendl;
+  assert(m_entry_reader_lock.is_locked());
   assert(m_lock.is_locked_by_me());
   m_flush_ops_in_flight += 1;
   m_flush_bytes_in_flight += log_entry->ram_entry.write_bytes;
@@ -2313,6 +2316,7 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
 
   ldout(cct, 20) << "Look for dirty entries" << dendl;
   {
+    RWLock::RLocker entry_reader_locker(m_entry_reader_lock);
     Mutex::Locker locker(m_lock);
     while (true) {
       if (m_dirty_log_entries.empty()) {
@@ -2321,7 +2325,6 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
       }
       if (can_flush_entry(m_dirty_log_entries.front())) {
 	flush_contexts.push_back(construct_flush_entry_ctx(m_dirty_log_entries.front()));
-	//m_post_work_contexts.push_back(construct_flush_entry_ctx(m_dirty_log_entries.front()));
 	m_dirty_log_entries.pop_front();
       } else {
 	ldout(cct, 20) << "Next dirty entry isn't flushable yet" << dendl;
@@ -2367,6 +2370,8 @@ bool ReplicatedWriteLog<I>::retire_entries() {
 
   ldout(cct, 20) << "Look for entries to retire" << dendl;
   {
+    /* Entry readers can't be added while we hold m_entry_reader_lock */
+    RWLock::WLocker entry_reader_locker(m_entry_reader_lock);
     Mutex::Locker locker(m_lock);
     first_valid_entry = m_first_valid_entry;
     shared_ptr<WriteLogEntry> entry = m_log_entries.front();
