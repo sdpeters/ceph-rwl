@@ -60,9 +60,9 @@ void WriteLogEntry::add_reader() { reader_count++; }
 void WriteLogEntry::remove_reader() { reader_count--; }
 
 SyncPoint::SyncPoint(CephContext *cct, uint64_t sync_gen_num)
-  : m_cct(cct), m_sync_gen_num(sync_gen_num) {
+  : m_cct(cct), log_entry(make_shared<SyncPointLogEntry>(sync_gen_num)) {
   m_prior_log_entries_persisted = new C_Gather(cct, nullptr);
-  ldout(cct, 5) << "sync point" << m_sync_gen_num << dendl;
+  ldout(cct, 5) << "sync point " << sync_gen_num << dendl;
   /* TODO: Connect m_prior_log_entries_persisted finisher to append this
      sync point and on persist complete call on_sync_point_persisted
      and delete this object */
@@ -72,9 +72,11 @@ SyncPoint::~SyncPoint() {
 }
 
 WriteLogOperation::WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes)
-  : log_entry(make_shared<WriteLogEntry>(image_offset_bytes, write_bytes)),
+  : log_entry(make_shared<WriteLogEntry>(set.sync_point->log_entry, image_offset_bytes, write_bytes)),
     m_dispatch_time(set.m_dispatch_time) {
   on_write_persist = set.m_extent_ops->new_sub();
+  log_entry->sync_point_entry->m_writes++;
+  log_entry->sync_point_entry->m_bytes += write_bytes;
 }
 
 WriteLogOperation::~WriteLogOperation() { }
@@ -87,7 +89,7 @@ void WriteLogOperation::complete(int result) {
 WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, utime_t dispatched, shared_ptr<SyncPoint> sync_point,
 					   bool persist_on_flush, BlockExtent extent, Context *on_finish)
   : m_cct(cct), m_extent(extent), m_on_finish(on_finish),
-    m_persist_on_flush(persist_on_flush), m_dispatch_time(dispatched) {
+    m_persist_on_flush(persist_on_flush), m_dispatch_time(dispatched), sync_point(sync_point) {
   m_on_ops_persist = sync_point->m_prior_log_entries_persisted->new_sub();
   m_extent_ops =
     new C_Gather(cct,
@@ -117,7 +119,7 @@ void GuardedRequestFunctionContext::acquired(BlockGuardCell *cell, bool detained
   complete(0);
 }
 
-WriteLogMapEntry::WriteLogMapEntry(BlockExtent block_extent,
+WriteLogMapEntry::WriteLogMapEntry(const BlockExtent block_extent,
 				   shared_ptr<WriteLogEntry> log_entry)
   : block_extent(block_extent) , log_entry(log_entry) {
 }
@@ -1171,6 +1173,7 @@ void ReplicatedWriteLog<I>::complete_op_log_entries(WriteLogOperations &ops, int
 	shared_ptr<WriteLogOperation> op = operation;
 	utime_t now = ceph_clock_now();
 	op->log_entry->completed = true;
+	op->log_entry->sync_point_entry->m_writes_completed++;
 	op->complete(result);
 	m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_buf_t, op->m_buf_persist_time - op->m_dispatch_time);
 	m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_app_t, op->m_log_append_time - op->m_dispatch_time);
@@ -1671,9 +1674,21 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 					guarded_ctx));
 }
 
+/**
+ * Aio_flush completes when all previously completed writes are
+ * flushed to persistent cache. We make a best-effort attempt to also
+ * defer until all in-progress writes complete, but we may not know
+ * about all of the writes the application considers in-progress yet,
+ * due to uncertainty in the IO submission workq (multiple WQ threads
+ * may allow out-of-order submission).
+ *
+ * This flush operation will not wait for writes deferred for overlap
+ * in the block guard.
+ */
 template <typename I>
 void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
+  utime_t flush_begins = ceph_clock_now();
   ldout(cct, 20) << "on_finish=" << on_finish << dendl;
   m_perfcounter->inc(l_librbd_rwl_aio_flush, 1);
 
@@ -1685,7 +1700,14 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
     }
   }
 
-  if (!m_flush_seen) {
+  Context *ctx = new FunctionContext(
+    [this, flush_begins, on_finish](int r) {
+      utime_t now = ceph_clock_now();
+      on_finish->complete(r);
+      m_perfcounter->tinc(l_librbd_rwl_aio_flush_latency, now - flush_begins);
+    });
+
+  {
     Mutex::Locker locker(m_lock);
     if (!m_flush_seen) {
       ldout(cct, 5) << "flush seen" << dendl;
@@ -1695,25 +1717,37 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
 	ldout(cct, 5) << "now persisting on flush" << dendl;
       }
     }
+
+    /*
+     * If persist_on_flush, create a new sync point if there have been
+     * writes since the last one. If The current sync point isn't persisted,
+     * complete this flush when it is. Otherwise complete this flush now.
+     *
+     * We do not flush the caches below the RWL here.
+     */
+    /* no-op if we're not persist-on-flush */
+    if (m_persist_on_flush) {
+      /* If there have been writes since the last sync point ... */
+      if (m_current_sync_point->log_entry->m_writes) {
+	/* Make a new sync point and complete this flush with the current sync point */
+	m_current_sync_point->m_on_sync_point_persisted.push_back(ctx);
+	ctx = nullptr;
+	new_sync_point();
+      } else {
+	/* If the current sync point has no writes and the previous one hasn't completed ... */
+	if (m_current_sync_point->earlier_sync_point) {
+	  /* Complete this flush with the earlier sync point */
+	  m_current_sync_point->earlier_sync_point->m_on_sync_point_persisted.push_back(ctx);
+	  ctx = nullptr;
+	}
+      }
+      /* Otherwise complete this flush now (outside m_lock) */
+    }
   }
 
-  /*
-   * TODO: if persist_on_flush, create a new sync point if there have been
-   * writes since the last one. If The current sync point isn't persisted,
-   * complete this flush when it is. Otherwise complete this flush now.
-   *
-   * We do not flush the caches below the RWL here.
-   */
-
-  Context *ctx = new FunctionContext(
-    [this, on_finish](int r) {
-      if (r < 0) {
-	on_finish->complete(r);
-      }
-      m_image_writeback->aio_flush(on_finish);
-    });
-
-  flush(ctx);
+  if (ctx) {
+    ctx->complete(0);
+  }
 }
 
 template <typename I>
@@ -1785,11 +1819,18 @@ void ReplicatedWriteLog<I>::append_sync_point(shared_ptr<SyncPoint> sync_point, 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
-  assert(m_lock.is_locked_by_me());
   sync_point->m_prior_log_entries_persisted_status = status;
-  /* TODO: Write sync point, complete and free
-     m_on_sync_point_persisted, and delete this sync point (log entry
-     object for sync point will remain until retired). */
+  /* TODO: Write sync point */
+  {
+    Mutex::Locker locker(m_lock);
+    /* Post sync point entry to entries list */
+    /* Remove link from next sync point */
+    assert(sync_point->later_sync_point);
+    assert(sync_point->later_sync_point->earlier_sync_point == sync_point);
+    sync_point->later_sync_point->earlier_sync_point = nullptr;
+  }
+  /* Complete m_on_sync_point_persisted */
+  finish_contexts(cct, sync_point->m_on_sync_point_persisted, status);
 }
 
 /**
@@ -1812,9 +1853,11 @@ void ReplicatedWriteLog<I>::new_sync_point(void) {
   m_current_sync_point = new_sync_point;
 
   if (old_sync_point) {
+    new_sync_point->earlier_sync_point = old_sync_point;
+    old_sync_point->later_sync_point = new_sync_point;
     old_sync_point->m_final_op_sequence_num = m_last_op_sequence_num;
     /* Append of new sync point deferred until this sync point is persisted */
-    old_sync_point->m_on_sync_point_persisted = m_current_sync_point->m_prior_log_entries_persisted->new_sub();
+    old_sync_point->m_on_sync_point_persisted.push_back(m_current_sync_point->m_prior_log_entries_persisted->new_sub());
     /* This sync point will acquire no more sub-ops */
     old_sync_point->m_prior_log_entries_persisted->activate();
   }
@@ -1952,6 +1995,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
   ldout(cct, 20) << dendl;
   TOID(struct WriteLogPoolRoot) pool_root;
 
+  Mutex::Locker locker(m_lock);
   ldout(cct,5) << "rwl_enabled:" << m_image_ctx.rwl_enabled << dendl;
   ldout(cct,5) << "rwl_size:" << m_image_ctx.rwl_size << dendl;
   std::string rwl_path = m_image_ctx.rwl_path;
@@ -2053,7 +2097,8 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
   perf_start(m_image_ctx.id);
 
   /* Start the sync point following the last one seen in the log */
-  m_current_sync_point = make_shared<SyncPoint>(cct, m_current_sync_gen);
+  //m_current_sync_point = make_shared<SyncPoint>(cct, m_current_sync_gen);
+  new_sync_point();
   ldout(cct,6) << "new sync point = [" << m_current_sync_point << "]" << dendl;
 
   on_finish->complete(0);
@@ -2331,7 +2376,8 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(shared_ptr<WriteLogEnt
 
       bufferlist entry_bl;
       entry_bl.push_back(entry_buf);
-      ldout(cct, 20) << "flushing:" << log_entry << dendl;
+      ldout(cct, 2) << "flushing:" << log_entry
+		     << " " << *log_entry << dendl;
       m_image_writeback->aio_write({{log_entry->ram_entry.image_offset_bytes,
 				     log_entry->ram_entry.write_bytes}},
 				   std::move(entry_bl), 0, ctx);
