@@ -436,7 +436,7 @@ ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
     Mutex::Locker locker(m_lock);
     delete m_image_writeback;
     m_image_writeback = nullptr;
-    assert(m_deferred_writes.size() == 0);
+    assert(m_deferred_ios.size() == 0);
     assert(m_ops_to_flush.size() == 0);
     assert(m_ops_to_append.size() == 0);
     assert(m_flush_ops_in_flight == 0);
@@ -746,6 +746,9 @@ struct WriteRequestResources {
  * until the IO is persisted in all (live) log replicas.  User request
  * may be completed from here before the IO persists.
  */
+typedef boost::function<bool(C_BlockIORequest*)> io_alloc_resources_callback_t;
+typedef boost::function<void(C_BlockIORequest*)> io_deferred_callback_t;
+typedef boost::function<void(C_BlockIORequest*)> io_dispatch_callback_t;
 struct C_BlockIORequest : public C_GuardedBlockIORequest {
   Extents m_image_extents;
   bufferlist bl;
@@ -759,6 +762,9 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
   utime_t m_dispatched_time; // When dispatch began
   utime_t m_user_req_completed_time;
   bool detained = false;
+  io_alloc_resources_callback_t m_io_alloc_resources_callback;
+  io_deferred_callback_t m_io_deferred_callback;
+  io_dispatch_callback_t m_io_dispatch_callback;
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_BlockIORequest &req) {
     os << "m_image_extents=[" << req.m_image_extents << "], "
@@ -769,10 +775,16 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
     return os;
   };
   C_BlockIORequest(CephContext *cct, const utime_t arrived, Extents &&image_extents,
-		   bufferlist&& bl, const int fadvise_flags, Context *user_req)
+		   bufferlist&& bl, const int fadvise_flags, Context *user_req,
+		   io_alloc_resources_callback_t io_alloc_resources_callback,
+		   io_deferred_callback_t io_deferred_callback,
+		   io_dispatch_callback_t io_dispatch_callback)
     : C_GuardedBlockIORequest(cct), m_image_extents(std::move(image_extents)),
       bl(std::move(bl)), fadvise_flags(fadvise_flags),
-      user_req(user_req), m_image_extents_summary(m_image_extents), m_arrived_time(arrived) {
+      user_req(user_req), m_image_extents_summary(m_image_extents), m_arrived_time(arrived),
+      m_io_alloc_resources_callback(io_alloc_resources_callback),
+      m_io_deferred_callback(io_deferred_callback),
+      m_io_dispatch_callback(io_dispatch_callback) {
     ldout(m_cct, 99) << this << dendl;
   }
 
@@ -803,6 +815,18 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
     _on_finish->complete(0);
   }
 
+  virtual bool alloc_resources() {
+    return m_io_alloc_resources_callback(this);
+  }
+
+  virtual void deferred() {
+    m_io_deferred_callback(this);
+  }
+
+  virtual void dispatch() {
+    m_io_dispatch_callback(this);
+  }
+
   virtual const char *get_name() const override {
     return "C_BlockIORequest";
   }
@@ -820,15 +844,20 @@ struct C_WriteRequest : public C_BlockIORequest {
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_WriteRequest &req) {
     os << (C_BlockIORequest&)req
-       << " m_resources.allocated=" << req.m_resources.allocated
-       << "m_op_set=" << *req.m_op_set;
+       << " m_resources.allocated=" << req.m_resources.allocated;
+    if (req.m_op_set) {
+       os << "m_op_set=" << *req.m_op_set;
+    }
     return os;
   };
 
   C_WriteRequest(CephContext *cct, const utime_t arrived, Extents &&image_extents,
-		 bufferlist&& bl, const int fadvise_flags, Context *user_req)
-    : C_BlockIORequest(cct, arrived, std::move(image_extents),
-		       std::move(bl), fadvise_flags, user_req) {
+		 bufferlist&& bl, const int fadvise_flags, Context *user_req,
+		 io_alloc_resources_callback_t io_alloc_resources_callback,
+		 io_deferred_callback_t io_deferred_callback,
+		 io_dispatch_callback_t io_dispatch_callback)
+    : C_BlockIORequest(cct, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req,
+		       io_alloc_resources_callback, io_deferred_callback, io_dispatch_callback) {
     ldout(m_cct, 99) << this << dendl;
   }
 
@@ -836,7 +865,19 @@ struct C_WriteRequest : public C_BlockIORequest {
     ldout(m_cct, 99) << this << dendl;
   }
 
-  virtual const char *get_name() const override {
+  bool alloc_resources() {
+    return m_io_alloc_resources_callback(this);
+  }
+
+  void deferred() {
+    m_io_deferred_callback(this);
+  }
+
+  void dispatch() {
+    m_io_dispatch_callback(this);
+  }
+
+  const char *get_name() const override {
     return "C_WriteRequest";
   }
 };
@@ -1299,7 +1340,7 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
 template <typename I>
 void ReplicatedWriteLog<I>::dispatch_deferred_writes(void)
 {
-  C_WriteRequest *write_req = nullptr;
+  C_BlockIORequest *req = nullptr;
   bool allocated = false;
 
   do {
@@ -1307,32 +1348,32 @@ void ReplicatedWriteLog<I>::dispatch_deferred_writes(void)
       Mutex::Locker deferred_dispatch(m_deferred_dispatch_lock);
       {
 	Mutex::Locker locker(m_lock);
-	if (m_deferred_writes.size()) {
-	  write_req = m_deferred_writes.front();
+	if (m_deferred_ios.size()) {
+	  req = m_deferred_ios.front();
 	} else {
-	  write_req = nullptr;
+	  req = nullptr;
 	}
       }
-      if (write_req) {
-	allocated = alloc_write_resources(write_req);
+      if (req) {
+	allocated = req->alloc_resources();
 	if (allocated) {
 	  Mutex::Locker locker(m_lock);
-	  assert(m_deferred_writes.front() == write_req);
-	  m_deferred_writes.pop_front();
+	  assert(m_deferred_ios.front() == req);
+	  m_deferred_ios.pop_front();
 	  /* If there are more, wake up the work function */
-	  if (m_deferred_writes.size()) {
-	    ldout(m_image_ctx.cct, 6) << "deferred writes: " << m_deferred_writes.size() << dendl;
+	  if (m_deferred_ios.size()) {
+	    ldout(m_image_ctx.cct, 6) << "deferred IOs: " << m_deferred_ios.size() << dendl;
 	    wake_up();
 	  }
 	}
       } else {
-	write_req = nullptr;
+	req = nullptr;
 	allocated = false;
       }
     }
     if (allocated) {
       // TODO: punt to a workq if we've already dispatched one here?
-      dispatch_aio_write(write_req);
+      req->dispatch();
     }
   } while (allocated);
 }
@@ -1358,7 +1399,7 @@ void ReplicatedWriteLog<I>::release_write_lanes(C_WriteRequest *write_req)
  * resources are available, or queued if they aren't.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::alloc_and_dispatch_aio_write(C_WriteRequest *write_req)
+void ReplicatedWriteLog<I>::alloc_and_dispatch_io_req(C_BlockIORequest *req)
 {
   bool dispatch_here = false;
 
@@ -1366,20 +1407,20 @@ void ReplicatedWriteLog<I>::alloc_and_dispatch_aio_write(C_WriteRequest *write_r
     /* If there are already deferred writes, queue behind them for resources */
     {
       Mutex::Locker locker(m_lock);
-      dispatch_here = m_deferred_writes.empty();
+      dispatch_here = m_deferred_ios.empty();
     }
     if (dispatch_here) {
-      dispatch_here = alloc_write_resources(write_req);
+      dispatch_here = req->alloc_resources();
     }
     if (dispatch_here) {
-      dispatch_aio_write(write_req);
+      req->dispatch();
     } else {
       {
 	Mutex::Locker locker(m_lock);
-	m_deferred_writes.push_back(write_req);
+	m_deferred_ios.push_back(req);
       }
-      m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
-      ldout(m_image_ctx.cct, 6) << "deferred writes: " << m_deferred_writes.size() << dendl;
+      req->deferred();
+      ldout(m_image_ctx.cct, 6) << "deferred IOs: " << m_deferred_ios.size() << dendl;
       dispatch_deferred_writes();
     }
   }
@@ -1531,7 +1572,20 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
   }
 
   C_WriteRequest *write_req =
-    new C_WriteRequest(cct, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish);
+    new C_WriteRequest(cct, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish,
+		       [this](C_BlockIORequest* req)->bool {
+			 C_WriteRequest *write_req = (C_WriteRequest*)req;
+			 ldout(m_image_ctx.cct, 6) << "req type=" << write_req->get_name()
+						   << "req=[" << *write_req << "]" << dendl;
+			 return alloc_write_resources(write_req);
+		       },
+		       [this](C_BlockIORequest* req) {
+			 m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
+		       },
+		       [this](C_BlockIORequest* req) {
+			 C_WriteRequest *write_req = (C_WriteRequest*)req;
+			 return dispatch_aio_write(write_req);
+		       });
   m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
 
   /* The lambda below will be called when the block guard for all
@@ -1547,7 +1601,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
       if (detained) {
 	m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
       }
-      alloc_and_dispatch_aio_write(write_req);
+      alloc_and_dispatch_io_req(write_req);
     });
 
   detain_guarded_request(GuardedRequest(write_req->m_image_extents_summary.first_block,
