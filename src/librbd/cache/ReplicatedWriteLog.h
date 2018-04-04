@@ -489,6 +489,7 @@ private:
 
 using namespace librbd::cache::rwl;
 
+struct C_BlockIORequest;
 struct C_WriteRequest;
 
 /**
@@ -532,6 +533,7 @@ private:
   typedef std::function<void(BlockGuard::BlockIO)> AppendDetainedBlock;
   typedef std::list<Context *> Contexts;
   typedef std::list<C_WriteRequest *> C_WriteRequests;
+  typedef std::list<C_BlockIORequest *> C_BlockIORequests;
 
   void detain_guarded_request(GuardedRequest &&req);
   void release_guarded_request(BlockGuardCell *cell);
@@ -578,7 +580,7 @@ private:
 				       * the map. No lock required to remove
 				       * readers. */
   mutable Mutex m_deferred_dispatch_lock; /* Hold this while consuming from
-					   * m_deferred_writes. */
+					   * m_deferred_ios. */
   mutable Mutex m_log_append_lock; /* Hold this while appending or retiring log
 				    * entries. */
   mutable Mutex m_lock;
@@ -606,7 +608,7 @@ private:
   int m_flush_bytes_in_flight = 0;
 
   /* Writes that have left the block guard, but are waiting for resources */
-  C_WriteRequests m_deferred_writes;
+  C_BlockIORequests m_deferred_ios;
   /* Throttle writes concurrently allocating & replicating */
   unsigned int m_free_lanes = MAX_CONCURRENT_WRITES;
   unsigned int m_unpublished_reserves = 0;
@@ -636,7 +638,7 @@ private:
   void dispatch_deferred_writes(void);
   bool alloc_write_resources(C_WriteRequest *write_req);
   void release_write_lanes(C_WriteRequest *write_req);
-  void alloc_and_dispatch_aio_write(C_WriteRequest *write_req);
+  void alloc_and_dispatch_io_req(C_BlockIORequest *write_req);
   void dispatch_aio_write(C_WriteRequest *write_req);
   void append_scheduled_ops(void);
   void schedule_append(WriteLogOperations &ops);
