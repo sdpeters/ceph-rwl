@@ -10,11 +10,6 @@
 #include "common/errno.h"
 #include "common/WorkQueue.h"
 #include "librbd/ImageCtx.h"
-#include "librbd/cache/file/ImageStore.h"
-#include "librbd/cache/file/JournalStore.h"
-#include "librbd/cache/file/MetaStore.h"
-#include "librbd/cache/file/StupidPolicy.h"
-#include "librbd/cache/file/Types.h"
 #include <map>
 #include <vector>
 
@@ -27,7 +22,7 @@ namespace librbd {
 namespace cache {
 
 using namespace librbd::cache::rwl;
-using namespace librbd::cache::file;
+//using namespace librbd::cache::file;
 
 namespace rwl {
 
@@ -63,12 +58,8 @@ SyncPoint::SyncPoint(CephContext *cct, uint64_t sync_gen_num)
   : m_cct(cct), log_entry(make_shared<SyncPointLogEntry>(sync_gen_num)) {
   m_prior_log_entries_persisted = new C_Gather(cct, nullptr);
   ldout(cct, 5) << "sync point " << sync_gen_num << dendl;
-  /* TODO: Connect m_prior_log_entries_persisted finisher to append this
-     sync point and on persist complete call on_sync_point_persisted
-     and delete this object */
 }
 SyncPoint::~SyncPoint() {
-  /* TODO: will m_prior_log_entries_persisted always delete itself? */
 }
 
 WriteLogOperation::WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes)
@@ -377,49 +368,17 @@ bool is_block_aligned(const Extents &image_extents) {
 }
 
 /**
- * A chain of requests that stops on the first failure
- */
-struct C_BlockIORequest : public Context {
-  CephContext *m_cct;
-  C_BlockIORequest *next_block_request;
-
-  C_BlockIORequest(CephContext *cct, C_BlockIORequest *next_block_request = nullptr)
-    : m_cct(cct), next_block_request(next_block_request) {
-    ldout(m_cct, 99) << this << dendl;
-  }
-  ~C_BlockIORequest() {
-    ldout(m_cct, 99) << this << dendl;
-  }
-
-  virtual void finish(int r) override {
-    ldout(m_cct, 20) << "(" << get_name() << "): r=" << r << dendl;
-
-    if (next_block_request) {
-      if (r < 0) {
-	// abort the chain of requests upon failure
-	next_block_request->complete(r);
-      } else {
-	// execute next request in chain
-	next_block_request->send();
-      }
-    }
-  }
-
-  virtual void send() = 0;
-  virtual const char *get_name() const = 0;
-};
-
-/**
  * A request that can be deferred in a BlockGuard to sequence
  * overlapping operations.
  */
-struct C_GuardedBlockIORequest : public C_BlockIORequest {
-private:
+struct C_GuardedBlockIORequest : public Context {
+protected:
   CephContext *m_cct;
+private:
   BlockGuardCell* m_cell = nullptr;
 public:
-  C_GuardedBlockIORequest(CephContext *cct, C_BlockIORequest *next_block_request = nullptr)
-    : C_BlockIORequest(cct, next_block_request), m_cct(cct) {
+  C_GuardedBlockIORequest(CephContext *cct)
+    : m_cct(cct) {
     ldout(m_cct, 99) << this << dendl;
   }
   ~C_GuardedBlockIORequest() {
@@ -495,7 +454,7 @@ public:
   uint64_t first_block;
   uint64_t last_block;
   friend std::ostream &operator<<(std::ostream &os,
-				  ExtentsSummary &s) {
+				  const ExtentsSummary &s) {
     os << "total_bytes=" << s.total_bytes << ", "
        << "first_image_byte=" << s.first_image_byte << ", "
        << "last_image_byte=" << s.last_image_byte << ", "
@@ -782,16 +741,12 @@ struct WriteRequestResources {
 };
 
 /**
- * This is the custodian of the BlockGuard cell for this write, and
- * the state information about the progress of this write. This object
- * lives until the write is persisted in all (live) log replicas.
- * User write op may be completed from here before the write
- * persists. Block guard is not released until the write persists
- * everywhere (this is how we guarantee to each log replica that they
- * will never see overlapping writes).
+ * This is the custodian of the BlockGuard cell for this IO, and the
+ * state information about the progress of this IO. This object lives
+ * until the IO is persisted in all (live) log replicas.  User request
+ * may be completed from here before the IO persists.
  */
-struct C_WriteRequest : public C_GuardedBlockIORequest {
-  CephContext *m_cct;
+struct C_BlockIORequest : public C_GuardedBlockIORequest {
   Extents m_image_extents;
   bufferlist bl;
   int fadvise_flags;
@@ -803,11 +758,9 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
   utime_t m_allocated_time; // When allocation began
   utime_t m_dispatched_time; // When dispatch began
   utime_t m_user_req_completed_time;
-  WriteRequestResources m_resources;
-  unique_ptr<WriteLogOperationSet> m_op_set = nullptr;
   bool detained = false;
   friend std::ostream &operator<<(std::ostream &os,
-				  C_WriteRequest &req) {
+				  const C_BlockIORequest &req) {
     os << "m_image_extents=[" << req.m_image_extents << "], "
        << "m_image_extents_summary=[" << req.m_image_extents_summary << "], "
        << "bl=" << req.bl << ", "
@@ -815,15 +768,15 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
        << "m_user_req_completed=" << req.m_user_req_completed << "";
     return os;
   };
-  C_WriteRequest(CephContext *cct, utime_t arrived, Extents &&image_extents,
-		 bufferlist&& bl, int fadvise_flags, Context *user_req)
-    : C_GuardedBlockIORequest(cct), m_cct(cct), m_image_extents(std::move(image_extents)),
+  C_BlockIORequest(CephContext *cct, const utime_t arrived, Extents &&image_extents,
+		   bufferlist&& bl, const int fadvise_flags, Context *user_req)
+    : C_GuardedBlockIORequest(cct), m_image_extents(std::move(image_extents)),
       bl(std::move(bl)), fadvise_flags(fadvise_flags),
       user_req(user_req), m_image_extents_summary(m_image_extents), m_arrived_time(arrived) {
     ldout(m_cct, 99) << this << dendl;
   }
 
-  ~C_WriteRequest() {
+  virtual ~C_BlockIORequest() {
     ldout(m_cct, 99) << this << dendl;
   }
 
@@ -848,6 +801,39 @@ struct C_WriteRequest : public C_GuardedBlockIORequest {
 
     complete_user_request(r);
     _on_finish->complete(0);
+  }
+
+  virtual const char *get_name() const override {
+    return "C_BlockIORequest";
+  }
+};
+
+/**
+ * This is the custodian of the BlockGuard cell for this write. Block
+ * guard is not released until the write persists everywhere (this is
+ * how we guarantee to each log replica that they will never see
+ * overlapping writes).
+ */
+struct C_WriteRequest : public C_BlockIORequest {
+  WriteRequestResources m_resources;
+  unique_ptr<WriteLogOperationSet> m_op_set = nullptr;
+  friend std::ostream &operator<<(std::ostream &os,
+				  const C_WriteRequest &req) {
+    os << (C_BlockIORequest&)req
+       << " m_resources.allocated=" << req.m_resources.allocated
+       << "m_op_set=" << *req.m_op_set;
+    return os;
+  };
+
+  C_WriteRequest(CephContext *cct, const utime_t arrived, Extents &&image_extents,
+		 bufferlist&& bl, const int fadvise_flags, Context *user_req)
+    : C_BlockIORequest(cct, arrived, std::move(image_extents),
+		       std::move(bl), fadvise_flags, user_req) {
+    ldout(m_cct, 99) << this << dendl;
+  }
+
+  ~C_WriteRequest() {
+    ldout(m_cct, 99) << this << dendl;
   }
 
   virtual const char *get_name() const override {
