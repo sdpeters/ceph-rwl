@@ -11,7 +11,6 @@
 #include "librbd/cache/ImageCache.h"
 #include "librbd/Utils.h"
 #include "librbd/cache/BlockGuard.h"
-#include "librbd/cache/file/Policy.h"
 #include "librbd/BlockGuard.h"
 #include <functional>
 #include <boost/intrusive/list.hpp>
@@ -179,11 +178,20 @@ struct WriteLogPmemEntry {
 			       is an unmap */
   };
   uint64_t _unused = 0;     /* Padding to 64 bytes */
-  WriteLogPmemEntry(uint64_t image_offset_bytes, uint64_t write_bytes)
+  WriteLogPmemEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes),
       entry_valid(0), sync_point(0), sequenced(0), has_data(0), unmap(0) {
   }
   BlockExtent block_extent();
+  bool is_sync_point() {
+    return sync_point;
+  }
+  bool is_unmap() {
+    return unmap;
+  }
+  bool is_write() {
+    return !is_sync_point() && !is_unmap();
+  }
   friend std::ostream &operator<<(std::ostream &os,
 				  const WriteLogPmemEntry &entry) {
     os << "entry_valid=" << (bool)entry.entry_valid << ", "
@@ -221,29 +229,17 @@ public:
   WriteLogPmemEntry *pmem_entry = nullptr;
   uint32_t log_entry_index = 0;
   bool completed = false;
-  GenericLogEntry(uint64_t image_offset_bytes = 0, uint64_t write_bytes = 0)
+  GenericLogEntry(const uint64_t image_offset_bytes = 0, const uint64_t write_bytes = 0)
     : ram_entry(image_offset_bytes, write_bytes) { }
+  virtual ~GenericLogEntry() { };
   GenericLogEntry(const GenericLogEntry&) = delete;
   GenericLogEntry &operator=(const GenericLogEntry&) = delete;
-  bool is_sync_point() {
-    return ram_entry.sync_point;
-  }
-  bool is_unmap() {
-    return ram_entry.unmap;
-  }
-  bool is_write() {
-    return !is_sync_point() && !is_unmap();
-  }
-  friend void serialize_generic(std::ostream &os,
-					GenericLogEntry &entry) {
+  friend std::ostream &operator<<(std::ostream &os,
+				  const GenericLogEntry &entry) {
     os << "ram_entry=[" << entry.ram_entry << "], "
        << "pmem_entry=" << (void*)entry.pmem_entry << ", "
        << "log_entry_index=" << entry.log_entry_index << ", "
        << "completed=" << entry.completed;
-  };
-  friend std::ostream &operator<<(std::ostream &os,
-				  GenericLogEntry &entry) {
-    serialize_generic(os, entry);
     return os;
   };
 };
@@ -263,9 +259,9 @@ public:
   SyncPointLogEntry(const SyncPointLogEntry&) = delete;
   SyncPointLogEntry &operator=(const SyncPointLogEntry&) = delete;
   friend std::ostream &operator<<(std::ostream &os,
-				  SyncPointLogEntry &entry) {
-    serialize_generic(os, entry);
-    os << " m_writes=" << entry.m_writes << ", "
+				  const SyncPointLogEntry &entry) {
+    os << (GenericLogEntry&)entry
+       << " m_writes=" << entry.m_writes << ", "
        << "m_bytes=" << entry.m_bytes << ", "
        << "m_writes_completed=" << entry.m_writes_completed;
     return os;
@@ -282,9 +278,9 @@ public:
   bool flushing = false;
   bool flushed = false;
   shared_ptr<SyncPointLogEntry> sync_point_entry;
-  WriteLogEntry(shared_ptr<SyncPointLogEntry> sync_point_entry, uint64_t image_offset_bytes, uint64_t write_bytes)
+  WriteLogEntry(shared_ptr<SyncPointLogEntry> sync_point_entry, const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : GenericLogEntry(image_offset_bytes, write_bytes), sync_point_entry(sync_point_entry) { }
-  WriteLogEntry(uint64_t image_offset_bytes, uint64_t write_bytes) {
+  WriteLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes) {
     WriteLogEntry(nullptr, image_offset_bytes, write_bytes);
   }
   WriteLogEntry(const WriteLogEntry&) = delete;
@@ -293,9 +289,9 @@ public:
   void add_reader();
   void remove_reader();
   friend std::ostream &operator<<(std::ostream &os,
-				  WriteLogEntry &entry) {
-    serialize_generic(os, entry);
-    os << " sync_point_entry=" << entry.sync_point_entry << ", "
+				  const WriteLogEntry &entry) {
+    os << (GenericLogEntry&)entry
+       << " sync_point_entry=" << entry.sync_point_entry << ", "
        << "referring_map_entries=" << entry.referring_map_entries << ", "
        << "reader_count=" << entry.reader_count << ", "
        << "flushing=" << entry.flushing << ", "
@@ -326,17 +322,17 @@ public:
    * until all these complete. */
   C_Gather *m_prior_log_entries_persisted;
   int m_prior_log_entries_persisted_status = 0;
-  /* Signal this when this sync point is appended and persisted. This
-   * is a sub-operation of the next sync point's
+  /* Signal this when this sync point is appended and persisted. One of these
+   * is is a sub-operation of the next sync point's
    * m_prior_log_entries_persisted Gather. */
   std::vector<Context*> m_on_sync_point_persisted;
 
-  SyncPoint(CephContext *cct, uint64_t sync_gen_num);
+  SyncPoint(CephContext *cct, const uint64_t sync_gen_num);
   ~SyncPoint();
   SyncPoint(const SyncPoint&) = delete;
   SyncPoint &operator=(const SyncPoint&) = delete;
   friend std::ostream &operator<<(std::ostream &os,
-				  SyncPoint &p) {
+				  const SyncPoint &p) {
     os << "log_entry=[" << *p.log_entry << "], "
        << "m_final_op_sequence_num=" << p.m_final_op_sequence_num << ", "
        << "m_prior_log_entries_persisted=[" << p.m_prior_log_entries_persisted << "], "
@@ -357,12 +353,12 @@ public:
   utime_t m_buf_persist_comp_time; // When buffer persist completes
   utime_t m_log_append_time; // When log append begins
   utime_t m_log_append_comp_time; // When log append completes
-  WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes);
+  WriteLogOperation(WriteLogOperationSet &set, const uint64_t image_offset_bytes, const uint64_t write_bytes);
   ~WriteLogOperation();
   WriteLogOperation(const WriteLogOperation&) = delete;
   WriteLogOperation &operator=(const WriteLogOperation&) = delete;
   friend std::ostream &operator<<(std::ostream &os,
-				  WriteLogOperation &op) {
+				  const WriteLogOperation &op) {
     os << "log_entry=[" << *op.log_entry << "], "
        << "bl=[" << op.bl << "],"
        << "buffer_alloc_action=" << op.buffer_alloc_action;
@@ -384,13 +380,13 @@ public:
   WriteLogOperations operations;
   utime_t m_dispatch_time; /* When set created */
   shared_ptr<SyncPoint> sync_point;
-  WriteLogOperationSet(CephContext *cct, utime_t dispatched, shared_ptr<SyncPoint> sync_point, bool persist_on_flush,
-		       BlockExtent extent, Context *on_finish);
+  WriteLogOperationSet(CephContext *cct, const utime_t dispatched, shared_ptr<SyncPoint> sync_point,
+		       const bool persist_on_flush, BlockExtent extent, Context *on_finish);
   ~WriteLogOperationSet();
   WriteLogOperationSet(const WriteLogOperationSet&) = delete;
   WriteLogOperationSet &operator=(const WriteLogOperationSet&) = delete;
   friend std::ostream &operator<<(std::ostream &os,
-				  WriteLogOperationSet &s) {
+				  const WriteLogOperationSet &s) {
     os << "m_extent=[" << s.m_extent.block_start << "," << s.m_extent.block_end << "] "
        << "m_on_finish=" << s.m_on_finish << ", "
        << "m_cell=" << (void*)s.m_cell << ", "
