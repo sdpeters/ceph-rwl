@@ -141,7 +141,7 @@ static const uint32_t MIN_WRITE_ALLOC_SIZE =
 /* Enables use of dedicated finishers for some RWL work */
 static const bool use_finishers = false;
 
-static const int IN_FLIGHT_FLUSH_WRITE_LIMIT = 8;
+static const int IN_FLIGHT_FLUSH_WRITE_LIMIT = 64;
 static const int IN_FLIGHT_FLUSH_BYTES_LIMIT = (1 * 1024 * 1024);
 
 /**** Write log entries ****/
@@ -555,6 +555,7 @@ using namespace librbd::cache::rwl;
 
 struct C_BlockIORequest;
 struct C_WriteRequest;
+struct C_FlushRequest;
 
 /**
  * Prototype pmem-based, client-side, replicated write log
@@ -639,9 +640,10 @@ private:
   /* Acquire locks in order declared here */
   mutable RWLock m_entry_reader_lock; /* Hold a read lock on this to add
 				       * readers to log entry bufs. Hold a
-				       * write lock to remove log entrys from
-				       * the map. No lock required to remove
-				       * readers. */
+				       * write lock to prevent readers from
+				       * being added (e.g. when removing log
+				       * entrys from the map). No lock required
+				       * to remove readers. */
   mutable Mutex m_deferred_dispatch_lock; /* Hold this while consuming from
 					   * m_deferred_ios. */
   mutable Mutex m_log_append_lock; /* Hold this while appending or retiring log
@@ -668,6 +670,7 @@ private:
 
   int m_flush_ops_in_flight = 0;
   int m_flush_bytes_in_flight = 0;
+  uint64_t m_lowest_flushing_sync_gen = 0;
 
   /* Writes that have left the block guard, but are waiting for resources */
   C_BlockIORequests m_deferred_ios;
@@ -691,9 +694,11 @@ private:
   bool can_retire_entry(const shared_ptr<GenericLogEntry> log_entry);
   bool retire_entries();
 
-  void invalidate(Extents&& image_extents, Context *on_finish);
-
   void new_sync_point(Contexts &later);
+  C_FlushRequest* make_flush_req(Context *on_finish);
+  void flush_new_sync_point(C_FlushRequest *flush_req, Contexts &later);
+
+  void invalidate(Extents&& image_extents, Context *on_finish);
 
   void complete_write_req(C_WriteRequest *write_req, const int result);
   void dispatch_deferred_writes(void);
