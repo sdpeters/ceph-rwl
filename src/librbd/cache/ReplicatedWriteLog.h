@@ -676,6 +676,7 @@ private:
   unsigned int m_unpublished_reserves = 0;
   PerfCounters *m_perfcounter = nullptr;
 
+  const Extent whole_volume_extent(void);
   void perf_start(const std::string name);
   void perf_stop();
   void log_perf();

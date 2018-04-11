@@ -69,7 +69,7 @@ SyncPoint::SyncPoint(CephContext *cct, uint64_t sync_gen_num)
   : m_cct(cct), log_entry(make_shared<SyncPointLogEntry>(sync_gen_num)) {
   m_prior_log_entries_persisted = new C_Gather(cct, nullptr);
   m_sync_point_persist = new C_Gather(cct, nullptr);
-  ldout(cct, 5) << "sync point " << sync_gen_num << dendl;
+  ldout(cct, 20) << "sync point " << sync_gen_num << dendl;
 }
 SyncPoint::~SyncPoint() {
 }
@@ -605,7 +605,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
   CephContext *cct = m_image_ctx.cct;
   utime_t now = ceph_clock_now();
   C_ReadRequest *read_ctx = new C_ReadRequest(cct, now, m_perfcounter, bl, on_finish);
-  ldout(cct, 5) << "image_extents=" << image_extents << ", "
+  ldout(cct, 20) << "image_extents=" << image_extents << ", "
 		<< "bl=" << bl << ", "
 		<< "on_finish=" << on_finish << dendl;
 
@@ -679,7 +679,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
       uint64_t read_buffer_offset = map_entry_buffer_offset + entry_offset;
       /* Create buffer object referring to pmem pool for this read hit */
       shared_ptr<WriteLogEntry> log_entry = entry.log_entry;
-      ldout(cct, 15) << "adding reader: log_entry=" << *log_entry << dendl;
+      ldout(cct, 20) << "adding reader: log_entry=" << *log_entry << dendl;
       log_entry->add_reader();
       buffer::raw *hit_buf =
 	buffer::claim_buffer(entry_hit_length,
@@ -687,7 +687,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 			     make_deleter([this, log_entry]
 					  {
 					    CephContext *cct = m_image_ctx.cct;
-					    ldout(cct, 15) << "removing reader: log_entry="
+					    ldout(cct, 20) << "removing reader: log_entry="
 							  << *log_entry << dendl;
 					    log_entry->remove_reader();
 					  }));
@@ -712,7 +712,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
     }
   }
 
-  ldout(cct, 10) << "miss_extents=" << read_ctx->m_miss_extents << ", "
+  ldout(cct, 20) << "miss_extents=" << read_ctx->m_miss_extents << ", "
 		<< "miss_bl=" << read_ctx->m_miss_bl << dendl;
 
   if (read_ctx->m_miss_extents.empty()) {
@@ -741,7 +741,7 @@ void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
     return;
   }
 
-  ldout(cct, 15) << "in-flight request cell: " << cell << dendl;
+  ldout(cct, 20) << "in-flight request cell: " << cell << dendl;
   req.on_guard_acquire->acquired(cell, req.detained);
 }
 
@@ -749,7 +749,7 @@ template <typename I>
 void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *cell)
 {
   CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 15) << "cell=" << cell << dendl;
+  ldout(cct, 20) << "cell=" << cell << dendl;
 
   WriteLogGuard::BlockOperations block_ops;
   m_write_log_guard.release(cell, &block_ops);
@@ -840,7 +840,7 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
   }
 
   virtual void finish(int r) {
-    ldout(m_cct, 6) << this << dendl;
+    ldout(m_cct, 20) << this << dendl;
 
     complete_user_request(r);
     _on_finish->complete(0);
@@ -965,7 +965,7 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 	  std::advance(last_in_batch, ops_to_append);
 	  ops.splice(ops.begin(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
 	  ops_remain = !m_ops_to_append.empty();
-	  ldout(m_image_ctx.cct, 10) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
+	  ldout(m_image_ctx.cct, 20) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
 	} else {
 	  ops_remain = false;
 	}
@@ -1008,7 +1008,7 @@ void ReplicatedWriteLog<I>::schedule_append(GenericLogOperations &ops)
     num_to_append = m_ops_to_append.size();
   }
 
-  ldout(cct, 6) << "ops_to_append=" << num_to_append << dendl;
+  ldout(cct, 20) << "ops_to_append=" << num_to_append << dendl;
 
   if (need_finisher) {
     m_async_op_tracker.start_op();
@@ -1044,11 +1044,11 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
 	if (ops_to_flush > ops_flushed_together) {
 	  ops_to_flush = ops_flushed_together;
 	}
-	ldout(m_image_ctx.cct, 10) << "should flush " << ops_to_flush << dendl;
+	ldout(m_image_ctx.cct, 20) << "should flush " << ops_to_flush << dendl;
 	std::advance(last_in_batch, ops_to_flush);
 	ops.splice(ops.begin(), m_ops_to_flush, m_ops_to_flush.begin(), last_in_batch);
 	ops_remain = !m_ops_to_flush.empty();
-	ldout(m_image_ctx.cct, 10) << "flushing " << ops.size() << ", " << m_ops_to_flush.size() << " remain" << dendl;
+	ldout(m_image_ctx.cct, 20) << "flushing " << ops.size() << ", " << m_ops_to_flush.size() << " remain" << dendl;
       }
     }
 
@@ -1081,7 +1081,7 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperations &ops)
     num_to_flush = m_ops_to_flush.size();
   }
 
-  ldout(cct, 10) << "ops_to_flush=" << num_to_flush << dendl;
+  ldout(cct, 20) << "ops_to_flush=" << num_to_flush << dendl;
 
   if (need_finisher) {
     m_async_op_tracker.start_op();
@@ -1110,7 +1110,7 @@ void ReplicatedWriteLog<I>::flush_pmem_buffer(GenericLogOperations &ops)
 
       pmemobj_flush(m_log_pool, write_entry->pmem_buffer, write_entry->ram_entry.write_bytes);
     } else {
-      ldout(m_image_ctx.cct, 1) << "skipping non-write op: " << *operation << dendl;
+      //ldout(m_image_ctx.cct, 20) << "skipping non-write op: " << *operation << dendl;
     }
   }
 
@@ -1122,7 +1122,7 @@ void ReplicatedWriteLog<I>::flush_pmem_buffer(GenericLogOperations &ops)
     if (operation->is_write()) {
       operation->m_buf_persist_comp_time = now;
     } else {
-      ldout(m_image_ctx.cct, 1) << "skipping non-write op: " << *operation << dendl;
+      //ldout(m_image_ctx.cct, 20) << "skipping non-write op: " << *operation << dendl;
     }
   }
 }
@@ -1155,7 +1155,7 @@ void ReplicatedWriteLog<I>::alloc_op_log_entries(GenericLogOperations &ops)
       if (operation->is_write()) {
 	m_dirty_log_entries.push_back(log_entry);
       } else {
-	ldout(m_image_ctx.cct, 1) << "non-write op: " << *operation << dendl;
+	//ldout(m_image_ctx.cct, 20) << "non-write op: " << *operation << dendl;
       }
       ldout(m_image_ctx.cct, 20) << "operation=[" << *operation << "]" << dendl;
     }
@@ -1175,7 +1175,7 @@ void ReplicatedWriteLog<I>::flush_op_log_entries(GenericLogOperations &ops)
     assert(ops.front()->get_log_entry()->pmem_entry < ops.back()->get_log_entry()->pmem_entry);
   }
 
-  ldout(m_image_ctx.cct, 15) << "entry count=" << ops.size() << " "
+  ldout(m_image_ctx.cct, 20) << "entry count=" << ops.size() << " "
 			     << "start address=" << ops.front()->get_log_entry()->pmem_entry << " "
 			     << "bytes=" << ops.size() * sizeof(*(ops.front()->get_log_entry()->pmem_entry))
 			     << dendl;
@@ -1210,7 +1210,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
        * tail of the ring */
       if (entries_to_flush.back()->get_log_entry()->log_entry_index >
 	  operation->get_log_entry()->log_entry_index) {
-	ldout(m_image_ctx.cct, 10) << "entries to flush wrap around the end of the ring at "
+	ldout(m_image_ctx.cct, 20) << "entries to flush wrap around the end of the ring at "
 				   << "operation=[" << *operation << "]" << dendl;
 	flush_op_log_entries(entries_to_flush);
 	entries_to_flush.clear();
@@ -1242,7 +1242,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
 	auto write_op = (shared_ptr<WriteLogOperation>&) operation;
 	pmemobj_tx_publish(write_op->buffer_alloc_action, 1);
       } else {
-	ldout(m_image_ctx.cct, 1) << "skipping non-write op: " << *operation << dendl;
+	//ldout(m_image_ctx.cct, 20) << "skipping non-write op: " << *operation << dendl;
       }
     }
   } TX_ONCOMMIT {
@@ -1278,7 +1278,7 @@ void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperations &ops, i
 	  op->get_write_log_entry()->sync_point_entry->m_writes_completed++;
 	  published_reserves++;
 	} else {
-	  ldout(m_image_ctx.cct, 1) << "completing non-write op: " << *operation << dendl;
+	  //ldout(m_image_ctx.cct, 20) << "completing non-write op: " << *operation << dendl;
 	}
 	op->complete(result);
 	if (op->is_write()) {
@@ -1319,7 +1319,7 @@ void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequest *write_req, int re
 {
   CephContext *cct = m_image_ctx.cct;
 
-  ldout(cct, 6) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
+  ldout(cct, 15) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
   assert(write_req->get_cell());
   if (!write_req->m_op_set->m_persist_on_flush) {
     write_req->complete_user_request(result);
@@ -1532,8 +1532,8 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
 
-  ldout(cct, 6) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
-  ldout(cct,6) << "bl=[" << write_req->bl << "]" << dendl;
+  ldout(cct, 15) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
+  //ldout(cct,6) << "bl=[" << write_req->bl << "]" << dendl;
 
   {
     uint64_t buffer_offset = 0;
@@ -1577,7 +1577,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
       operation->bl.substr_of(write_req->bl, buffer_offset,
 			      operation->log_entry->ram_entry.write_bytes);
       buffer_offset += operation->log_entry->ram_entry.write_bytes;
-      ldout(cct, 6) << "operation=[" << *operation << "]" << dendl;
+      ldout(cct, 20) << "operation=[" << *operation << "]" << dendl;
       allocation++;
     }
   }
@@ -1597,7 +1597,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
     auto write_op = (shared_ptr<WriteLogOperation>&) operation;
     bufferlist::iterator i(&write_op->bl);
     m_perfcounter->inc(l_librbd_rwl_log_op_bytes, write_op->log_entry->ram_entry.write_bytes);
-    ldout(cct, 6) << write_op->bl << dendl;
+    //ldout(cct, 20) << write_op->bl << dendl;
     i.copy((unsigned)write_op->log_entry->ram_entry.write_bytes, (char*)write_op->log_entry->pmem_buffer);
   }
 
@@ -1665,7 +1665,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
     new C_WriteRequest(cct, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish,
 		       [this](C_BlockIORequest* req)->bool {
 			 C_WriteRequest *write_req = (C_WriteRequest*)req;
-			 ldout(m_image_ctx.cct, 6) << "req type=" << write_req->get_name()
+			 ldout(m_image_ctx.cct, 20) << "req type=" << write_req->get_name()
 						   << "req=[" << *write_req << "]" << dendl;
 			 return alloc_write_resources(write_req);
 		       },
@@ -1683,7 +1683,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext([this, write_req](BlockGuardCell *cell, bool detained) {
       CephContext *cct = m_image_ctx.cct;
-      ldout(cct, 6) << "write_req=" << write_req << " cell=" << cell << dendl;
+      ldout(cct, 20) << "write_req=" << write_req << " cell=" << cell << dendl;
 
       assert(cell);
       write_req->detained = detained;
@@ -1819,7 +1819,6 @@ template <typename I>
 void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   utime_t flush_begins = ceph_clock_now();
-  Extents whole_volume = {{ 0, 0xffffffffffffffff}};
   bufferlist bl;
   ldout(cct, 20) << "on_finish=" << on_finish << dendl;
   m_perfcounter->inc(l_librbd_rwl_aio_flush, 1);
@@ -1833,12 +1832,12 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
   }
 
   C_FlushRequest *flush_req =
-    new C_FlushRequest(cct, flush_begins, Extents({{ 0, 0xffffffffffffffff}}),
+    new C_FlushRequest(cct, flush_begins, Extents({whole_volume_extent()}),
 		       std::move(bl), 0, on_finish,
 		       [this](C_BlockIORequest* req)->bool {
 			 C_FlushRequest *flush_req = (C_FlushRequest*)req;
-			 ldout(m_image_ctx.cct, 6) << "req type=" << flush_req->get_name() << " "
-						   << "req=[" << *flush_req << "]" << dendl;
+			 ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
+						    << "req=[" << *flush_req << "]" << dendl;
 			 assert(!flush_req->m_log_entry_allocated);
 			 Mutex::Locker locker(m_lock);
 			 if (m_free_log_entries) {
@@ -1853,15 +1852,15 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
 		       [this](C_BlockIORequest* req) {
 			 utime_t now = ceph_clock_now();
 			 C_FlushRequest *flush_req = (C_FlushRequest*)req;
-			 ldout(m_image_ctx.cct, 6) << "req type=" << flush_req->get_name() << " "
-						   << "req=[" << *flush_req << "]" << dendl;
+			 ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
+			 << "req=[" << *flush_req << "]" << dendl;
 			 assert(flush_req->m_log_entry_allocated);
 			 flush_req->m_dispatched_time = now;
 
 			 /* Handler for sync point persist complete */
 			 sync_complete_callback_t cb =
 			 [this, flush_req](int result) {
-			   ldout(m_image_ctx.cct, 2) << "Sync point op completed for "
+			   ldout(m_image_ctx.cct, 5) << "Sync point op completed for "
 			   << "flush req=[" << *flush_req << "]" << dendl;
 			   {
 			     Mutex::Locker locker(m_lock);
@@ -1901,7 +1900,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
 
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext([this, flush_req](BlockGuardCell *cell, bool detained) {
-      ldout(m_image_ctx.cct, 6) << "flush_req=" << flush_req << " cell=" << cell << dendl;
+      ldout(m_image_ctx.cct, 20) << "flush_req=" << flush_req << " cell=" << cell << dendl;
       assert(cell);
       flush_req->detained = detained;
       /* We don't call flush_req->set_cell(), because the block guard will be released here */
@@ -1947,9 +1946,9 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
 	   * both of these Gathers?*/
 	  flush_req->to_append->m_sync_point_persist->
 	  set_finisher(new FunctionContext([this, flush_req](int r) {
-		ldout(m_image_ctx.cct, 2) << "Flush req=" << flush_req
-					  << " sync point =" << flush_req->to_append
-					  << ". Ready to persist." << dendl;
+		ldout(m_image_ctx.cct, 20) << "Flush req=" << flush_req
+					   << " sync point =" << flush_req->to_append
+					   << ". Ready to persist." << dendl;
 		alloc_and_dispatch_io_req(flush_req);
 	      }));
 	  /* The m_sync_point_persist Gather has all the subs it will ever have,
@@ -2089,12 +2088,17 @@ void ReplicatedWriteLog<I>::new_sync_point(Contexts &later) {
 	}));
 
   if (old_sync_point) {
-    ldout(cct,6) << "new sync point = [" << m_current_sync_point
-		 << "], prior = [" << old_sync_point << "]" << dendl;
+    ldout(cct,6) << "new sync point = [" << *m_current_sync_point
+		 << "], prior = [" << *old_sync_point << "]" << dendl;
   } else {
-    ldout(cct,6) << "first sync point = [" << m_current_sync_point
+    ldout(cct,6) << "first sync point = [" << *m_current_sync_point
 		 << "]" << dendl;
   }
+}
+
+template <typename I>
+const typename ImageCache<I>::Extent ReplicatedWriteLog<I>::whole_volume_extent(void) {
+  return typename ImageCache<I>::Extent({0, m_image_ctx.size});
 }
 
 template <typename I>
@@ -2318,7 +2322,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
 
   /* Start the sync point following the last one seen in the log */
   new_sync_point(later.contexts);
-  ldout(cct,6) << "new sync point = [" << m_current_sync_point << "]" << dendl;
+  ldout(cct,20) << "new sync point = [" << m_current_sync_point << "]" << dendl;
 
   on_finish->complete(0);
 }
@@ -2550,8 +2554,8 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(shared_ptr<GenericLogE
 			 make_deleter([this, log_entry, write_entry]
 				      {
 					CephContext *cct = m_image_ctx.cct;
-					ldout(cct, 15) << "removing reader: log_entry="
-						      << *write_entry << dendl;
+					ldout(cct, 20) << "removing (flush) reader: log_entry="
+						       << *write_entry << dendl;
 					write_entry->remove_reader();
 				      }));
 
@@ -2572,7 +2576,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(shared_ptr<GenericLogE
 	      m_dirty_log_entries.push_front(log_entry);
 	    } else {
 	      write_entry->flushed = true;
-	      ldout(cct, 20) << "flushed:" << write_entry << dendl;
+	      ldout(cct, 20) << "flushed: " << write_entry << dendl;
 	    }
 	    wake_up();
 	  }
@@ -2580,7 +2584,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(shared_ptr<GenericLogE
 
       bufferlist entry_bl;
       entry_bl.push_back(entry_buf);
-      ldout(cct, 2) << "flushing:" << write_entry
+      ldout(cct, 15) << "flushing:" << write_entry
 		     << " " << *write_entry << dendl;
       m_image_writeback->aio_write({{write_entry->ram_entry.image_offset_bytes,
 				     write_entry->ram_entry.write_bytes}},
@@ -2699,7 +2703,7 @@ bool ReplicatedWriteLog<I>::retire_entries() {
 	      "." << entry->ram_entry.write_data.oid.off << dendl;
 	    TX_FREE(entry->ram_entry.write_data);
 	  } else {
-	    ldout(cct, 1) << "Retiring non-write: " << *entry << dendl;
+	    //ldout(cct, 20) << "Retiring non-write: " << *entry << dendl;
 	  }
 	}
       } TX_ONCOMMIT {
@@ -2727,7 +2731,7 @@ bool ReplicatedWriteLog<I>::retire_entries() {
 template <typename I>
 void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  Extent invalidate_extent = {0, m_image_ctx.size};
+  Extent invalidate_extent = whole_volume_extent();
   m_perfcounter->inc(l_librbd_rwl_invalidate_cache, 1);
   ldout(cct, 20) << dendl;
 
