@@ -1526,6 +1526,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
 {
   CephContext *cct = m_image_ctx.cct;
   WriteLogEntries log_entries;
+  DeferredContexts on_exit;
   utime_t now = ceph_clock_now();
   write_req->m_dispatched_time = now;
 
@@ -1533,7 +1534,6 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
 
   ldout(cct, 15) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
-  //ldout(cct,6) << "bl=[" << write_req->bl << "]" << dendl;
 
   {
     uint64_t buffer_offset = 0;
@@ -1541,6 +1541,14 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
     Context *set_complete = write_req;
     if (use_finishers) {
       set_complete = new C_OnFinisher(write_req, &m_on_persist_finisher);
+    }
+    if (!m_persist_on_flush && m_current_sync_point->log_entry->m_writes_completed) {
+      /* Create new sync point and persist the previous one. This sequenced
+       * write will bear a sync gen number shared with no already completed
+       * writes. A group of sequenced writes may be safely flushed concurrently
+       * if they all arrived before any of them completed.
+       */
+      flush_new_sync_point(nullptr, on_exit.contexts);
     }
     write_req->m_op_set =
       make_unique<WriteLogOperationSet>(cct, now, m_current_sync_point, m_persist_on_flush,
@@ -1804,35 +1812,13 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 					guarded_ctx));
 }
 
-/**
- * Aio_flush completes when all previously completed writes are
- * flushed to persistent cache. We make a best-effort attempt to also
- * defer until all in-progress writes complete, but we may not know
- * about all of the writes the application considers in-progress yet,
- * due to uncertainty in the IO submission workq (multiple WQ threads
- * may allow out-of-order submission).
- *
- * This flush operation will not wait for writes deferred for overlap
- * in the block guard.
- */
 template <typename I>
-void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
-  CephContext *cct = m_image_ctx.cct;
+C_FlushRequest* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
   utime_t flush_begins = ceph_clock_now();
   bufferlist bl;
-  ldout(cct, 20) << "on_finish=" << on_finish << dendl;
-  m_perfcounter->inc(l_librbd_rwl_aio_flush, 1);
-
-  {
-    RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
-    if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
-      on_finish->complete(-EROFS);
-      return;
-    }
-  }
 
   C_FlushRequest *flush_req =
-    new C_FlushRequest(cct, flush_begins, Extents({whole_volume_extent()}),
+    new C_FlushRequest(m_image_ctx.cct, flush_begins, Extents({whole_volume_extent()}),
 		       std::move(bl), 0, on_finish,
 		       [this](C_BlockIORequest* req)->bool {
 			 C_FlushRequest *flush_req = (C_FlushRequest*)req;
@@ -1898,6 +1884,86 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
       /* Block guard already released */
     });
 
+  return flush_req;
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequest *flush_req, Contexts &later) {
+  assert(m_lock.is_locked_by_me());
+
+  if (!flush_req) {
+    m_async_op_tracker.start_op();
+    Context *flush_ctx = new FunctionContext([this](int r) {
+	m_async_op_tracker.finish_op();
+      });
+    flush_req = make_flush_req(flush_ctx);
+  }
+
+  /* Add a new sync point. */
+  new_sync_point(later);
+  assert(m_current_sync_point->earlier_sync_point);
+
+  /* This flush request will append/persist the (now) previous sync point */
+  flush_req->to_append = m_current_sync_point->earlier_sync_point;
+  flush_req->to_append->m_append_scheduled = true;
+
+  /* All prior sync points that are still in this list must already be scheduled for append */
+  shared_ptr<SyncPoint> previous = flush_req->to_append->earlier_sync_point;
+  while (previous) {
+    assert(previous->m_append_scheduled);
+    previous = previous->earlier_sync_point;
+  }
+
+  /* When the m_sync_point_persist Gather completes this sync point can be
+   * appended.  The only sub for this Gather is the finisher Context for
+   * m_prior_log_entries_persisted, which records the result of the Gather in
+   * the sync point, and completes. TODO: Do we still need both of these
+   * Gathers?*/
+  flush_req->to_append->m_sync_point_persist->
+    set_finisher(new FunctionContext([this, flush_req](int r) {
+	  ldout(m_image_ctx.cct, 20) << "Flush req=" << flush_req
+				     << " sync point =" << flush_req->to_append
+				     << ". Ready to persist." << dendl;
+	  alloc_and_dispatch_io_req(flush_req);
+	}));
+
+  /* The m_sync_point_persist Gather has all the subs it will ever have, and
+   * now has its finisher. If the sub is already complete, activation will
+   * complete the Gather. The finisher will acquire m_lock, so we'll activate
+   * this when we release m_lock.*/
+  later.push_back(new FunctionContext([this, flush_req](int r) {
+	flush_req->to_append->m_sync_point_persist->activate();
+      }));
+  flush_req->to_append->m_on_sync_point_persisted.push_back(flush_req);
+}
+
+/**
+ * Aio_flush completes when all previously completed writes are
+ * flushed to persistent cache. We make a best-effort attempt to also
+ * defer until all in-progress writes complete, but we may not know
+ * about all of the writes the application considers in-progress yet,
+ * due to uncertainty in the IO submission workq (multiple WQ threads
+ * may allow out-of-order submission).
+ *
+ * This flush operation will not wait for writes deferred for overlap
+ * in the block guard.
+ */
+template <typename I>
+void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 20) << "on_finish=" << on_finish << dendl;
+  m_perfcounter->inc(l_librbd_rwl_aio_flush, 1);
+
+  {
+    RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+    if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
+      on_finish->complete(-EROFS);
+      return;
+    }
+  }
+
+  auto flush_req = make_flush_req(on_finish);
+
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext([this, flush_req](BlockGuardCell *cell, bool detained) {
       ldout(m_image_ctx.cct, 20) << "flush_req=" << flush_req << " cell=" << cell << dendl;
@@ -1927,40 +1993,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
 	 */
 	/* If there have been writes since the last sync point ... */
 	if (m_current_sync_point->log_entry->m_writes) {
-	  /* Add a new sync point. */
-	  new_sync_point(post_unlock.contexts);
-	  assert(m_current_sync_point->earlier_sync_point);
-	  /* This flush request will append/persist the (now) previous sync point */
-	  flush_req->to_append = m_current_sync_point->earlier_sync_point;
-	  flush_req->to_append->m_append_scheduled = true;
-	  /* All prior sync points that are still in this list must already be scheduled for append */
-	  shared_ptr<SyncPoint> previous = flush_req->to_append->earlier_sync_point;
-	  while (previous) {
-	    assert(previous->m_append_scheduled);
-	    previous = previous->earlier_sync_point;
-	  }
-	  /* When the m_sync_point_persist Gather completes this sync point can
-	   * be appended.  The only sub for this Gather is the finisher Context
-	   * for m_prior_log_entries_persisted, which records the result of the
-	   * Gather in the sync point, and completes. TODO: Do we still need
-	   * both of these Gathers?*/
-	  flush_req->to_append->m_sync_point_persist->
-	  set_finisher(new FunctionContext([this, flush_req](int r) {
-		ldout(m_image_ctx.cct, 20) << "Flush req=" << flush_req
-					   << " sync point =" << flush_req->to_append
-					   << ". Ready to persist." << dendl;
-		alloc_and_dispatch_io_req(flush_req);
-	      }));
-	  /* The m_sync_point_persist Gather has all the subs it will ever have,
-	   * and now has its finisher. If the sub is already complete, activation will
-	   * complete the Gather. The finisher will acquire m_lock, so we'll activate
-	   * this when we release m_lock.*/
-	  post_unlock.add(new FunctionContext(
-	    [this, flush_req](int r) {
-	      flush_req->to_append->m_sync_point_persist->activate();
-	    }));
-	  flush_req->to_append->m_on_sync_point_persisted.push_back(flush_req);
-
+	  flush_new_sync_point(flush_req, post_unlock.contexts);
 	} else {
 	  /* There have been no writes to the current sync point. */
 	  if (m_current_sync_point->earlier_sync_point) {
@@ -2523,9 +2556,30 @@ bool ReplicatedWriteLog<I>::can_flush_entry(shared_ptr<GenericLogEntry> log_entr
   ldout(cct, 20) << "" << dendl;
   assert(log_entry->ram_entry.is_write());
   assert(m_lock.is_locked_by_me());
-  // For OWB we can ony flush one write at a time.
-  //return (0 == m_flush_ops_in_flight);
-  // temp hack: just flush ignoring observed concurrency
+
+  /* For OWB we can flush entries between flushes concurrently. Here we'll
+   * consider an entry flushable if its sync gen number is <= the lowest sync
+   * gen number carried by all the entries currently flushing.
+   *
+   * If the entry considered here bears a sync gen number lower than a
+   * previously flushed entry, the application had to have submitted the write
+   * bearing the higher gen number before the write with the lower gen number
+   * completed. So, flushing these concurrently is OK.
+   *
+   * If the entry considered here bears a sync gen number higher than a
+   * currently flushing entry, the write with the lower gen number may have
+   * completed to the application before the write with the higher sync gen
+   * number was submitted, and the application may rely on that completion
+   * order for volume consistency. In this case the entry will not be
+   * considered flushable until all the entries bearing lower sync gen numbers
+   * finish flushing.
+   */
+
+  if (m_flush_ops_in_flight &&
+      (log_entry->ram_entry.sync_gen_number > m_lowest_flushing_sync_gen)) {
+    return false;
+  }
+
   auto write_entry = dynamic_pointer_cast<WriteLogEntry>(log_entry);
   return (write_entry->completed &&
 	  (m_flush_ops_in_flight <= IN_FLIGHT_FLUSH_WRITE_LIMIT) &&
@@ -2540,6 +2594,10 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(shared_ptr<GenericLogE
   assert(log_entry->ram_entry.is_write());
   assert(m_entry_reader_lock.is_locked());
   assert(m_lock.is_locked_by_me());
+  if (!m_flush_ops_in_flight ||
+      (log_entry->ram_entry.sync_gen_number < m_lowest_flushing_sync_gen)) {
+    m_lowest_flushing_sync_gen = log_entry->ram_entry.sync_gen_number;
+  }
   auto write_entry = dynamic_pointer_cast<WriteLogEntry>(log_entry);
   m_flush_ops_in_flight += 1;
   m_flush_bytes_in_flight += write_entry->ram_entry.write_bytes;
@@ -2606,8 +2664,9 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
 	ldout(cct, 20) << "Nothing new to flush" << dendl;
 	break;
       }
-      if (can_flush_entry(m_dirty_log_entries.front())) {
-	post_unlock.contexts.push_back(construct_flush_entry_ctx(m_dirty_log_entries.front()));
+      auto candidate = m_dirty_log_entries.front();
+      if (can_flush_entry(candidate)) {
+	post_unlock.contexts.push_back(construct_flush_entry_ctx(candidate));
 	m_dirty_log_entries.pop_front();
       } else {
 	ldout(cct, 20) << "Next dirty entry isn't flushable yet" << dendl;
@@ -2637,6 +2696,9 @@ bool ReplicatedWriteLog<I>::can_retire_entry(shared_ptr<GenericLogEntry> log_ent
 
   ldout(cct, 20) << "" << dendl;
   assert(m_lock.is_locked_by_me());
+  if (!log_entry->completed) {
+    return false;
+  }
   if (log_entry->ram_entry.is_write()) {
     auto write_entry = dynamic_pointer_cast<WriteLogEntry>(log_entry);
     return (write_entry->flushed &&
