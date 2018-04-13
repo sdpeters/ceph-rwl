@@ -952,7 +952,6 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
   do {
     {
       ops.clear();
-      Mutex::Locker locker(m_log_append_lock);
 
       {
 	Mutex::Locker locker(m_lock);
@@ -965,13 +964,14 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 	  std::advance(last_in_batch, ops_to_append);
 	  ops.splice(ops.begin(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
 	  ops_remain = !m_ops_to_append.empty();
-	  ldout(m_image_ctx.cct, 20) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
+	  //ldout(m_image_ctx.cct, 20) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
 	} else {
 	  ops_remain = false;
 	}
       }
 
       if (ops.size()) {
+	Mutex::Locker locker(m_log_append_lock);
 	alloc_op_log_entries(ops);
 	append_result = append_op_log_entries(ops);
       }
@@ -979,12 +979,8 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 
     int num_ops = ops.size();
     if (num_ops) {
-      complete_op_log_entries(ops, append_result);
-      {
-	Mutex::Locker locker(m_lock);
-	/* New entries may be flushable */
-	wake_up();
-      }
+      /* New entries may be flushable. Completion will wake up flusher. */
+      complete_op_log_entries(std::move(ops), append_result);
     }
   } while (ops_remain);
 }
@@ -997,18 +993,13 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 template <typename I>
 void ReplicatedWriteLog<I>::schedule_append(GenericLogOperations &ops)
 {
-  CephContext *cct = m_image_ctx.cct;
   bool need_finisher;
-  int num_to_append;
   {
     Mutex::Locker locker(m_lock);
 
     need_finisher = m_ops_to_append.empty();
     m_ops_to_append.splice(m_ops_to_append.end(), ops);
-    num_to_append = m_ops_to_append.size();
   }
-
-  ldout(cct, 20) << "ops_to_append=" << num_to_append << dendl;
 
   if (need_finisher) {
     m_async_op_tracker.start_op();
@@ -1044,11 +1035,11 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
 	if (ops_to_flush > ops_flushed_together) {
 	  ops_to_flush = ops_flushed_together;
 	}
-	ldout(m_image_ctx.cct, 20) << "should flush " << ops_to_flush << dendl;
+	//ldout(m_image_ctx.cct, 20) << "should flush " << ops_to_flush << dendl;
 	std::advance(last_in_batch, ops_to_flush);
 	ops.splice(ops.begin(), m_ops_to_flush, m_ops_to_flush.begin(), last_in_batch);
 	ops_remain = !m_ops_to_flush.empty();
-	ldout(m_image_ctx.cct, 20) << "flushing " << ops.size() << ", " << m_ops_to_flush.size() << " remain" << dendl;
+	//ldout(m_image_ctx.cct, 20) << "flushing " << ops.size() << ", " << m_ops_to_flush.size() << " remain" << dendl;
       }
     }
 
@@ -1070,18 +1061,13 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
 template <typename I>
 void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperations &ops)
 {
-  CephContext *cct = m_image_ctx.cct;
   bool need_finisher;
-  int num_to_flush;
   {
     Mutex::Locker locker(m_lock);
 
     need_finisher = m_ops_to_flush.empty();
     m_ops_to_flush.splice(m_ops_to_flush.end(), ops);
-    num_to_flush = m_ops_to_flush.size();
   }
-
-  ldout(cct, 20) << "ops_to_flush=" << num_to_flush << dendl;
 
   if (need_finisher) {
     m_async_op_tracker.start_op();
@@ -1109,8 +1095,6 @@ void ReplicatedWriteLog<I>::flush_pmem_buffer(GenericLogOperations &ops)
       auto write_entry = operation->get_write_log_entry();
 
       pmemobj_flush(m_log_pool, write_entry->pmem_buffer, write_entry->ram_entry.write_bytes);
-    } else {
-      //ldout(m_image_ctx.cct, 20) << "skipping non-write op: " << *operation << dendl;
     }
   }
 
@@ -1141,24 +1125,17 @@ void ReplicatedWriteLog<I>::alloc_op_log_entries(GenericLogOperations &ops)
   struct WriteLogPmemEntry *pmem_log_entries = D_RW(D_RW(pool_root)->log_entries);
 
   /* Allocate the (already reserved) log entries */
-  {
-    Mutex::Locker locker(m_lock);
+  Mutex::Locker locker(m_lock);
 
-    for (auto &operation : ops) {
-      uint32_t entry_index = m_first_free_entry;
-      m_first_free_entry = (m_first_free_entry + 1) % m_total_log_entries;
-      operation->get_log_entry()->log_entry_index = entry_index;
-      auto &log_entry = operation->get_log_entry();
-      log_entry->pmem_entry = &pmem_log_entries[entry_index];
-      log_entry->ram_entry.entry_valid = 1;
-      m_log_entries.push_back(log_entry);
-      if (operation->is_write()) {
-	m_dirty_log_entries.push_back(log_entry);
-      } else {
-	//ldout(m_image_ctx.cct, 20) << "non-write op: " << *operation << dendl;
-      }
-      ldout(m_image_ctx.cct, 20) << "operation=[" << *operation << "]" << dendl;
-    }
+  for (auto &operation : ops) {
+    uint32_t entry_index = m_first_free_entry;
+    m_first_free_entry = (m_first_free_entry + 1) % m_total_log_entries;
+    operation->get_log_entry()->log_entry_index = entry_index;
+    auto &log_entry = operation->get_log_entry();
+    log_entry->pmem_entry = &pmem_log_entries[entry_index];
+    log_entry->ram_entry.entry_valid = 1;
+    m_log_entries.push_back(log_entry);
+    //ldout(m_image_ctx.cct, 20) << "operation=[" << *operation << "]" << dendl;
   }
 }
 
@@ -1175,10 +1152,12 @@ void ReplicatedWriteLog<I>::flush_op_log_entries(GenericLogOperations &ops)
     assert(ops.front()->get_log_entry()->pmem_entry < ops.back()->get_log_entry()->pmem_entry);
   }
 
+  /*
   ldout(m_image_ctx.cct, 20) << "entry count=" << ops.size() << " "
 			     << "start address=" << ops.front()->get_log_entry()->pmem_entry << " "
 			     << "bytes=" << ops.size() * sizeof(*(ops.front()->get_log_entry()->pmem_entry))
 			     << dendl;
+  */
   pmemobj_flush(m_log_pool,
 		ops.front()->get_log_entry()->pmem_entry,
 		ops.size() * sizeof(*(ops.front()->get_log_entry()->pmem_entry)));
@@ -1210,18 +1189,22 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
        * tail of the ring */
       if (entries_to_flush.back()->get_log_entry()->log_entry_index >
 	  operation->get_log_entry()->log_entry_index) {
+	/*
 	ldout(m_image_ctx.cct, 20) << "entries to flush wrap around the end of the ring at "
 				   << "operation=[" << *operation << "]" << dendl;
+	*/
 	flush_op_log_entries(entries_to_flush);
 	entries_to_flush.clear();
 	now = ceph_clock_now();
       }
     }
+    /*
     ldout(m_image_ctx.cct, 20) << "Copying entry for operation at index="
 			       << operation->get_log_entry()->log_entry_index << " "
 			       << "from " << &operation->get_log_entry()->ram_entry << " "
 			       << "to " << operation->get_log_entry()->pmem_entry << " "
 			       << "operation=[" << *operation << "]" << dendl;
+    */
     operation->m_log_append_time = now;
     *operation->get_log_entry()->pmem_entry = operation->get_log_entry()->ram_entry;
     entries_to_flush.push_back(operation);
@@ -1265,44 +1248,49 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
  * Complete a set of write ops with the result of append_op_entries.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperations &ops, int result)
+void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperations&& ops, int result)
 {
   m_async_op_tracker.start_op();
   Context *complete_ctx = new FunctionContext([this, ops, result](int r) {
+      GenericLogEntries dirty_entries;
       int published_reserves = 0;
-      for (auto &operation : ops) {
-	auto op = operation;
+      for (auto &op : ops) {
 	utime_t now = ceph_clock_now();
-	op->get_log_entry()->completed = true;
-	if (op->is_write()) {
+	bool is_write = op->is_write();
+	auto log_entry = op->get_log_entry();
+	log_entry->completed = true;
+	if (is_write) {
 	  op->get_write_log_entry()->sync_point_entry->m_writes_completed++;
 	  published_reserves++;
-	} else {
-	  //ldout(m_image_ctx.cct, 20) << "completing non-write op: " << *operation << dendl;
+	  dirty_entries.push_back(log_entry);
 	}
 	op->complete(result);
-	if (op->is_write()) {
+	if (is_write) {
 	  m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_buf_t, op->m_buf_persist_time - op->m_dispatch_time);
 	}
 	m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_app_t, op->m_log_append_time - op->m_dispatch_time);
 	m_perfcounter->tinc(l_librbd_rwl_log_op_dis_to_cmp_t, now - op->m_dispatch_time);
-	if (op->is_write()) {
+	if (is_write) {
 	  utime_t buf_lat = op->m_buf_persist_comp_time - op->m_buf_persist_time;
 	  m_perfcounter->tinc(l_librbd_rwl_log_op_buf_to_bufc_t, buf_lat);
 	  m_perfcounter->hinc(l_librbd_rwl_log_op_buf_to_bufc_t_hist, buf_lat.to_nsec(),
-			      op->get_log_entry()->ram_entry.write_bytes);
+			      log_entry->ram_entry.write_bytes);
 	  m_perfcounter->tinc(l_librbd_rwl_log_op_buf_to_app_t, op->m_log_append_time - op->m_buf_persist_time);
 	}
 	utime_t app_lat = op->m_log_append_comp_time - op->m_log_append_time;
 	m_perfcounter->tinc(l_librbd_rwl_log_op_app_to_appc_t, app_lat);
 	m_perfcounter->hinc(l_librbd_rwl_log_op_app_to_appc_t_hist, app_lat.to_nsec(),
-			    op->get_log_entry()->ram_entry.write_bytes);
+			    log_entry->ram_entry.write_bytes);
 	m_perfcounter->tinc(l_librbd_rwl_log_op_app_to_cmp_t, now - op->m_log_append_time);
       }
 
       {
 	Mutex::Locker locker(m_lock);
 	m_unpublished_reserves -= published_reserves;
+	m_dirty_log_entries.splice(m_dirty_log_entries.end(), dirty_entries);
+
+	/* New entries may be flushable */
+	wake_up();
       }
 
       m_async_op_tracker.finish_op();
@@ -2235,11 +2223,16 @@ template <typename I>
 void ReplicatedWriteLog<I>::log_perf() {
   bufferlist bl;
   Formatter *f = Formatter::create("json-pretty");
-  ldout(m_image_ctx.cct, 1) << "--- Begin perf dump ---" << dendl;
+  bl.append("--- Begin perf dump ---\n");
+  bl.append("rwl_stats: {\n");
+  bl.append("\"stats\": ");
   m_image_ctx.cct->get_perfcounters_collection()->dump_formatted(f, 0);
+  f->flush(bl);
+  bl.append(",\n\"histograms\": ");
   m_image_ctx.cct->get_perfcounters_collection()->dump_formatted_histograms(f, 0);
   f->flush(bl);
   delete f;
+  bl.append("}");
   bl.append('\0');
   ldout(m_image_ctx.cct, 1) << bl.c_str() << dendl;
   ldout(m_image_ctx.cct, 1) << "--- End perf dump ---" << dendl;
@@ -2659,15 +2652,19 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
   {
     DeferredContexts post_unlock;
     RWLock::RLocker entry_reader_locker(m_entry_reader_lock);
-    Mutex::Locker locker(m_lock);
     while (true) {
+      Mutex::Locker locker(m_lock);
       if (m_dirty_log_entries.empty()) {
 	ldout(cct, 20) << "Nothing new to flush" << dendl;
 	break;
       }
       auto candidate = m_dirty_log_entries.front();
-      if (can_flush_entry(candidate)) {
+      bool flushable = can_flush_entry(candidate);
+      if (flushable) {
 	post_unlock.contexts.push_back(construct_flush_entry_ctx(candidate));
+      }
+      if (flushable || !candidate->ram_entry.is_write()) {
+	/* Remove if we're flushing it, or it's not a write */
 	m_dirty_log_entries.pop_front();
       } else {
 	ldout(cct, 20) << "Next dirty entry isn't flushable yet" << dendl;
