@@ -146,7 +146,7 @@ static const int IN_FLIGHT_FLUSH_BYTES_LIMIT = (1 * 1024 * 1024);
 
 /**** Write log entries ****/
 
-static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 8;
+static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 16;
 static const unsigned int MAX_CONCURRENT_WRITES = 256;
 static const uint64_t DEFAULT_POOL_SIZE = 1u<<30;
 //static const uint64_t MIN_POOL_SIZE = 1u<<23;
@@ -714,7 +714,7 @@ private:
   void alloc_op_log_entries(GenericLogOperations &ops);
   void flush_op_log_entries(GenericLogOperations &ops);
   int append_op_log_entries(GenericLogOperations &ops);
-  void complete_op_log_entries(GenericLogOperations &ops, const int r);
+  void complete_op_log_entries(GenericLogOperations&& ops, const int r);
 };
 
 } // namespace cache
