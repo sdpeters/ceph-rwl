@@ -2551,9 +2551,10 @@ bool ReplicatedWriteLog<I>::can_flush_entry(shared_ptr<GenericLogEntry> log_entr
   assert(log_entry->ram_entry.is_write());
   assert(m_lock.is_locked_by_me());
 
-  /* For OWB we can flush entries between flushes concurrently. Here we'll
-   * consider an entry flushable if its sync gen number is <= the lowest sync
-   * gen number carried by all the entries currently flushing.
+  /* For OWB we can flush entries with the same sync gen number (write between
+   * aio_flush() calls) concurrently. Here we'll consider an entry flushable if
+   * its sync gen number is <= the lowest sync gen number carried by all the
+   * entries currently flushing.
    *
    * If the entry considered here bears a sync gen number lower than a
    * previously flushed entry, the application had to have submitted the write
