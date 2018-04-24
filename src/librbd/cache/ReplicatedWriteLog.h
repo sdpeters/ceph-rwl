@@ -8,14 +8,12 @@
 #include <libpmemobj.h>
 //#endif
 #include "common/RWLock.h"
+#include "common/Timer.h"
 #include "librbd/cache/ImageCache.h"
 #include "librbd/Utils.h"
 #include "librbd/cache/BlockGuard.h"
 #include "librbd/BlockGuard.h"
 #include <functional>
-#include <boost/intrusive/list.hpp>
-#include <boost/intrusive/set.hpp>
-#include <deque>
 #include <list>
 #include "common/Finisher.h"
 #include "include/assert.h"
@@ -144,6 +142,12 @@ static const bool use_finishers = false;
 static const int IN_FLIGHT_FLUSH_WRITE_LIMIT = 64;
 static const int IN_FLIGHT_FLUSH_BYTES_LIMIT = (1 * 1024 * 1024);
 
+/* Limit work between sync points */
+static const uint64_t MAX_WRITES_PER_SYNC_POINT = 256;
+static const uint64_t MAX_BYTES_PER_SYNC_POINT = (1024 * 1024 * 8);
+
+static const double LOG_STATS_INTERVAL_SECONDS = 5;
+
 /**** Write log entries ****/
 
 static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 16;
@@ -155,7 +159,8 @@ static const uint64_t MIN_POOL_SIZE = DEFAULT_POOL_SIZE;
 static const double USABLE_SIZE = (7.0 / 10);
 static const uint64_t BLOCK_ALLOC_OVERHEAD_BYTES = 16;
 static const uint8_t RWL_POOL_VERSION = 1;
-static const uint64_t MAX_LOG_ENTRIES = (1024 * 1024);
+//static const uint64_t MAX_LOG_ENTRIES = (1024 * 1024);
+static const uint64_t MAX_LOG_ENTRIES = (1024 * 8);
 
 POBJ_LAYOUT_BEGIN(rbd_rwl);
 POBJ_LAYOUT_ROOT(rbd_rwl, struct WriteLogPoolRoot);
@@ -238,14 +243,17 @@ public:
   virtual ~GenericLogEntry() { };
   GenericLogEntry(const GenericLogEntry&) = delete;
   GenericLogEntry &operator=(const GenericLogEntry&) = delete;
-  friend std::ostream &operator<<(std::ostream &os,
-				  const GenericLogEntry &entry) {
-    os << "ram_entry=[" << entry.ram_entry << "], "
-       << "pmem_entry=" << (void*)entry.pmem_entry << ", "
-       << "log_entry_index=" << entry.log_entry_index << ", "
-       << "completed=" << entry.completed;
+  virtual std::ostream &format(std::ostream &os) const {
+    os << "ram_entry=[" << ram_entry << "], "
+       << "pmem_entry=" << (void*)pmem_entry << ", "
+       << "log_entry_index=" << log_entry_index << ", "
+       << "completed=" << completed;
     return os;
   };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const GenericLogEntry &entry) {
+    return entry.format(os);
+  }
 };
 
 class SyncPointLogEntry : public GenericLogEntry {
@@ -262,14 +270,19 @@ public:
   }
   SyncPointLogEntry(const SyncPointLogEntry&) = delete;
   SyncPointLogEntry &operator=(const SyncPointLogEntry&) = delete;
-  friend std::ostream &operator<<(std::ostream &os,
-				  const SyncPointLogEntry &entry) {
-    os << (GenericLogEntry&)entry
-       << " m_writes=" << entry.m_writes << ", "
-       << "m_bytes=" << entry.m_bytes << ", "
-       << "m_writes_completed=" << entry.m_writes_completed;
+  std::ostream &format(std::ostream &os) const {
+    os << "(Sync Point) ";
+    GenericLogEntry::format(os);
+    os << ", "
+       << "m_writes=" << m_writes << ", "
+       << "m_bytes=" << m_bytes << ", "
+       << "m_writes_completed=" << m_writes_completed;
     return os;
   };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const SyncPointLogEntry &entry) {
+    return entry.format(os);
+  }
 };
 
 class WriteLogEntry : public GenericLogEntry {
@@ -292,16 +305,21 @@ public:
   BlockExtent block_extent();
   void add_reader();
   void remove_reader();
-  friend std::ostream &operator<<(std::ostream &os,
-				  const WriteLogEntry &entry) {
-    os << (GenericLogEntry&)entry
-       << " sync_point_entry=" << entry.sync_point_entry << ", "
-       << "referring_map_entries=" << entry.referring_map_entries << ", "
-       << "reader_count=" << entry.reader_count << ", "
-       << "flushing=" << entry.flushing << ", "
-       << "flushed=" << entry.flushed;
+  std::ostream &format(std::ostream &os) const {
+    os << "(Write) ";
+    GenericLogEntry::format(os);
+    os << ", "
+       << "sync_point_entry=[" << *sync_point_entry << "], "
+       << "referring_map_entries=" << referring_map_entries << ", "
+       << "reader_count=" << reader_count << ", "
+       << "flushing=" << flushing << ", "
+       << "flushed=" << flushed;
     return os;
   };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const WriteLogEntry &entry) {
+    return entry.format(os);
+  }
 };
 
 typedef std::list<shared_ptr<WriteLogEntry>> WriteLogEntries;
@@ -326,6 +344,7 @@ public:
    * until all these complete. */
   C_Gather *m_prior_log_entries_persisted;
   int m_prior_log_entries_persisted_result = 0;
+  int m_prior_log_entries_persisted_complete = false;
   /* The finisher for this will append the sync point to the log.  The finisher
    * for m_prior_log_entries_persisted will be a sub-op of this. */
   C_Gather *m_sync_point_persist;
@@ -342,11 +361,12 @@ public:
   friend std::ostream &operator<<(std::ostream &os,
 				  const SyncPoint &p) {
     os << "log_entry=[" << *p.log_entry << "], "
-       << "earlier_sync_point=" << p.earlier_sync_point
-       << "later_sync_point=" << p.later_sync_point
+       << "earlier_sync_point=" << p.earlier_sync_point << ", "
+       << "later_sync_point=" << p.later_sync_point << ", "
        << "m_final_op_sequence_num=" << p.m_final_op_sequence_num << ", "
-       << "m_prior_log_entries_persisted=[" << p.m_prior_log_entries_persisted << "], "
-       << "m_on_sync_point_persisted=[" << p.m_on_sync_point_persisted << "]";
+       << "m_prior_log_entries_persisted=" << p.m_prior_log_entries_persisted << ", "
+       << "m_prior_log_entries_persisted_complete=" << p.m_prior_log_entries_persisted_complete << ", "
+       << "m_on_sync_point_persisted=" << p.m_on_sync_point_persisted.size() << "";
     return os;
   };
 };
@@ -365,15 +385,18 @@ public:
   virtual ~GenericLogOperation() { };
   GenericLogOperation(const GenericLogOperation&) = delete;
   GenericLogOperation &operator=(const GenericLogOperation&) = delete;
-  friend std::ostream &operator<<(std::ostream &os,
-				  const GenericLogOperation &op) {
-    os << "m_dispatch_time=[" << op.m_dispatch_time << "], "
-       << "m_buf_persist_time=[" << op.m_buf_persist_time << "], "
-       << "m_buf_persist_comp_time=[" << op.m_buf_persist_comp_time << "], "
-       << "m_log_append_time=[" << op.m_log_append_time << "], "
-       << "m_log_append_comp_time=[" << op.m_log_append_comp_time << "], ";
+  virtual std::ostream &format(std::ostream &os) const {
+    os << "m_dispatch_time=[" << m_dispatch_time << "], "
+       << "m_buf_persist_time=[" << m_buf_persist_time << "], "
+       << "m_buf_persist_comp_time=[" << m_buf_persist_comp_time << "], "
+       << "m_log_append_time=[" << m_log_append_time << "], "
+       << "m_log_append_comp_time=[" << m_log_append_comp_time << "], ";
     return os;
   };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const GenericLogOperation &op) {
+    return op.format(os);
+  }
   virtual const shared_ptr<GenericLogEntry> get_log_entry() = 0;
   virtual const shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return nullptr; }
   virtual const shared_ptr<WriteLogEntry> get_write_log_entry() { return nullptr; }
@@ -393,12 +416,16 @@ public:
   ~SyncPointLogOperation();
   SyncPointLogOperation(const SyncPointLogOperation&) = delete;
   SyncPointLogOperation &operator=(const SyncPointLogOperation&) = delete;
-  friend std::ostream &operator<<(std::ostream &os,
-				  const SyncPointLogOperation &op) {
-    os << (GenericLogOperation&)op
-       << "sync_point=[" << *op.sync_point << "], ";
+  std::ostream &format(std::ostream &os) const {
+    os << "(Sync Point) ";
+    GenericLogOperation::format(os);
+    os << "sync_point=[" << *sync_point << "]";
     return os;
   };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const SyncPointLogOperation &op) {
+    return op.format(os);
+  }
   const shared_ptr<GenericLogEntry> get_log_entry() { return get_sync_point_log_entry(); }
   const shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return sync_point->log_entry; }
   bool is_sync_point() { return true; }
@@ -415,14 +442,18 @@ public:
   ~WriteLogOperation();
   WriteLogOperation(const WriteLogOperation&) = delete;
   WriteLogOperation &operator=(const WriteLogOperation&) = delete;
-  friend std::ostream &operator<<(std::ostream &os,
-				  const WriteLogOperation &op) {
-    os << (GenericLogOperation&)op
-       << "log_entry=[" << *op.log_entry << "], "
-       << "bl=[" << op.bl << "],"
-       << "buffer_alloc_action=" << op.buffer_alloc_action;
+  std::ostream &format(std::ostream &os) const {
+    os << "(Write) ";
+    GenericLogOperation::format(os);
+    os << "log_entry=[" << *log_entry << "], "
+       << "bl=[" << bl << "],"
+       << "buffer_alloc_action=" << buffer_alloc_action;
     return os;
   };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const WriteLogOperation &op) {
+    return op.format(os);
+  }
   const shared_ptr<GenericLogEntry> get_log_entry() { return get_write_log_entry(); }
   const shared_ptr<WriteLogEntry> get_write_log_entry() { return log_entry; }
   bool is_write() { return true; }
@@ -636,23 +667,38 @@ private:
   bool m_flush_seen = false;
 
   util::AsyncOpTracker m_async_op_tracker;
+  /* Debug counters for the places m_async_op_tracker is used */
+  std::atomic<int> m_async_flush_ops = {0};
+  std::atomic<int> m_async_append_ops = {0};
+  std::atomic<int> m_async_complete_ops = {0};
+  std::atomic<int> m_async_write_req_finish = {0};
+  std::atomic<int> m_async_null_flush_finish = {0};
+  std::atomic<int> m_async_process_work = {0};
 
   /* Acquire locks in order declared here */
-  mutable RWLock m_entry_reader_lock; /* Hold a read lock on this to add
-				       * readers to log entry bufs. Hold a
-				       * write lock to prevent readers from
-				       * being added (e.g. when removing log
-				       * entrys from the map). No lock required
-				       * to remove readers. */
-  mutable Mutex m_deferred_dispatch_lock; /* Hold this while consuming from
-					   * m_deferred_ios. */
-  mutable Mutex m_log_append_lock; /* Hold this while appending or retiring log
-				    * entries. */
+
+  /* Hold a read lock on m_entry_reader_lock to add readers to log entry
+   * bufs. Hold a write lock to prevent readers from being added (e.g. when
+   * removing log entrys from the map). No lock required to remove readers. */
+  mutable RWLock m_entry_reader_lock;
+  /* Hold m_deferred_dispatch_lock while consuming from m_deferred_ios. */
+  mutable Mutex m_deferred_dispatch_lock;
+  /* Hold m_log_append_lock while appending or retiring log entries. */
+  mutable Mutex m_log_append_lock;
+  /* Used for most synchronization */
   mutable Mutex m_lock;
 
   bool m_wake_up_requested = false;
   bool m_wake_up_scheduled = false;
   bool m_wake_up_enabled = true;
+
+  // TODO: remove or make inactive for release
+  std::atomic<int> m_total_internal_flush_reqs = {0};
+  std::atomic<int> m_internal_flush_reqs = {0};
+
+  // TODO: remove this flush debug stuff
+  std::atomic<int> m_flushes_appending = {0};
+  std::atomic<int> m_total_flushes_appended = {0};
 
   Contexts m_flush_complete_contexts;
   Finisher m_persist_finisher;
@@ -679,10 +725,15 @@ private:
   unsigned int m_unpublished_reserves = 0;
   PerfCounters *m_perfcounter = nullptr;
 
+  std::atomic<bool> m_periodic_stats_enabled = {true};
+  mutable Mutex m_timer_lock; /* Used only by m_timer */
+  SafeTimer m_timer;
+
   const Extent whole_volume_extent(void);
   void perf_start(const std::string name);
   void perf_stop();
   void log_perf();
+  void arm_periodic_stats();
 
   void rwl_init(Context *on_finish);
   void wake_up();

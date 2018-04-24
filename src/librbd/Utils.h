@@ -189,6 +189,13 @@ public:
     m_on_finish = on_finish;
   }
 
+  friend std::ostream &operator<<(std::ostream &os,
+				  const AsyncOpTracker &t) {
+    os << "refs=" << t.m_refs << ", "
+       << "on_finish=" << t.m_on_finish;
+    return os;
+  }
+
 private:
   std::atomic<uint64_t> m_refs = { 0 };
   Context *m_on_finish = nullptr;
