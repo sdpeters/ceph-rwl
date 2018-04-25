@@ -159,8 +159,8 @@ static const uint64_t MIN_POOL_SIZE = DEFAULT_POOL_SIZE;
 static const double USABLE_SIZE = (7.0 / 10);
 static const uint64_t BLOCK_ALLOC_OVERHEAD_BYTES = 16;
 static const uint8_t RWL_POOL_VERSION = 1;
-//static const uint64_t MAX_LOG_ENTRIES = (1024 * 1024);
-static const uint64_t MAX_LOG_ENTRIES = (1024 * 8);
+static const uint64_t MAX_LOG_ENTRIES = (1024 * 1024);
+//static const uint64_t MAX_LOG_ENTRIES = (1024 * 128);
 
 POBJ_LAYOUT_BEGIN(rbd_rwl);
 POBJ_LAYOUT_ROOT(rbd_rwl, struct WriteLogPoolRoot);
@@ -339,9 +339,9 @@ public:
    * it and all the prior sync points have been appended and
    * persisted.
    *
-   * Writes bearing this sync gen number and the prior sync point will
-   * be sub-ops of this Gather. This sync point will not be appended
-   * until all these complete. */
+   * Writes bearing this sync gen number and the prior sync point will be
+   * sub-ops of this Gather. This sync point will not be appended until all
+   * these complete to the point where their persist order is guaranteed. */
   C_Gather *m_prior_log_entries_persisted;
   int m_prior_log_entries_persisted_result = 0;
   int m_prior_log_entries_persisted_complete = false;
@@ -349,9 +349,13 @@ public:
    * for m_prior_log_entries_persisted will be a sub-op of this. */
   C_Gather *m_sync_point_persist;
   bool m_append_scheduled = false;
-  /* Signal these when this sync point is appended and persisted. One of these
-   * is is a sub-operation of the next sync point's
-   * m_prior_log_entries_persisted Gather. */
+  bool m_appending = false;
+  /* Signal these when this sync point is appending to the log, and its order
+   * of appearance is guaranteed.. One of these is is a sub-operation of the
+   * next sync point's m_prior_log_entries_persisted Gather. */
+  std::vector<Context*> m_on_sync_point_appending;
+  /* Signal these when this sync point is appended and persisted. User
+   * aio_flush() calls are added to this. */
   std::vector<Context*> m_on_sync_point_persisted;
 
   SyncPoint(CephContext *cct, const uint64_t sync_gen_num);
@@ -366,6 +370,9 @@ public:
        << "m_final_op_sequence_num=" << p.m_final_op_sequence_num << ", "
        << "m_prior_log_entries_persisted=" << p.m_prior_log_entries_persisted << ", "
        << "m_prior_log_entries_persisted_complete=" << p.m_prior_log_entries_persisted_complete << ", "
+       << "m_append_scheduled=" << p.m_append_scheduled << ", "
+       << "m_appending=" << p.m_appending << ", "
+       << "m_on_sync_point_appending=" << p.m_on_sync_point_appending.size() << ", "
        << "m_on_sync_point_persisted=" << p.m_on_sync_point_persisted.size() << "";
     return os;
   };
@@ -400,17 +407,21 @@ public:
   virtual const shared_ptr<GenericLogEntry> get_log_entry() = 0;
   virtual const shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return nullptr; }
   virtual const shared_ptr<WriteLogEntry> get_write_log_entry() { return nullptr; }
+  virtual void appending() = 0;
   virtual void complete(int r) = 0;
   virtual bool is_write() { return false; }
   virtual bool is_sync_point() { return false; }
 };
 
+typedef boost::function<void(int)> sync_point_appending_callback_t;
 typedef boost::function<void(int)> sync_complete_callback_t;
 class SyncPointLogOperation : public GenericLogOperation {
 public:
   shared_ptr<SyncPoint> sync_point;
+  sync_complete_callback_t sync_point_appending_callback;
   sync_complete_callback_t sync_complete_callback;
   SyncPointLogOperation(shared_ptr<SyncPoint> sync_point,
+			sync_point_appending_callback_t sync_point_appending_callback,
 			sync_complete_callback_t sync_complete_callback,
 			const utime_t dispatch_time);
   ~SyncPointLogOperation();
@@ -429,14 +440,18 @@ public:
   const shared_ptr<GenericLogEntry> get_log_entry() { return get_sync_point_log_entry(); }
   const shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return sync_point->log_entry; }
   bool is_sync_point() { return true; }
+  void appending();
   void complete(int r);
 };
 
 class WriteLogOperation : public GenericLogOperation {
+private:
+  Mutex m_lock;
 public:
   shared_ptr<WriteLogEntry> log_entry;
   bufferlist bl;
   pobj_action *buffer_alloc_action = nullptr;
+  Context *on_write_append; /* Completion for things waiting on this write's position in the log to be guaranteed */
   Context *on_write_persist; /* Completion for things waiting on this write to persist */
   WriteLogOperation(WriteLogOperationSet &set, const uint64_t image_offset_bytes, const uint64_t write_bytes);
   ~WriteLogOperation();
@@ -457,6 +472,7 @@ public:
   const shared_ptr<GenericLogEntry> get_log_entry() { return get_write_log_entry(); }
   const shared_ptr<WriteLogEntry> get_write_log_entry() { return log_entry; }
   bool is_write() { return true; }
+  void appending();
   void complete(int r);
 };
 typedef std::list<shared_ptr<WriteLogOperation>> WriteLogOperations;
@@ -469,7 +485,9 @@ public:
   Context *m_on_finish;
   bool m_persist_on_flush;
   BlockGuardCell *m_cell;
-  C_Gather *m_extent_ops;
+  C_Gather *m_extent_ops_appending;
+  Context *m_on_ops_appending;
+  C_Gather *m_extent_ops_persist;
   Context *m_on_ops_persist;
   GenericLogOperations operations;
   utime_t m_dispatch_time; /* When set created */
@@ -484,7 +502,8 @@ public:
     os << "m_extent=[" << s.m_extent.block_start << "," << s.m_extent.block_end << "] "
        << "m_on_finish=" << s.m_on_finish << ", "
        << "m_cell=" << (void*)s.m_cell << ", "
-       << "m_extent_ops=[" << s.m_extent_ops << "]";
+       << "m_extent_ops_appending=[" << s.m_extent_ops_appending << ", "
+       << "m_extent_ops_persist=[" << s.m_extent_ops_persist << "]";
     return os;
   };
 };

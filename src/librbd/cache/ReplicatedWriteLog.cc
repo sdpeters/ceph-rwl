@@ -69,8 +69,11 @@ SyncPoint::SyncPoint(CephContext *cct, uint64_t sync_gen_num)
   : m_cct(cct), log_entry(make_shared<SyncPointLogEntry>(sync_gen_num)) {
   m_prior_log_entries_persisted = new C_Gather(cct, nullptr);
   m_sync_point_persist = new C_Gather(cct, nullptr);
+  m_on_sync_point_appending.reserve(MAX_WRITES_PER_SYNC_POINT + 2);
+  m_on_sync_point_persisted.reserve(MAX_WRITES_PER_SYNC_POINT + 2);
   ldout(cct, 20) << "sync point " << sync_gen_num << dendl;
 }
+
 SyncPoint::~SyncPoint() {
 }
 
@@ -78,43 +81,84 @@ GenericLogOperation::GenericLogOperation(const utime_t dispatch_time) : m_dispat
 }
 
 SyncPointLogOperation::SyncPointLogOperation(shared_ptr<SyncPoint> sync_point,
+					     sync_point_appending_callback_t sync_point_appending_callback,
 					     sync_complete_callback_t sync_complete_callback,
 					     const utime_t dispatch_time)
   : GenericLogOperation(dispatch_time), sync_point(sync_point),
+    sync_point_appending_callback(sync_point_appending_callback),
     sync_complete_callback(sync_complete_callback) {
 }
 
 SyncPointLogOperation::~SyncPointLogOperation() { }
+
+void SyncPointLogOperation::appending() {
+  sync_point_appending_callback(0);
+}
 
 void SyncPointLogOperation::complete(int result) {
   sync_complete_callback(result);
 }
 
 WriteLogOperation::WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes)
-  : GenericLogOperation(set.m_dispatch_time), log_entry(make_shared<WriteLogEntry>(set.sync_point->log_entry, image_offset_bytes, write_bytes)) {
-  on_write_persist = set.m_extent_ops->new_sub();
+  : GenericLogOperation(set.m_dispatch_time), m_lock("librbd::cache::rwl::WriteLogOperation::m_lock"),
+    log_entry(make_shared<WriteLogEntry>(set.sync_point->log_entry, image_offset_bytes, write_bytes)) {
+  on_write_append = set.m_extent_ops_appending->new_sub();
+  on_write_persist = set.m_extent_ops_persist->new_sub();
   log_entry->sync_point_entry->m_writes++;
   log_entry->sync_point_entry->m_bytes += write_bytes;
 }
 
 WriteLogOperation::~WriteLogOperation() { }
 
+/* Called when the write log operation is appending and its log position is guaranteed */
+void WriteLogOperation::appending() {
+  Context *on_append = nullptr;
+  {
+    Mutex::Locker locker(m_lock);
+    on_append = on_write_append;
+    on_write_append = nullptr;
+  }
+  if (on_append) {
+    on_append->complete(0);
+  }
+}
+
 /* Called when the write log operation is completed in all log replicas */
 void WriteLogOperation::complete(int result) {
-  on_write_persist->complete(result);
+  appending();
+  Context *on_persist = nullptr;
+  {
+    Mutex::Locker locker(m_lock);
+    on_persist = on_write_persist;
+    on_write_persist = nullptr;
+  }
+  if (on_persist) {
+    on_persist->complete(result);
+  }
 }
 
 WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, utime_t dispatched, shared_ptr<SyncPoint> sync_point,
 					   bool persist_on_flush, BlockExtent extent, Context *on_finish)
   : m_cct(cct), m_extent(extent), m_on_finish(on_finish),
     m_persist_on_flush(persist_on_flush), m_dispatch_time(dispatched), sync_point(sync_point) {
-  m_on_ops_persist = sync_point->m_prior_log_entries_persisted->new_sub();
-  m_extent_ops =
+  m_on_ops_appending = sync_point->m_prior_log_entries_persisted->new_sub();
+  m_on_ops_persist = nullptr;
+  m_extent_ops_persist =
     new C_Gather(cct,
 		 new FunctionContext( [this](int r) {
-		     //ldout(m_cct, 6) << "m_extent_ops completed" << dendl;
-		     m_on_ops_persist->complete(r);
+		     //ldout(m_cct, 6) << "m_extent_ops_persist completed" << dendl;
+		     if (m_on_ops_persist) {
+		       m_on_ops_persist->complete(r);
+		     }
 		     m_on_finish->complete(r);
+		   }));
+  auto appending_persist_sub = m_extent_ops_persist->new_sub();
+  m_extent_ops_appending =
+    new C_Gather(cct,
+		 new FunctionContext( [this, appending_persist_sub](int r) {
+		     //ldout(m_cct, 6) << "m_extent_ops_appending completed" << dendl;
+		     m_on_ops_appending->complete(r);
+		     appending_persist_sub->complete(r);
 		   }));
 }
 
@@ -1020,12 +1064,19 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 template <typename I>
 void ReplicatedWriteLog<I>::schedule_append(GenericLogOperations &ops)
 {
+  std::vector<shared_ptr<GenericLogOperation>> appending;
   bool need_finisher;
+
+  /* Prepare copy of ops list to mark appending after the input list is moved
+   * to m_ops_to_append */
+  appending.reserve(ops.size());
+  std::copy(std::begin(ops), std::end(ops), std::back_inserter(appending));
+
   {
     Mutex::Locker locker(m_lock);
 
     need_finisher = m_ops_to_append.empty();
-    m_ops_to_append.splice(m_ops_to_append.end(), ops);
+    m_ops_to_append.splice(m_ops_to_append.end(), std::move(ops));
   }
 
   if (need_finisher) {
@@ -1041,6 +1092,10 @@ void ReplicatedWriteLog<I>::schedule_append(GenericLogOperations &ops)
     } else {
       m_image_ctx.op_work_queue->queue(append_ctx);
     }
+  }
+
+  for (auto op : appending) {
+    op->appending();
   }
 }
 
@@ -1626,7 +1681,8 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
       });
 
   /* All extent ops subs created */
-  write_req->m_op_set->m_extent_ops->activate();
+  write_req->m_op_set->m_extent_ops_appending->activate();
+  write_req->m_op_set->m_extent_ops_persist->activate();
 
   /* Write data */
   for (auto &operation : write_req->m_op_set->operations) {
@@ -1673,7 +1729,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
   Mutex::Locker locker(m_lock);
   if (write_req->m_op_set->sync_point->earlier_sync_point) {
     write_req->m_do_early_flush = false;
-    write_req->m_op_set->sync_point->earlier_sync_point->m_on_sync_point_persisted.push_back(schedule_append_ctx);
+    write_req->m_op_set->sync_point->earlier_sync_point->m_on_sync_point_appending.push_back(schedule_append_ctx);
   } else {
     /* The prior sync point is done, so we'll schedule append here */
     write_req->m_do_early_flush =
@@ -1892,8 +1948,22 @@ C_FlushRequest* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
 			 assert(flush_req->m_log_entry_allocated);
 			 flush_req->m_dispatched_time = now;
 
+			 /* Handler for sync point appending */
+			 sync_complete_callback_t appending_cb =
+			 [this, flush_req](int result) {
+			   std::vector<Context*> on_append;
+			   ldout(m_image_ctx.cct, 5) << "Sync point op appending for "
+			   << "flush req=[" << *flush_req << "]" << dendl;
+			   {
+			     Mutex::Locker locker(m_lock);
+			     flush_req->to_append->m_appending = true;
+			     on_append.swap(flush_req->to_append->m_on_sync_point_appending);
+			   }
+			   finish_contexts(m_image_ctx.cct, on_append, result);
+			 };
+
 			 /* Handler for sync point persist complete */
-			 sync_complete_callback_t cb =
+			 sync_complete_callback_t comp_cb =
 			 [this, flush_req](int result) {
 			   ldout(m_image_ctx.cct, 5) << "Sync point op completed for "
 			   << "flush req=[" << *flush_req << "]" << dendl;
@@ -1913,13 +1983,15 @@ C_FlushRequest* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
 			     // }
 			     // assert(found_self == 1);
 			   }
+			   /* Catch late-arriving on-appending work */
+			   flush_req->op->appending();
 			   /* This flush request will be one of these contexts */
 			   finish_contexts(m_image_ctx.cct,
 					   flush_req->to_append->m_on_sync_point_persisted, result);
 			 };
 
 			 flush_req->op =
-			 make_shared<SyncPointLogOperation>(flush_req->to_append, cb, now);
+			 make_shared<SyncPointLogOperation>(flush_req->to_append, appending_cb, comp_cb, now);
 
 			 m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
 			 GenericLogOperations ops;
@@ -2174,8 +2246,10 @@ void ReplicatedWriteLog<I>::new_sync_point(Contexts &later) {
     new_sync_point->earlier_sync_point = old_sync_point;
     old_sync_point->later_sync_point = new_sync_point;
     old_sync_point->m_final_op_sequence_num = m_last_op_sequence_num;
-    /* Append of new sync point deferred until this sync point is persisted */
-    old_sync_point->m_on_sync_point_persisted.push_back(new_sync_point->m_prior_log_entries_persisted->new_sub());
+    if (!old_sync_point->m_appending) {
+      /* Append of new sync point deferred until old sync point is appending */
+      old_sync_point->m_on_sync_point_appending.push_back(new_sync_point->m_prior_log_entries_persisted->new_sub());
+    }
     /* This sync point will acquire no more sub-ops. Activation needs
      * to acquire m_lock, so defer to later*/
     later.push_back(new FunctionContext(
