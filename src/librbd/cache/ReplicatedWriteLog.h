@@ -733,18 +733,6 @@ private:
   bool m_wake_up_scheduled = false;
   bool m_wake_up_enabled = true;
 
-  // TODO: remove or make inactive for release
-  std::atomic<int> m_total_internal_flush_reqs = {0};
-  std::atomic<int> m_internal_flush_reqs = {0};
-
-  // TODO: remove this flush debug stuff
-  std::atomic<int> m_flushes_appending = {0};
-  std::atomic<int> m_total_flushes_appended = {0};
-
-  std::atomic<int> m_req_num = {1};
-  int m_highest_request_released = 0;
-  int m_highest_flush_released = 0;
-
   Contexts m_flush_complete_contexts;
   Finisher m_persist_finisher;
   Finisher m_log_append_finisher;

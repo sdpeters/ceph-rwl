@@ -947,7 +947,6 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
   io_alloc_resources_callback_t m_io_alloc_resources_callback;
   io_deferred_callback_t m_io_deferred_callback;
   io_dispatch_callback_t m_io_dispatch_callback;
-  int m_req_num = 0;
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_BlockIORequest &req) {
     os << "m_image_extents=[" << req.m_image_extents << "], "
@@ -1074,7 +1073,6 @@ struct C_WriteRequest : public C_BlockIORequest {
 struct C_FlushRequest : public C_BlockIORequest {
   std::atomic<bool> m_log_entry_allocated = {false};
   bool m_internal = false;
-  std::atomic<int> *m_internal_counter;
   shared_ptr<SyncPoint> to_append;
   shared_ptr<SyncPointLogOperation> op;
   friend std::ostream &operator<<(std::ostream &os,
@@ -1096,10 +1094,6 @@ struct C_FlushRequest : public C_BlockIORequest {
 
   ~C_FlushRequest() {
     ldout(m_cct, 1) << this << dendl;
-    // TODO: remove this flush debug
-    if (m_internal && m_internal_counter) {
-      (*m_internal_counter)--;
-    }
   }
 
   const char *get_name() const override {
@@ -1900,17 +1894,9 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
       if (detained) {
 	m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
       }
-      {
-	Mutex::Locker locker(m_lock);
-	if (m_highest_request_released < write_req->m_req_num) {
-	  m_highest_request_released = write_req->m_req_num;
-	}
-	//assert(write_req->m_req_num > m_highest_flush_released);
-      }
       alloc_and_dispatch_io_req(write_req);
     });
 
-  write_req->m_req_num = m_req_num++;
   detain_guarded_request(GuardedRequest(write_req->m_image_extents_summary.first_block,
 					write_req->m_image_extents_summary.last_block,
 					guarded_ctx));
@@ -2102,8 +2088,6 @@ C_FlushRequest* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
 			 m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
 			 GenericLogOperations ops;
 			 ops.push_back(flush_req->op);
-			 m_flushes_appending++;
-			 m_total_flushes_appended++;
 			 schedule_append(ops);
 		       });
 
@@ -2119,9 +2103,6 @@ C_FlushRequest* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
       m_perfcounter->tinc(l_librbd_rwl_aio_flush_latency, now - flush_req->m_arrived_time);
 
       /* Block guard already released */
-      if (flush_req->op) {
-	m_flushes_appending--;
-      }
     });
 
   return flush_req;
@@ -2140,9 +2121,6 @@ void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequest *flush_req, Cont
       });
     flush_req = make_flush_req(flush_ctx);
     flush_req->m_internal = true;
-    flush_req->m_internal_counter = &m_internal_flush_reqs;
-    m_internal_flush_reqs++;
-    m_total_internal_flush_reqs++;
   }
 
   /* Add a new sync point. */
@@ -2223,23 +2201,6 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
 	DeferredContexts post_unlock; /* Do these when the lock below is released */
 	Mutex::Locker locker(m_lock);
 
-	//assert(m_highest_request_released < flush_req->m_req_num);
-	if (m_highest_request_released > flush_req->m_req_num) {
-	  ldout(m_image_ctx.cct, 5) << "req " << m_highest_request_released
-				    << " seen before flush req " << flush_req->m_req_num << dendl;
-	}
-	if (m_highest_request_released < flush_req->m_req_num) {
-	  m_highest_request_released = flush_req->m_req_num;
-	}
-	assert(flush_req->m_req_num > m_highest_flush_released);
-	if (m_highest_flush_released < flush_req->m_req_num) {
-	  m_highest_flush_released = flush_req->m_req_num;
-	}
-
-	if (m_deferred_ios.size()) {
-	  ldout(m_image_ctx.cct, 5) << "Unexpected deferred IOs: " << m_deferred_ios.size() << ", "
-				    << "first=" << *(m_deferred_ios.front()) << dendl;
-	}
 	if (!m_flush_seen) {
 	  ldout(m_image_ctx.cct, 5) << "flush seen" << dendl;
 	  m_flush_seen = true;
@@ -2276,7 +2237,6 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
       release_guarded_request(cell);
     });
 
-  flush_req->m_req_num = m_req_num++;
   detain_guarded_request(GuardedRequest(flush_req->m_image_extents_summary.first_block,
 					flush_req->m_image_extents_summary.last_block,
 					guarded_ctx, true));
@@ -2534,10 +2494,6 @@ void ReplicatedWriteLog<I>::arm_periodic_stats() {
 				    << "m_dirty_log_entries=" << m_dirty_log_entries.size() << ", "
 				    << "m_flush_ops_in_flight=" << m_flush_ops_in_flight << ", "
 				    << "m_flush_bytes_in_flight=" << m_flush_bytes_in_flight << ", "
-				    << "m_total_internal_flush_reqs=" << m_total_internal_flush_reqs << ", "
-				    << "m_internal_flush_reqs=" << m_internal_flush_reqs << ", "
-				    << "m_flushes_appending=" << m_flushes_appending << ", "
-				    << "m_total_flushes_appended=" << m_total_flushes_appended << ", "
 				    << "m_async_flush_ops=" << m_async_flush_ops << ", "
 				    << "m_async_append_ops=" << m_async_append_ops << ", "
 				    << "m_async_complete_ops=" << m_async_complete_ops << ", "
