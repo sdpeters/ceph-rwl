@@ -788,7 +788,7 @@ BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_helper(GuardedRequ
 
   assert(m_blockguard_lock.is_locked_by_me());
   ldout(cct, 20) << dendl;
-  assert (req.sequence_num);
+
   int r = m_write_log_guard.detain({req.first_block_num, req.last_block_num},
 				   &req, &cell);
   assert(r>=0);
@@ -804,17 +804,41 @@ BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_helper(GuardedRequ
 }
 
 template <typename I>
+BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_barrier_helper(GuardedRequest &req)
+{
+  BlockGuardCell *cell = nullptr;
+
+  assert(m_blockguard_lock.is_locked_by_me());
+  ldout(m_image_ctx.cct, 20) << dendl;
+
+  if (m_barrier_in_progress) {
+    req.detained = true;
+    m_awaiting_barrier.push_back(req);
+  } else {
+    bool barrier = req.barrier;
+    if (barrier) {
+      m_barrier_in_progress = true;
+      req.current_barrier = true;
+    }
+    cell = detain_guarded_request_helper(req);
+    if (barrier) {
+      /* Only non-null if the barrier acquires the guard now */
+      m_barrier_cell = cell;
+    }
+  }
+
+  return cell;
+}
+
+template <typename I>
 void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
 {
-  BlockGuardCell *cell;
+  BlockGuardCell *cell = nullptr;
 
-  if (!req.sequence_num) {
-    req.sequence_num = m_req_num++;
-  }
   ldout(m_image_ctx.cct, 20) << dendl;
   {
     Mutex::Locker locker(m_blockguard_lock);
-    cell = detain_guarded_request_helper(req);
+    cell = detain_guarded_request_barrier_helper(req);
   }
   if (cell) {
     req.on_guard_acquire->acquired(cell, req.detained);
@@ -822,10 +846,11 @@ void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *cell)
+void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cell)
 {
   CephContext *cct = m_image_ctx.cct;
   WriteLogGuard::BlockOperations block_reqs;
+  WriteLogGuard::BlockOperations unblocked_reqs;
   struct acquired_req {
     BlockGuardCell *cell;
     GuardedRequest& req;
@@ -834,22 +859,44 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *cell)
       : cell(cell), req(req) { };
   };
   std::list<acquired_req> block_reqs_acquired;
-  ldout(cct, 20) << "cell=" << cell << dendl;
+  ldout(cct, 20) << "released_cell=" << released_cell << dendl;
 
   {
     Mutex::Locker locker(m_blockguard_lock);
-    m_write_log_guard.release(cell, &block_reqs);
+    m_write_log_guard.release(released_cell, &block_reqs);
 
-    /* Preserve submission order */
-    block_reqs.sort([](const GuardedRequest& lhs, const GuardedRequest& rhs) -> bool
-		    {
-		      return lhs.sequence_num < rhs.sequence_num;
-		    });
     for (auto &req : block_reqs) {
       req.detained = true;
-      BlockGuardCell *cell = detain_guarded_request_helper(req);
-      if (cell) {
-	block_reqs_acquired.push_back(acquired_req(cell, req));
+      BlockGuardCell *detained_cell = detain_guarded_request_helper(req);
+      if (detained_cell) {
+	if (req.current_barrier) {
+	  /* The current barrier is acquiring the block guard, so now we know its cell */
+	  m_barrier_cell = detained_cell;
+	  assert(detained_cell != released_cell);
+	  ldout(cct, 20) << "current barrier cell=" << detained_cell << " req=" << req << dendl;
+	}
+	ldout(cct, 20) << "acquire deferred for cell=" << detained_cell << " req=" << req << dendl;
+	block_reqs_acquired.push_back(acquired_req(detained_cell, req));
+      }
+    }
+
+    if (m_barrier_in_progress && (released_cell == m_barrier_cell)) {
+      ldout(cct, 20) << "current barrier released cell=" << released_cell << dendl;
+      /* The released cell is the current barrier request */
+      m_barrier_in_progress = false;
+      m_barrier_cell = nullptr;
+      /* Move waiting requests into the blockguard. Stop if there's another barrier */
+      while (!m_barrier_in_progress && !m_awaiting_barrier.empty()) {
+	unblocked_reqs.splice(unblocked_reqs.end(),
+			      m_awaiting_barrier,
+			      m_awaiting_barrier.begin());
+	auto &req = unblocked_reqs.back();
+	ldout(cct, 20) << "submitting queued request to blockguard: " << req << dendl;
+	BlockGuardCell *detained_cell = detain_guarded_request_barrier_helper(req);
+	if (detained_cell) {
+	  ldout(cct, 20) << "acquire deferred for cell=" << detained_cell << " req=" << req << dendl;
+	  block_reqs_acquired.push_back(acquired_req(detained_cell, req));
+	}
       }
     }
   }
@@ -858,6 +905,8 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *cell)
   for (auto &acquired : block_reqs_acquired) {
     acquired.req.on_guard_acquire->acquired(acquired.cell, acquired.req.detained);
   }
+
+  ldout(cct, 20) << "exit" << dendl;
 }
 
 struct WriteBufferAllocation {
@@ -1856,7 +1905,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
 	if (m_highest_request_released < write_req->m_req_num) {
 	  m_highest_request_released = write_req->m_req_num;
 	}
-	assert(write_req->m_req_num > m_highest_flush_released);
+	//assert(write_req->m_req_num > m_highest_flush_released);
       }
       alloc_and_dispatch_io_req(write_req);
     });
@@ -2230,7 +2279,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
   flush_req->m_req_num = m_req_num++;
   detain_guarded_request(GuardedRequest(flush_req->m_image_extents_summary.first_block,
 					flush_req->m_image_extents_summary.last_block,
-					guarded_ctx));
+					guarded_ctx, true));
 }
 
 template <typename I>

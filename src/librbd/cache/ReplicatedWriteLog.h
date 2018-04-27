@@ -526,13 +526,23 @@ struct GuardedRequest {
   uint64_t first_block_num;
   uint64_t last_block_num;
   GuardedRequestFunctionContext *on_guard_acquire; /* Work to do when guard on range obtained */
-  int sequence_num = 0;
+  bool barrier = false; /* This is a barrier request */
+  bool current_barrier = false; /* This is the currently active barrier */
 
   GuardedRequest(uint64_t first_block_num, uint64_t last_block_num,
-		 GuardedRequestFunctionContext *on_guard_acquire, int sequence_num = 0)
+		 GuardedRequestFunctionContext *on_guard_acquire, bool barrier = false)
     : first_block_num(first_block_num), last_block_num(last_block_num),
-      on_guard_acquire(on_guard_acquire), sequence_num(sequence_num) {
+      on_guard_acquire(on_guard_acquire), barrier(barrier) {
   }
+  friend std::ostream &operator<<(std::ostream &os,
+				  const GuardedRequest &r) {
+    os << "barrier=" << r.barrier << ", "
+       << "current_barrier=" << r.current_barrier << ", "
+       << "detained=" << r.detained << ", "
+       << "first_block_num=" << r.first_block_num << ", "
+       << "last_block_num=" << r.last_block_num;
+    return os;
+  };
 };
 
 typedef librbd::BlockGuard<GuardedRequest> WriteLogGuard;
@@ -653,6 +663,7 @@ private:
   typedef std::list<C_BlockIORequest *> C_BlockIORequests;
 
   BlockGuardCell* detain_guarded_request_helper(GuardedRequest &req);
+  BlockGuardCell* detain_guarded_request_barrier_helper(GuardedRequest &req);
   void detain_guarded_request(GuardedRequest &&req);
   void release_guarded_request(BlockGuardCell *cell);
 
@@ -712,6 +723,11 @@ private:
   mutable Mutex m_lock;
   /* Used in release/detain to make BlockGuard preserve submission order */
   mutable Mutex m_blockguard_lock;
+
+  /* Use m_blockguard_lock for the following 3 things */
+  WriteLogGuard::BlockOperations m_awaiting_barrier;
+  bool m_barrier_in_progress = false;
+  BlockGuardCell *m_barrier_cell = nullptr;
 
   bool m_wake_up_requested = false;
   bool m_wake_up_scheduled = false;
