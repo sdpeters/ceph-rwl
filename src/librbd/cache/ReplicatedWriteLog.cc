@@ -793,7 +793,7 @@ BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_helper(GuardedRequ
 				   &req, &cell);
   assert(r>=0);
   if (r > 0) {
-    ldout(cct, 5) << "detaining guarded request due to in-flight requests: "
+    ldout(cct, 20) << "detaining guarded request due to in-flight requests: "
 		   << "start=" << req.first_block_num << ", "
 		   << "end=" << req.last_block_num << dendl;
     return nullptr;
@@ -1093,7 +1093,6 @@ struct C_FlushRequest : public C_BlockIORequest {
   }
 
   ~C_FlushRequest() {
-    ldout(m_cct, 1) << this << dendl;
   }
 
   const char *get_name() const override {
@@ -1383,9 +1382,11 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
 			       << "to " << operation->get_log_entry()->pmem_entry << " "
 			       << "operation=[" << *operation << "]" << dendl;
     */
+    /*
     ldout(m_image_ctx.cct, 05) << "APPENDING: index="
 			       << operation->get_log_entry()->log_entry_index << " "
 			       << "operation=[" << *operation << "]" << dendl;
+    */
     operation->m_log_append_time = now;
     *operation->get_log_entry()->pmem_entry = operation->get_log_entry()->ram_entry;
     entries_to_flush.push_back(operation);
@@ -1675,11 +1676,11 @@ void ReplicatedWriteLog<I>::alloc_and_dispatch_io_req(C_BlockIORequest *req)
     if (dispatch_here) {
       req->dispatch();
     } else {
+      req->deferred();
       {
 	Mutex::Locker locker(m_lock);
 	m_deferred_ios.push_back(req);
       }
-      req->deferred();
       ldout(m_image_ctx.cct, 6) << "deferred IOs: " << m_deferred_ios.size() << dendl;
       dispatch_deferred_writes();
     }
@@ -1819,7 +1820,8 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
        }
      });
   Mutex::Locker locker(m_lock);
-  if (write_req->m_op_set->sync_point->earlier_sync_point) {
+  if (!write_req->m_op_set->m_persist_on_flush &&
+      write_req->m_op_set->sync_point->earlier_sync_point) {
     write_req->m_do_early_flush = false;
     write_req->m_op_set->sync_point->earlier_sync_point->m_on_sync_point_appending.push_back(schedule_append_ctx);
   } else {
@@ -2044,7 +2046,7 @@ C_FlushRequest* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
 			 sync_complete_callback_t appending_cb =
 			 [this, flush_req](int result) {
 			   std::vector<Context*> on_append;
-			   ldout(m_image_ctx.cct, 5) << "Sync point op appending for "
+			   ldout(m_image_ctx.cct, 20) << "Sync point op appending for "
 			   << "flush req=[" << *flush_req << "]" << dendl;
 			   {
 			     Mutex::Locker locker(m_lock);
@@ -2057,7 +2059,7 @@ C_FlushRequest* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
 			 /* Handler for sync point persist complete */
 			 sync_complete_callback_t comp_cb =
 			 [this, flush_req](int result) {
-			   ldout(m_image_ctx.cct, 5) << "Sync point op completed for "
+			   ldout(m_image_ctx.cct, 20) << "Sync point op completed for "
 			   << "flush req=[" << *flush_req << "]" << dendl;
 			   {
 			     Mutex::Locker locker(m_lock);
