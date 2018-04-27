@@ -735,6 +735,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
       shared_ptr<WriteLogEntry> log_entry = entry.log_entry;
       ldout(cct, 20) << "adding reader: log_entry=" << *log_entry << dendl;
       log_entry->add_reader();
+      m_async_op_tracker.start_op();
       buffer::raw *hit_buf =
 	buffer::claim_buffer(entry_hit_length,
 			     (char*)(log_entry->pmem_buffer + read_buffer_offset),
@@ -744,6 +745,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 					    ldout(cct, 20) << "removing reader: log_entry="
 							  << *log_entry << dendl;
 					    log_entry->remove_reader();
+					    m_async_op_tracker.finish_op();
 					  }));
       /* Add hit extent to read extents */
       ImageExtentBuf hit_extent_buf(hit_extent, hit_buf);
@@ -2876,15 +2878,17 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(shared_ptr<GenericLogE
   /* Construct bl for pmem buffer */
   write_entry->add_reader();
   write_entry->flushing = true;
+  m_async_op_tracker.start_op();
   buffer::raw *entry_buf =
     buffer::claim_buffer(write_entry->ram_entry.write_bytes,
 			 (char*)write_entry->pmem_buffer,
-			 make_deleter([this, log_entry, write_entry]
+			 make_deleter([this, write_entry]
 				      {
 					CephContext *cct = m_image_ctx.cct;
 					ldout(cct, 20) << "removing (flush) reader: log_entry="
 						       << *write_entry << dendl;
 					write_entry->remove_reader();
+					m_async_op_tracker.finish_op();
 				      }));
 
   /* The caller will send the flush write later when we're not holding m_lock */
