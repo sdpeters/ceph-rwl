@@ -489,6 +489,8 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
 		      false, true, true, image_ctx.cct),
     m_lock("librbd::cache::ReplicatedWriteLog::m_lock",
 	   false, true, true, image_ctx.cct),
+    m_blockguard_lock("librbd::cache::ReplicatedWriteLog::m_blockguard_lock",
+	   false, true, true, image_ctx.cct),
     m_persist_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_persist_finisher", "pfin_rwl"),
     m_log_append_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_log_append_finisher", "afin_rwl"),
     m_on_persist_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_on_persist_finisher", "opfin_rwl"),
@@ -777,12 +779,14 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
+BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_helper(GuardedRequest &req)
 {
   CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << dendl;
-
   BlockGuardCell *cell;
+
+  assert(m_blockguard_lock.is_locked_by_me());
+  ldout(cct, 20) << dendl;
+  assert (req.sequence_num);
   int r = m_write_log_guard.detain({req.first_block_num, req.last_block_num},
 				   &req, &cell);
   assert(r>=0);
@@ -790,25 +794,67 @@ void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
     ldout(cct, 5) << "detaining guarded request due to in-flight requests: "
 		   << "start=" << req.first_block_num << ", "
 		   << "end=" << req.last_block_num << dendl;
-    return;
+    return nullptr;
   }
 
   ldout(cct, 20) << "in-flight request cell: " << cell << dendl;
-  req.on_guard_acquire->acquired(cell, req.detained);
+  return cell;
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
+{
+  BlockGuardCell *cell;
+
+  if (!req.sequence_num) {
+    req.sequence_num = m_req_num++;
+  }
+  ldout(m_image_ctx.cct, 20) << dendl;
+  {
+    Mutex::Locker locker(m_blockguard_lock);
+    cell = detain_guarded_request_helper(req);
+  }
+  if (cell) {
+    req.on_guard_acquire->acquired(cell, req.detained);
+  }
 }
 
 template <typename I>
 void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *cell)
 {
   CephContext *cct = m_image_ctx.cct;
+  WriteLogGuard::BlockOperations block_reqs;
+  struct acquired_req {
+    BlockGuardCell *cell;
+    GuardedRequest& req;
+
+    acquired_req(BlockGuardCell *cell, GuardedRequest& req)
+      : cell(cell), req(req) { };
+  };
+  std::list<acquired_req> block_reqs_acquired;
   ldout(cct, 20) << "cell=" << cell << dendl;
 
-  WriteLogGuard::BlockOperations block_ops;
-  m_write_log_guard.release(cell, &block_ops);
+  {
+    Mutex::Locker locker(m_blockguard_lock);
+    m_write_log_guard.release(cell, &block_reqs);
 
-  for (auto &op : block_ops) {
-    op.detained = true;
-    detain_guarded_request(std::move(op));
+    /* Preserve submission order */
+    block_reqs.sort([](const GuardedRequest& lhs, const GuardedRequest& rhs) -> bool
+		    {
+		      return lhs.sequence_num < rhs.sequence_num;
+		    });
+    for (auto &req : block_reqs) {
+      req.detained = true;
+      BlockGuardCell *cell = detain_guarded_request_helper(req);
+      if (cell) {
+	block_reqs_acquired.push_back(acquired_req(cell, req));
+      }
+    }
+  }
+
+  /* Do acquire work outside blockguard lock */
+  for (auto &acquired : block_reqs_acquired) {
+    acquired.req.on_guard_acquire->acquired(acquired.cell, acquired.req.detained);
   }
 }
 
@@ -850,6 +896,7 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
   io_alloc_resources_callback_t m_io_alloc_resources_callback;
   io_deferred_callback_t m_io_deferred_callback;
   io_dispatch_callback_t m_io_dispatch_callback;
+  int m_req_num = 0;
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_BlockIORequest &req) {
     os << "m_image_extents=[" << req.m_image_extents << "], "
@@ -1802,9 +1849,17 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
       if (detained) {
 	m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
       }
+      {
+	Mutex::Locker locker(m_lock);
+	if (m_highest_request_released < write_req->m_req_num) {
+	  m_highest_request_released = write_req->m_req_num;
+	}
+	assert(write_req->m_req_num > m_highest_flush_released);
+      }
       alloc_and_dispatch_io_req(write_req);
     });
 
+  write_req->m_req_num = m_req_num++;
   detain_guarded_request(GuardedRequest(write_req->m_image_extents_summary.first_block,
 					write_req->m_image_extents_summary.last_block,
 					guarded_ctx));
@@ -2116,6 +2171,20 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
       {
 	DeferredContexts post_unlock; /* Do these when the lock below is released */
 	Mutex::Locker locker(m_lock);
+
+	//assert(m_highest_request_released < flush_req->m_req_num);
+	if (m_highest_request_released > flush_req->m_req_num) {
+	  ldout(m_image_ctx.cct, 5) << "req " << m_highest_request_released
+				    << " seen before flush req " << flush_req->m_req_num << dendl;
+	}
+	if (m_highest_request_released < flush_req->m_req_num) {
+	  m_highest_request_released = flush_req->m_req_num;
+	}
+	assert(flush_req->m_req_num > m_highest_flush_released);
+	if (m_highest_flush_released < flush_req->m_req_num) {
+	  m_highest_flush_released = flush_req->m_req_num;
+	}
+
 	if (m_deferred_ios.size()) {
 	  ldout(m_image_ctx.cct, 5) << "Unexpected deferred IOs: " << m_deferred_ios.size() << ", "
 				    << "first=" << *(m_deferred_ios.front()) << dendl;
@@ -2156,6 +2225,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
       release_guarded_request(cell);
     });
 
+  flush_req->m_req_num = m_req_num++;
   detain_guarded_request(GuardedRequest(flush_req->m_image_extents_summary.first_block,
 					flush_req->m_image_extents_summary.last_block,
 					guarded_ctx));
