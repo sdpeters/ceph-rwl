@@ -526,9 +526,12 @@ struct GuardedRequest {
   uint64_t first_block_num;
   uint64_t last_block_num;
   GuardedRequestFunctionContext *on_guard_acquire; /* Work to do when guard on range obtained */
+  int sequence_num = 0;
 
-  GuardedRequest(uint64_t first_block_num, uint64_t last_block_num, GuardedRequestFunctionContext *on_guard_acquire)
-    : first_block_num(first_block_num), last_block_num(last_block_num), on_guard_acquire(on_guard_acquire) {
+  GuardedRequest(uint64_t first_block_num, uint64_t last_block_num,
+		 GuardedRequestFunctionContext *on_guard_acquire, int sequence_num = 0)
+    : first_block_num(first_block_num), last_block_num(last_block_num),
+      on_guard_acquire(on_guard_acquire), sequence_num(sequence_num) {
   }
 };
 
@@ -649,6 +652,7 @@ private:
   typedef std::list<C_WriteRequest *> C_WriteRequests;
   typedef std::list<C_BlockIORequest *> C_BlockIORequests;
 
+  BlockGuardCell* detain_guarded_request_helper(GuardedRequest &req);
   void detain_guarded_request(GuardedRequest &&req);
   void release_guarded_request(BlockGuardCell *cell);
 
@@ -706,6 +710,8 @@ private:
   mutable Mutex m_log_append_lock;
   /* Used for most synchronization */
   mutable Mutex m_lock;
+  /* Used in release/detain to make BlockGuard preserve submission order */
+  mutable Mutex m_blockguard_lock;
 
   bool m_wake_up_requested = false;
   bool m_wake_up_scheduled = false;
@@ -718,6 +724,10 @@ private:
   // TODO: remove this flush debug stuff
   std::atomic<int> m_flushes_appending = {0};
   std::atomic<int> m_total_flushes_appended = {0};
+
+  std::atomic<int> m_req_num = {1};
+  int m_highest_request_released = 0;
+  int m_highest_flush_released = 0;
 
   Contexts m_flush_complete_contexts;
   Finisher m_persist_finisher;
