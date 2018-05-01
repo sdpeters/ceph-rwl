@@ -351,7 +351,7 @@ public:
   bool m_append_scheduled = false;
   bool m_appending = false;
   /* Signal these when this sync point is appending to the log, and its order
-   * of appearance is guaranteed.. One of these is is a sub-operation of the
+   * of appearance is guaranteed. One of these is is a sub-operation of the
    * next sync point's m_prior_log_entries_persisted Gather. */
   std::vector<Context*> m_on_sync_point_appending;
   /* Signal these when this sync point is appended and persisted. User
@@ -413,8 +413,9 @@ public:
   virtual bool is_sync_point() { return false; }
 };
 
-typedef boost::function<void(int)> sync_point_appending_callback_t;
-typedef boost::function<void(int)> sync_complete_callback_t;
+class SyncPointLogOperation;
+typedef boost::function<void(SyncPointLogOperation*,int)> sync_point_appending_callback_t;
+typedef boost::function<void(SyncPointLogOperation*,int)> sync_complete_callback_t;
 class SyncPointLogOperation : public GenericLogOperation {
 public:
   shared_ptr<SyncPoint> sync_point;
@@ -523,6 +524,7 @@ public:
 
 struct GuardedRequest {
   bool detained = false;
+  bool queued = false; /* Queued for barrier */
   uint64_t first_block_num;
   uint64_t last_block_num;
   GuardedRequestFunctionContext *on_guard_acquire; /* Work to do when guard on range obtained */
@@ -539,6 +541,7 @@ struct GuardedRequest {
     os << "barrier=" << r.barrier << ", "
        << "current_barrier=" << r.current_barrier << ", "
        << "detained=" << r.detained << ", "
+       << "queued=" << r.queued << ", "
        << "first_block_num=" << r.first_block_num << ", "
        << "last_block_num=" << r.last_block_num;
     return os;
