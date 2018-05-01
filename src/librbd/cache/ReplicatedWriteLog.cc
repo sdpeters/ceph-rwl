@@ -75,6 +75,9 @@ SyncPoint::SyncPoint(CephContext *cct, uint64_t sync_gen_num)
 }
 
 SyncPoint::~SyncPoint() {
+  assert(m_on_sync_point_appending.empty());
+  assert(m_on_sync_point_persisted.empty());
+  assert(!earlier_sync_point);
 }
 
 GenericLogOperation::GenericLogOperation(const utime_t dispatch_time) : m_dispatch_time(dispatch_time) {
@@ -92,11 +95,11 @@ SyncPointLogOperation::SyncPointLogOperation(shared_ptr<SyncPoint> sync_point,
 SyncPointLogOperation::~SyncPointLogOperation() { }
 
 void SyncPointLogOperation::appending() {
-  sync_point_appending_callback(0);
+  sync_point_appending_callback(this, 0);
 }
 
 void SyncPointLogOperation::complete(int result) {
-  sync_complete_callback(result);
+  sync_complete_callback(this, result);
 }
 
 WriteLogOperation::WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes)
@@ -812,7 +815,7 @@ BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_barrier_helper(Gua
   ldout(m_image_ctx.cct, 20) << dendl;
 
   if (m_barrier_in_progress) {
-    req.detained = true;
+    req.queued = true;
     m_awaiting_barrier.push_back(req);
   } else {
     bool barrier = req.barrier;
@@ -1353,13 +1356,13 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
   int ret = 0;
-  utime_t now = ceph_clock_now();
 
   assert(m_log_append_lock.is_locked_by_me());
 
   if (ops.empty()) return 0;
 
   /* Write log entries to ring and persist */
+  utime_t now = ceph_clock_now();
   for (auto &operation : ops) {
     if (!entries_to_flush.empty()) {
       /* Flush these and reset the list if the current entry wraps to the
@@ -2044,44 +2047,47 @@ C_FlushRequest* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
 
 			 /* Handler for sync point appending */
 			 sync_complete_callback_t appending_cb =
-			 [this, flush_req](int result) {
+			 [this](SyncPointLogOperation *op, int result) {
+			   shared_ptr<SyncPoint> sync_point = op->sync_point;
+			   assert(sync_point);
 			   std::vector<Context*> on_append;
-			   ldout(m_image_ctx.cct, 20) << "Sync point op appending for "
-			   << "flush req=[" << *flush_req << "]" << dendl;
 			   {
 			     Mutex::Locker locker(m_lock);
-			     flush_req->to_append->m_appending = true;
-			     on_append.swap(flush_req->to_append->m_on_sync_point_appending);
+			     if (!sync_point->m_appending) {
+			       ldout(m_image_ctx.cct, 20) << "Sync point op=[" << *op
+							  << "] appending" << dendl;
+			       sync_point->m_appending = true;
+			     }
+			     on_append.swap(sync_point->m_on_sync_point_appending);
 			   }
 			   finish_contexts(m_image_ctx.cct, on_append, result);
 			 };
 
 			 /* Handler for sync point persist complete */
 			 sync_complete_callback_t comp_cb =
-			 [this, flush_req](int result) {
-			   ldout(m_image_ctx.cct, 20) << "Sync point op completed for "
-			   << "flush req=[" << *flush_req << "]" << dendl;
+			 [this](SyncPointLogOperation *op, int result) {
+			   shared_ptr<SyncPoint> sync_point = op->sync_point;
+			   assert(sync_point);
+			   ldout(m_image_ctx.cct, 20) << "Sync point op =[" << *op
+						      << "] completed" << dendl;
 			   {
 			     Mutex::Locker locker(m_lock);
 			     /* Remove link from next sync point */
-			     assert(flush_req->to_append->later_sync_point);
-			     assert(flush_req->to_append->later_sync_point->earlier_sync_point ==
-				    flush_req->to_append);
-			     flush_req->to_append->later_sync_point->earlier_sync_point = nullptr;
-			     // TODO: only on debug
-			     // int found_self = 0;
-			     // for (auto ctx : flush_req->to_append->m_on_sync_point_persisted) {
-			     //   if (ctx == flush_req) {
-			     //		 found_self++;
-			     //   }
-			     // }
-			     // assert(found_self == 1);
+			     assert(sync_point->later_sync_point);
+			     assert(sync_point->later_sync_point->earlier_sync_point ==
+				    sync_point);
+			     sync_point->later_sync_point->earlier_sync_point = nullptr;
 			   }
-			   /* Catch late-arriving on-appending work */
-			   flush_req->op->appending();
+
+			   /* Do append now in case completion occurred before the
+			    * normal append callback executed, and to handle
+			    * on_append work that was queued after the sync point
+			    * entered the appending state. */
+			   op->appending();
+
 			   /* This flush request will be one of these contexts */
 			   finish_contexts(m_image_ctx.cct,
-					   flush_req->to_append->m_on_sync_point_persisted, result);
+					   sync_point->m_on_sync_point_persisted, result);
 			 };
 
 			 flush_req->op =
@@ -2127,14 +2133,15 @@ void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequest *flush_req, Cont
 
   /* Add a new sync point. */
   new_sync_point(later);
-  assert(m_current_sync_point->earlier_sync_point);
+  shared_ptr<SyncPoint> to_append = m_current_sync_point->earlier_sync_point;
+  assert(to_append);
 
   /* This flush request will append/persist the (now) previous sync point */
-  flush_req->to_append = m_current_sync_point->earlier_sync_point;
-  flush_req->to_append->m_append_scheduled = true;
+  flush_req->to_append = to_append;
+  to_append->m_append_scheduled = true;
 
   /* All prior sync points that are still in this list must already be scheduled for append */
-  shared_ptr<SyncPoint> previous = flush_req->to_append->earlier_sync_point;
+  shared_ptr<SyncPoint> previous = to_append->earlier_sync_point;
   while (previous) {
     assert(previous->m_append_scheduled);
     previous = previous->earlier_sync_point;
@@ -2145,7 +2152,7 @@ void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequest *flush_req, Cont
    * m_prior_log_entries_persisted, which records the result of the Gather in
    * the sync point, and completes. TODO: Do we still need both of these
    * Gathers?*/
-  flush_req->to_append->m_sync_point_persist->
+  to_append->m_sync_point_persist->
     set_finisher(new FunctionContext([this, flush_req](int r) {
 	  ldout(m_image_ctx.cct, 20) << "Flush req=" << flush_req
 				     << " sync point =" << flush_req->to_append
@@ -2157,10 +2164,12 @@ void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequest *flush_req, Cont
    * now has its finisher. If the sub is already complete, activation will
    * complete the Gather. The finisher will acquire m_lock, so we'll activate
    * this when we release m_lock.*/
-  later.push_back(new FunctionContext([this, flush_req](int r) {
-	flush_req->to_append->m_sync_point_persist->activate();
+  later.push_back(new FunctionContext([this, to_append](int r) {
+	to_append->m_sync_point_persist->activate();
       }));
-  flush_req->to_append->m_on_sync_point_persisted.push_back(flush_req);
+
+  /* The flush request completes when the sync point persists */
+  to_append->m_on_sync_point_persisted.push_back(flush_req);
 }
 
 /**
@@ -2369,11 +2378,11 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
 
   // Latency axis configuration for op histograms, values are in nanoseconds
   PerfHistogramCommon::axis_config_d op_hist_x_axis_config{
-    "Latency (usec)",
+    "Latency (nsec)",
     PerfHistogramCommon::SCALE_LOG2, ///< Latency in logarithmic scale
     0,                               ///< Start at 0
     5000,                            ///< Quantization unit is 5usec
-    16,                              ///< Ranes into the mS
+    16,                              ///< Ranges into the mS
   };
 
   // Op size axis configuration for op histograms, values are in bytes
@@ -2382,7 +2391,7 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
     PerfHistogramCommon::SCALE_LOG2, ///< Request size in logarithmic scale
     0,                               ///< Start at 0
     512,                             ///< Quantization unit is 512 bytes
-    8,                               ///< Writes up to 32k
+    16,                              ///< Writes up to >32k
   };
 
   plb.add_u64_counter(l_librbd_rwl_rd_req, "rd", "Reads");
@@ -2465,7 +2474,11 @@ void ReplicatedWriteLog<I>::log_perf() {
   bufferlist bl;
   Formatter *f = Formatter::create("json-pretty");
   bl.append("Perf dump follows\n--- Begin perf dump ---\n");
-  bl.append("rwl_stats: {\n");
+  bl.append("{\n");
+  stringstream ss;
+  utime_t now = ceph_clock_now();
+  ss << "\"test_time\": \"" << now << "\",";
+  bl.append(ss);
   bl.append("\"stats\": ");
   m_image_ctx.cct->get_perfcounters_collection()->dump_formatted(f, 0);
   f->flush(bl);
