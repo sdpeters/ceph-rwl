@@ -37,10 +37,13 @@ enum {
   // All write requests
   l_librbd_rwl_wr_req,             // write requests
   l_librbd_rwl_wr_req_def,         // write requests deferred for resources
+  l_librbd_rwl_wr_req_def_lanes,   // write requests deferred for lanes
+  l_librbd_rwl_wr_req_def_log,     // write requests deferred for log entries
+  l_librbd_rwl_wr_req_def_buf,     // write requests deferred for buffer space
   l_librbd_rwl_wr_req_overlap,     // write requests detained for overlap
   l_librbd_rwl_wr_bytes,           // bytes written
 
-  // Write log operations (1 .. n per write request)
+  // Write log operations (1 .. n per request that appends to the log)
   l_librbd_rwl_log_ops,            // log append ops
   l_librbd_rwl_log_op_bytes,       // average bytes written per log op
 
@@ -88,10 +91,22 @@ enum {
   l_librbd_rwl_wr_latency_hist,    // Histogram of write req (persist) completion latency vs. bytes written
   l_librbd_rwl_wr_caller_latency,  // average req completion (to caller) latency
 
+  /* Request times for requests that never waited for space*/
+  l_librbd_rwl_nowait_req_arr_to_all_t,   // arrival to allocation elapsed time - same as time deferred in block guard
+  l_librbd_rwl_nowait_req_arr_to_dis_t,   // arrival to dispatch elapsed time
+  l_librbd_rwl_nowait_req_all_to_dis_t,   // Time spent allocating or waiting to allocate resources
+  l_librbd_rwl_nowait_wr_latency,         // average req (persist) completion latency
+  l_librbd_rwl_nowait_wr_latency_hist,    // Histogram of write req (persist) completion latency vs. bytes written
+  l_librbd_rwl_nowait_wr_caller_latency,  // average req completion (to caller) latency
+
   /* Log operation times */
+  l_librbd_rwl_log_op_alloc_t,      // elapsed time of pmemobj_reserve()
+  l_librbd_rwl_log_op_alloc_t_hist, // Histogram of elapsed time of pmemobj_reserve()
+
   l_librbd_rwl_log_op_dis_to_buf_t, // dispatch to buffer persist elapsed time
   l_librbd_rwl_log_op_dis_to_app_t, // diapatch to log append elapsed time
   l_librbd_rwl_log_op_dis_to_cmp_t, // dispatch to persist completion elapsed time
+  l_librbd_rwl_log_op_dis_to_cmp_t_hist, // Histogram of dispatch to persist completion elapsed time
 
   l_librbd_rwl_log_op_buf_to_app_t, // data buf persist + append wait time
   l_librbd_rwl_log_op_buf_to_bufc_t,// data buf persist / replicate elapsed time
@@ -117,6 +132,11 @@ enum {
 
   l_librbd_rwl_flush,
   l_librbd_rwl_invalidate_cache,
+
+  l_librbd_rwl_append_tx_t,
+  l_librbd_rwl_retire_tx_t,
+  l_librbd_rwl_append_tx_t_hist,
+  l_librbd_rwl_retire_tx_t_hist,
 
   l_librbd_rwl_last,
 };
@@ -151,6 +171,7 @@ static const double LOG_STATS_INTERVAL_SECONDS = 5;
 /**** Write log entries ****/
 
 static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 16;
+static const unsigned long int MAX_FREE_PER_TRANSACTION = 1;
 static const unsigned int MAX_CONCURRENT_WRITES = 256;
 static const uint64_t DEFAULT_POOL_SIZE = 1u<<30;
 //static const uint64_t MIN_POOL_SIZE = 1u<<23;
@@ -224,6 +245,7 @@ struct WriteLogPoolRoot {
     uint64_t _u64;
   } header;
   TOID(struct WriteLogPmemEntry) log_entries;   /* contiguous array of log entries */
+  uint32_t pool_size;
   uint32_t block_size;		 /* block size */
   uint32_t num_log_entries;
   uint32_t first_free_entry;     /* Entry following the newest valid entry */
@@ -478,6 +500,7 @@ public:
 };
 typedef std::list<shared_ptr<WriteLogOperation>> WriteLogOperations;
 typedef std::list<shared_ptr<GenericLogOperation>> GenericLogOperations;
+typedef std::vector<shared_ptr<GenericLogOperation>> GenericLogOperationsVector;
 
 class WriteLogOperationSet {
 public:
@@ -676,10 +699,19 @@ private:
 
   std::string m_log_pool_name;
   PMEMobjpool *m_log_pool = nullptr;
-  uint64_t m_log_pool_size;
+  uint64_t m_log_pool_config_size; /* Configured size of RWL */
+  uint64_t m_log_pool_actual_size = 0; /* Actual size of RWL pool */
 
   uint32_t m_total_log_entries = 0;
   uint32_t m_free_log_entries = 0;
+
+  uint64_t m_bytes_allocated = 0; /* Total bytes allocated in write buffers */
+  uint64_t m_bytes_cached = 0;    /* Total bytes used in write buffers */
+  uint64_t m_bytes_dirty = 0;     /* Total bytes yet to flush to RBD */
+  uint64_t m_bytes_allocated_cap = 0;
+
+  utime_t m_last_alloc_fail;      /* Entry or buffer allocation fail seen */
+  bool m_alloc_failed_since_retire = {false};
 
   ImageCache<ImageCtxT> *m_image_writeback;
   WriteLogGuard m_write_log_guard;
@@ -735,6 +767,8 @@ private:
   bool m_wake_up_requested = false;
   bool m_wake_up_scheduled = false;
   bool m_wake_up_enabled = true;
+  bool m_appending = false;
+  bool m_dispatching_deferred_ops = false;
 
   Contexts m_flush_complete_contexts;
   Finisher m_persist_finisher;
@@ -799,7 +833,7 @@ private:
   void schedule_flush_and_append(GenericLogOperations &ops);
   void flush_pmem_buffer(GenericLogOperations &ops);
   void alloc_op_log_entries(GenericLogOperations &ops);
-  void flush_op_log_entries(GenericLogOperations &ops);
+  void flush_op_log_entries(GenericLogOperationsVector &ops);
   int append_op_log_entries(GenericLogOperations &ops);
   void complete_op_log_entries(GenericLogOperations&& ops, const int r);
 };
