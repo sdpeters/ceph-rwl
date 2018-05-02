@@ -37,10 +37,13 @@ enum {
   // All write requests
   l_librbd_rwl_wr_req,             // write requests
   l_librbd_rwl_wr_req_def,         // write requests deferred for resources
+  l_librbd_rwl_wr_req_def_lanes,   // write requests deferred for lanes
+  l_librbd_rwl_wr_req_def_log,     // write requests deferred for log entries
+  l_librbd_rwl_wr_req_def_buf,     // write requests deferred for buffer space
   l_librbd_rwl_wr_req_overlap,     // write requests detained for overlap
   l_librbd_rwl_wr_bytes,           // bytes written
 
-  // Write log operations (1 .. n per write request)
+  // Write log operations (1 .. n per request that appends to the log)
   l_librbd_rwl_log_ops,            // log append ops
   l_librbd_rwl_log_op_bytes,       // average bytes written per log op
 
@@ -88,10 +91,22 @@ enum {
   l_librbd_rwl_wr_latency_hist,    // Histogram of write req (persist) completion latency vs. bytes written
   l_librbd_rwl_wr_caller_latency,  // average req completion (to caller) latency
 
+  /* Request times for requests that never waited for space*/
+  l_librbd_rwl_nowait_req_arr_to_all_t,   // arrival to allocation elapsed time - same as time deferred in block guard
+  l_librbd_rwl_nowait_req_arr_to_dis_t,   // arrival to dispatch elapsed time
+  l_librbd_rwl_nowait_req_all_to_dis_t,   // Time spent allocating or waiting to allocate resources
+  l_librbd_rwl_nowait_wr_latency,         // average req (persist) completion latency
+  l_librbd_rwl_nowait_wr_latency_hist,    // Histogram of write req (persist) completion latency vs. bytes written
+  l_librbd_rwl_nowait_wr_caller_latency,  // average req completion (to caller) latency
+
   /* Log operation times */
+  l_librbd_rwl_log_op_alloc_t,      // elapsed time of pmemobj_reserve()
+  l_librbd_rwl_log_op_alloc_t_hist, // Histogram of elapsed time of pmemobj_reserve()
+
   l_librbd_rwl_log_op_dis_to_buf_t, // dispatch to buffer persist elapsed time
   l_librbd_rwl_log_op_dis_to_app_t, // diapatch to log append elapsed time
   l_librbd_rwl_log_op_dis_to_cmp_t, // dispatch to persist completion elapsed time
+  l_librbd_rwl_log_op_dis_to_cmp_t_hist, // Histogram of dispatch to persist completion elapsed time
 
   l_librbd_rwl_log_op_buf_to_app_t, // data buf persist + append wait time
   l_librbd_rwl_log_op_buf_to_bufc_t,// data buf persist / replicate elapsed time
@@ -117,6 +132,11 @@ enum {
 
   l_librbd_rwl_flush,
   l_librbd_rwl_invalidate_cache,
+
+  l_librbd_rwl_append_tx_t,
+  l_librbd_rwl_retire_tx_t,
+  l_librbd_rwl_append_tx_t_hist,
+  l_librbd_rwl_retire_tx_t_hist,
 
   l_librbd_rwl_last,
 };
@@ -151,6 +171,7 @@ static const double LOG_STATS_INTERVAL_SECONDS = 5;
 /**** Write log entries ****/
 
 static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 16;
+static const unsigned long int MAX_FREE_PER_TRANSACTION = 1;
 static const unsigned int MAX_CONCURRENT_WRITES = 256;
 static const uint64_t DEFAULT_POOL_SIZE = 1u<<30;
 //static const uint64_t MIN_POOL_SIZE = 1u<<23;
@@ -224,6 +245,7 @@ struct WriteLogPoolRoot {
     uint64_t _u64;
   } header;
   TOID(struct WriteLogPmemEntry) log_entries;   /* contiguous array of log entries */
+  uint32_t pool_size;
   uint32_t block_size;		 /* block size */
   uint32_t num_log_entries;
   uint32_t first_free_entry;     /* Entry following the newest valid entry */
@@ -294,8 +316,8 @@ public:
   /* TODO: flush state: portions flushed, in-progress flushes */
   bool flushing = false;
   bool flushed = false;
-  shared_ptr<SyncPointLogEntry> sync_point_entry;
-  WriteLogEntry(shared_ptr<SyncPointLogEntry> sync_point_entry, const uint64_t image_offset_bytes, const uint64_t write_bytes)
+  std::shared_ptr<SyncPointLogEntry> sync_point_entry;
+  WriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry, const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : GenericLogEntry(image_offset_bytes, write_bytes), sync_point_entry(sync_point_entry) { }
   WriteLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes) {
     WriteLogEntry(nullptr, image_offset_bytes, write_bytes);
@@ -322,18 +344,18 @@ public:
   }
 };
 
-typedef std::list<shared_ptr<WriteLogEntry>> WriteLogEntries;
-typedef std::list<shared_ptr<GenericLogEntry>> GenericLogEntries;
+typedef std::list<std::shared_ptr<WriteLogEntry>> WriteLogEntries;
+typedef std::list<std::shared_ptr<GenericLogEntry>> GenericLogEntries;
 
 /**** Write log entries end ****/
 
 class SyncPoint {
 public:
   CephContext *m_cct;
-  shared_ptr<SyncPointLogEntry> log_entry;
+  std::shared_ptr<SyncPointLogEntry> log_entry;
   /* Use m_lock for earlier/later links */
-  shared_ptr<SyncPoint> earlier_sync_point; /* NULL if earlier has completed */
-  shared_ptr<SyncPoint> later_sync_point;
+  std::shared_ptr<SyncPoint> earlier_sync_point; /* NULL if earlier has completed */
+  std::shared_ptr<SyncPoint> later_sync_point;
   uint64_t m_final_op_sequence_num = 0;
   /* A sync point can't appear in the log until all the writes bearing
    * it and all the prior sync points have been appended and
@@ -404,9 +426,9 @@ public:
 				  const GenericLogOperation &op) {
     return op.format(os);
   }
-  virtual const shared_ptr<GenericLogEntry> get_log_entry() = 0;
-  virtual const shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return nullptr; }
-  virtual const shared_ptr<WriteLogEntry> get_write_log_entry() { return nullptr; }
+  virtual const std::shared_ptr<GenericLogEntry> get_log_entry() = 0;
+  virtual const std::shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return nullptr; }
+  virtual const std::shared_ptr<WriteLogEntry> get_write_log_entry() { return nullptr; }
   virtual void appending() = 0;
   virtual void complete(int r) = 0;
   virtual bool is_write() { return false; }
@@ -418,10 +440,10 @@ typedef boost::function<void(SyncPointLogOperation*,int)> sync_point_appending_c
 typedef boost::function<void(SyncPointLogOperation*,int)> sync_complete_callback_t;
 class SyncPointLogOperation : public GenericLogOperation {
 public:
-  shared_ptr<SyncPoint> sync_point;
+  std::shared_ptr<SyncPoint> sync_point;
   sync_complete_callback_t sync_point_appending_callback;
   sync_complete_callback_t sync_complete_callback;
-  SyncPointLogOperation(shared_ptr<SyncPoint> sync_point,
+  SyncPointLogOperation(std::shared_ptr<SyncPoint> sync_point,
 			sync_point_appending_callback_t sync_point_appending_callback,
 			sync_complete_callback_t sync_complete_callback,
 			const utime_t dispatch_time);
@@ -438,8 +460,8 @@ public:
 				  const SyncPointLogOperation &op) {
     return op.format(os);
   }
-  const shared_ptr<GenericLogEntry> get_log_entry() { return get_sync_point_log_entry(); }
-  const shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return sync_point->log_entry; }
+  const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_sync_point_log_entry(); }
+  const std::shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return sync_point->log_entry; }
   bool is_sync_point() { return true; }
   void appending();
   void complete(int r);
@@ -449,7 +471,7 @@ class WriteLogOperation : public GenericLogOperation {
 private:
   Mutex m_lock;
 public:
-  shared_ptr<WriteLogEntry> log_entry;
+  std::shared_ptr<WriteLogEntry> log_entry;
   bufferlist bl;
   pobj_action *buffer_alloc_action = nullptr;
   Context *on_write_append; /* Completion for things waiting on this write's position in the log to be guaranteed */
@@ -470,14 +492,15 @@ public:
 				  const WriteLogOperation &op) {
     return op.format(os);
   }
-  const shared_ptr<GenericLogEntry> get_log_entry() { return get_write_log_entry(); }
-  const shared_ptr<WriteLogEntry> get_write_log_entry() { return log_entry; }
+  const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_write_log_entry(); }
+  const std::shared_ptr<WriteLogEntry> get_write_log_entry() { return log_entry; }
   bool is_write() { return true; }
   void appending();
   void complete(int r);
 };
-typedef std::list<shared_ptr<WriteLogOperation>> WriteLogOperations;
-typedef std::list<shared_ptr<GenericLogOperation>> GenericLogOperations;
+typedef std::list<std::shared_ptr<WriteLogOperation>> WriteLogOperations;
+typedef std::list<std::shared_ptr<GenericLogOperation>> GenericLogOperations;
+typedef std::vector<std::shared_ptr<GenericLogOperation>> GenericLogOperationsVector;
 
 class WriteLogOperationSet {
 public:
@@ -492,8 +515,8 @@ public:
   Context *m_on_ops_persist;
   GenericLogOperations operations;
   utime_t m_dispatch_time; /* When set created */
-  shared_ptr<SyncPoint> sync_point;
-  WriteLogOperationSet(CephContext *cct, const utime_t dispatched, shared_ptr<SyncPoint> sync_point,
+  std::shared_ptr<SyncPoint> sync_point;
+  WriteLogOperationSet(CephContext *cct, const utime_t dispatched, std::shared_ptr<SyncPoint> sync_point,
 		       const bool persist_on_flush, BlockExtent extent, Context *on_finish);
   ~WriteLogOperationSet();
   WriteLogOperationSet(const WriteLogOperationSet&) = delete;
@@ -561,11 +584,11 @@ typedef librbd::BlockGuard<GuardedRequest> WriteLogGuard;
 /* A WriteLogMapEntry refers to a portion of a WriteLogEntry */
 struct WriteLogMapEntry {
   BlockExtent block_extent;
-  shared_ptr<WriteLogEntry> log_entry;
+  std::shared_ptr<WriteLogEntry> log_entry;
 
   WriteLogMapEntry(BlockExtent block_extent,
-		   shared_ptr<WriteLogEntry> log_entry = nullptr);
-  WriteLogMapEntry(shared_ptr<WriteLogEntry> log_entry);
+		   std::shared_ptr<WriteLogEntry> log_entry = nullptr);
+  WriteLogMapEntry(std::shared_ptr<WriteLogEntry> log_entry);
   friend std::ostream &operator<<(std::ostream &os,
 				  WriteLogMapEntry &e) {
     os << "block_extent=" << e.block_extent << ", "
@@ -581,16 +604,16 @@ public:
   WriteLogMap(const WriteLogMap&) = delete;
   WriteLogMap &operator=(const WriteLogMap&) = delete;
 
-  void add_log_entry(shared_ptr<WriteLogEntry> log_entry);
+  void add_log_entry(std::shared_ptr<WriteLogEntry> log_entry);
   void add_log_entries(WriteLogEntries &log_entries);
-  void remove_log_entry(shared_ptr<WriteLogEntry> log_entry);
+  void remove_log_entry(std::shared_ptr<WriteLogEntry> log_entry);
   void remove_log_entries(WriteLogEntries &log_entries);
   WriteLogEntries find_log_entries(BlockExtent block_extent);
   WriteLogMapEntries find_map_entries(BlockExtent block_extent);
 
 private:
-  void add_log_entry_locked(shared_ptr<WriteLogEntry> log_entry);
-  void remove_log_entry_locked(shared_ptr<WriteLogEntry> log_entry);
+  void add_log_entry_locked(std::shared_ptr<WriteLogEntry> log_entry);
+  void remove_log_entry_locked(std::shared_ptr<WriteLogEntry> log_entry);
   void add_map_entry_locked(WriteLogMapEntry &map_entry);
   void remove_map_entry_locked(WriteLogMapEntry &map_entry);
   void adjust_map_entry_locked(WriteLogMapEntry &map_entry, BlockExtent &new_extent);
@@ -676,10 +699,19 @@ private:
 
   std::string m_log_pool_name;
   PMEMobjpool *m_log_pool = nullptr;
-  uint64_t m_log_pool_size;
+  uint64_t m_log_pool_config_size; /* Configured size of RWL */
+  uint64_t m_log_pool_actual_size = 0; /* Actual size of RWL pool */
 
   uint32_t m_total_log_entries = 0;
   uint32_t m_free_log_entries = 0;
+
+  uint64_t m_bytes_allocated = 0; /* Total bytes allocated in write buffers */
+  uint64_t m_bytes_cached = 0;    /* Total bytes used in write buffers */
+  uint64_t m_bytes_dirty = 0;     /* Total bytes yet to flush to RBD */
+  uint64_t m_bytes_allocated_cap = 0;
+
+  utime_t m_last_alloc_fail;      /* Entry or buffer allocation fail seen */
+  bool m_alloc_failed_since_retire = {false};
 
   ImageCache<ImageCtxT> *m_image_writeback;
   WriteLogGuard m_write_log_guard;
@@ -694,7 +726,7 @@ private:
 
   /* Starts at 0 for a new write log. Incremented on every flush. */
   uint64_t m_current_sync_gen = 0;
-  shared_ptr<SyncPoint> m_current_sync_point = nullptr;
+  std::shared_ptr<SyncPoint> m_current_sync_point = nullptr;
   /* Starts at 0 on each sync gen increase. Incremented before applied
      to an operation */
   uint64_t m_last_op_sequence_num = 0;
@@ -735,6 +767,8 @@ private:
   bool m_wake_up_requested = false;
   bool m_wake_up_scheduled = false;
   bool m_wake_up_enabled = true;
+  bool m_appending = false;
+  bool m_dispatching_deferred_ops = false;
 
   Contexts m_flush_complete_contexts;
   Finisher m_persist_finisher;
@@ -775,10 +809,10 @@ private:
   void wake_up();
   void process_work();
 
-  bool can_flush_entry(const shared_ptr<GenericLogEntry> log_entry);
-  Context *construct_flush_entry_ctx(const shared_ptr<GenericLogEntry> log_entry);
+  bool can_flush_entry(const std::shared_ptr<GenericLogEntry> log_entry);
+  Context *construct_flush_entry_ctx(const std::shared_ptr<GenericLogEntry> log_entry);
   void process_writeback_dirty_entries();
-  bool can_retire_entry(const shared_ptr<GenericLogEntry> log_entry);
+  bool can_retire_entry(const std::shared_ptr<GenericLogEntry> log_entry);
   bool retire_entries();
 
   void new_sync_point(Contexts &later);
@@ -799,7 +833,7 @@ private:
   void schedule_flush_and_append(GenericLogOperations &ops);
   void flush_pmem_buffer(GenericLogOperations &ops);
   void alloc_op_log_entries(GenericLogOperations &ops);
-  void flush_op_log_entries(GenericLogOperations &ops);
+  void flush_op_log_entries(GenericLogOperationsVector &ops);
   int append_op_log_entries(GenericLogOperations &ops);
   void complete_op_log_entries(GenericLogOperations&& ops, const int r);
 };
