@@ -2951,8 +2951,10 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
       while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
       ldout(m_image_ctx.cct, 6) << "waiting for internal async operations" << dendl;
       // Second op tracker wait after flush completion for process_work()
-      Mutex::Locker locker(m_lock);
-      m_wake_up_enabled = false;
+      {
+	Mutex::Locker locker(m_lock);
+	m_wake_up_enabled = false;
+      }
       m_async_op_tracker.wait(m_image_ctx, next_ctx);
     });
   ctx = new FunctionContext(
@@ -3013,13 +3015,6 @@ void ReplicatedWriteLog<I>::wake_up() {
 }
 
 template <typename I>
-int ReplicatedWriteLog<I>::get_allocated_bytes() {
-  Mutex::Locker locker(m_lock);
-  return m_bytes_allocated;
-}
-  
-
-template <typename I>
 void ReplicatedWriteLog<I>::process_work() {
   CephContext *cct = m_image_ctx.cct;
   int max_iterations = 4;
@@ -3032,18 +3027,23 @@ void ReplicatedWriteLog<I>::process_work() {
       m_wake_up_requested = false;
     }
     if (m_alloc_failed_since_retire ||
-	get_allocated_bytes() > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) {
+	m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) {
       int retired = 0;
-      ldout(m_image_ctx.cct, 1) << "alloc_fail=" << m_alloc_failed_since_retire
-				<< ", allocated > high_water="
-				<< (get_allocated_bytes() > (m_bytes_allocated_cap * RETIRE_HIGH_WATER))
-				<< dendl;
-      while (retire_entries() &&
-	     (m_alloc_failed_since_retire ||
-	      get_allocated_bytes() > (m_bytes_allocated_cap * RETIRE_LOW_WATER))) {
+      utime_t started = ceph_clock_now();
+      ldout(m_image_ctx.cct, 10) << "alloc_fail=" << m_alloc_failed_since_retire
+				 << ", allocated > high_water="
+				 << (m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER))
+				 << dendl;
+      while (m_alloc_failed_since_retire ||
+	     (m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) ||
+	     ((m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_LOW_WATER)) &&
+	      (utime_t(ceph_clock_now() - started).to_msec() < RETIRE_BATCH_TIME_LIMIT_MS))) {
+	if (!retire_entries()) {
+	  break;
+	}
 	retired++;
       }
-      ldout(m_image_ctx.cct, 1) << "Retired " << retired << " entries" << dendl;
+      ldout(m_image_ctx.cct, 10) << "Retired " << retired << " entries" << dendl;
     }
     dispatch_deferred_writes();
     process_writeback_dirty_entries();

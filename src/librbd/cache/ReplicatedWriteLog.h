@@ -184,6 +184,7 @@ static const uint64_t MAX_LOG_ENTRIES = (1024 * 1024);
 //static const uint64_t MAX_LOG_ENTRIES = (1024 * 128);
 static const double RETIRE_HIGH_WATER = 0.97;
 static const double RETIRE_LOW_WATER = 0.90;
+static const int RETIRE_BATCH_TIME_LIMIT_MS = 250;
 
 POBJ_LAYOUT_BEGIN(rbd_rwl);
 POBJ_LAYOUT_ROOT(rbd_rwl, struct WriteLogPoolRoot);
@@ -707,13 +708,13 @@ private:
   uint32_t m_total_log_entries = 0;
   uint32_t m_free_log_entries = 0;
 
-  uint64_t m_bytes_allocated = 0; /* Total bytes allocated in write buffers */
+  std::atomic<uint64_t> m_bytes_allocated = {0}; /* Total bytes allocated in write buffers */
   uint64_t m_bytes_cached = 0;    /* Total bytes used in write buffers */
   uint64_t m_bytes_dirty = 0;     /* Total bytes yet to flush to RBD */
   uint64_t m_bytes_allocated_cap = 0;
 
   utime_t m_last_alloc_fail;      /* Entry or buffer allocation fail seen */
-  bool m_alloc_failed_since_retire = {false};
+  std::atomic<bool> m_alloc_failed_since_retire = {false};
 
   ImageCache<ImageCtxT> *m_image_writeback;
   WriteLogGuard m_write_log_guard;
@@ -810,7 +811,6 @@ private:
 
   void rwl_init(Context *on_finish);
   void wake_up();
-  int get_allocated_bytes();
   void process_work();
 
   bool can_flush_entry(const shared_ptr<GenericLogEntry> log_entry);
