@@ -182,6 +182,8 @@ static const uint64_t BLOCK_ALLOC_OVERHEAD_BYTES = 16;
 static const uint8_t RWL_POOL_VERSION = 1;
 static const uint64_t MAX_LOG_ENTRIES = (1024 * 1024);
 //static const uint64_t MAX_LOG_ENTRIES = (1024 * 128);
+static const double RETIRE_HIGH_WATER = 0.97;
+static const double RETIRE_LOW_WATER = 0.90;
 
 POBJ_LAYOUT_BEGIN(rbd_rwl);
 POBJ_LAYOUT_ROOT(rbd_rwl, struct WriteLogPoolRoot);
@@ -746,6 +748,7 @@ private:
 
   /* Acquire locks in order declared here */
 
+  mutable Mutex m_log_retire_lock;
   /* Hold a read lock on m_entry_reader_lock to add readers to log entry
    * bufs. Hold a write lock to prevent readers from being added (e.g. when
    * removing log entrys from the map). No lock required to remove readers. */
@@ -807,13 +810,14 @@ private:
 
   void rwl_init(Context *on_finish);
   void wake_up();
+  int get_allocated_bytes();
   void process_work();
 
   bool can_flush_entry(const std::shared_ptr<GenericLogEntry> log_entry);
   Context *construct_flush_entry_ctx(const std::shared_ptr<GenericLogEntry> log_entry);
   void process_writeback_dirty_entries();
   bool can_retire_entry(const std::shared_ptr<GenericLogEntry> log_entry);
-  bool retire_entries();
+  bool retire_entries(const unsigned long int frees_per_tx = MAX_FREE_PER_TRANSACTION);
 
   void new_sync_point(Contexts &later);
   C_FlushRequest* make_flush_req(Context *on_finish);
