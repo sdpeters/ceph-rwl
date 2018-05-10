@@ -485,6 +485,8 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
   : m_image_ctx(image_ctx),
     m_log_pool_config_size(DEFAULT_POOL_SIZE),
     m_image_writeback(lower), m_write_log_guard(image_ctx.cct),
+    m_log_retire_lock("librbd::cache::ReplicatedWriteLog::m_log_retire_lock",
+		      false, true, true, image_ctx.cct),
     m_entry_reader_lock("librbd::cache::ReplicatedWriteLog::m_entry_reader_lock"),
     m_deferred_dispatch_lock("librbd::cache::ReplicatedWriteLog::m_deferred_dispatch_lock",
 			     false, true, true, image_ctx.cct),
@@ -517,6 +519,7 @@ ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
     Mutex::Locker timer_locker(m_timer_lock);
     m_timer.shutdown();
     ldout(m_image_ctx.cct, 15) << "acquiring locks that shouldn't still be held" << dendl;
+    Mutex::Locker retire_locker(m_log_retire_lock);
     RWLock::WLocker reader_locker(m_entry_reader_lock);
     Mutex::Locker dispatch_locker(m_deferred_dispatch_lock);
     Mutex::Locker append_locker(m_log_append_lock);
@@ -2944,6 +2947,8 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    ctx->complete(r);
 	  });
       }
+      ldout(m_image_ctx.cct, 6) << "retiring entries" << dendl;
+      while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
       ldout(m_image_ctx.cct, 6) << "waiting for internal async operations" << dendl;
       // Second op tracker wait after flush completion for process_work()
       Mutex::Locker locker(m_lock);
@@ -3008,6 +3013,13 @@ void ReplicatedWriteLog<I>::wake_up() {
 }
 
 template <typename I>
+int ReplicatedWriteLog<I>::get_allocated_bytes() {
+  Mutex::Locker locker(m_lock);
+  return m_bytes_allocated;
+}
+  
+
+template <typename I>
 void ReplicatedWriteLog<I>::process_work() {
   CephContext *cct = m_image_ctx.cct;
   int max_iterations = 4;
@@ -3019,9 +3031,22 @@ void ReplicatedWriteLog<I>::process_work() {
       Mutex::Locker locker(m_lock);
       m_wake_up_requested = false;
     }
+    if (m_alloc_failed_since_retire ||
+	get_allocated_bytes() > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) {
+      int retired = 0;
+      ldout(m_image_ctx.cct, 1) << "alloc_fail=" << m_alloc_failed_since_retire
+				<< ", allocated > high_water="
+				<< (get_allocated_bytes() > (m_bytes_allocated_cap * RETIRE_HIGH_WATER))
+				<< dendl;
+      while (retire_entries() &&
+	     (m_alloc_failed_since_retire ||
+	      get_allocated_bytes() > (m_bytes_allocated_cap * RETIRE_LOW_WATER))) {
+	retired++;
+      }
+      ldout(m_image_ctx.cct, 1) << "Retired " << retired << " entries" << dendl;
+    }
     dispatch_deferred_writes();
     process_writeback_dirty_entries();
-    while (retire_entries()) { }
 
     {
       Mutex::Locker locker(m_lock);
@@ -3213,11 +3238,12 @@ bool ReplicatedWriteLog<I>::can_retire_entry(shared_ptr<GenericLogEntry> log_ent
  * retired.
  */
 template <typename I>
-bool ReplicatedWriteLog<I>::retire_entries() {
+bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx) {
   CephContext *cct = m_image_ctx.cct;
   GenericLogEntries retiring_entries;
   uint32_t first_valid_entry;
 
+  Mutex::Locker retire_locker(m_log_retire_lock);
   ldout(cct, 20) << "Look for entries to retire" << dendl;
   {
     /* Entry readers can't be added while we hold m_entry_reader_lock */
@@ -3226,7 +3252,7 @@ bool ReplicatedWriteLog<I>::retire_entries() {
     first_valid_entry = m_first_valid_entry;
     auto entry = m_log_entries.front();
     while (!m_log_entries.empty() &&
-	   retiring_entries.size() < MAX_FREE_PER_TRANSACTION &&
+	   retiring_entries.size() < frees_per_tx &&
 	   can_retire_entry(entry)) {
       assert(entry->completed);
       assert(entry->log_entry_index == first_valid_entry);
@@ -3298,6 +3324,8 @@ bool ReplicatedWriteLog<I>::retire_entries() {
 	  m_bytes_allocated -= entry_allocation_size;
 	}
       }
+      m_alloc_failed_since_retire = false;
+      wake_up();
     }
   } else {
     ldout(cct, 20) << "Nothing to retire" << dendl;
