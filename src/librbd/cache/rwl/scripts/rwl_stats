@@ -1,0 +1,2 @@
+#!/bin/bash
+sed '/--- Begin perf dump ---/,$!d' $1 | sed '/--- End perf dump ---/,$d' | sed '1d'
