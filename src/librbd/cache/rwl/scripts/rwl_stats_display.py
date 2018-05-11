@@ -108,7 +108,7 @@ def print_histograms(j, combine_sizes):
                 #print ('histograms.{}.{} is not a histogram'.format(rbd_vol_name, histogram_name))
                 continue
             #print ('histograms.{}.{} is a histogram'.format(rbd_vol_name, histogram_name))
-            print ('--- {} (RBD volume {}) ---'.format(histogram_name, rbd_vol_name))
+            print ('--- {} (RBD volume \"{}\" ({})) ---'.format(histogram_name, j['image'], rbd_vol_name))
             if combine_sizes:
                 print_1D_histogram(histogram)
             else:

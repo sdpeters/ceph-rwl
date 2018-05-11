@@ -1,6 +1,7 @@
 #!/bin/bash
 jq '{ 
 test_time: (.test_time),
+image: (.image),
 rbd_vol: (.stats|keys[0]),
 rd: (.stats[.stats|keys[0]].rd),
 rd_bytes: (.stats[.stats|keys[0]].rd_bytes), 
