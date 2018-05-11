@@ -798,6 +798,7 @@ private:
   unsigned int m_free_lanes = MAX_CONCURRENT_WRITES;
   unsigned int m_unpublished_reserves = 0;
   PerfCounters *m_perfcounter = nullptr;
+  std::atomic<bool> m_dump_perfcounters_on_shutdown = {false};
 
   std::atomic<bool> m_periodic_stats_enabled = {true};
   mutable Mutex m_timer_lock; /* Used only by m_timer */

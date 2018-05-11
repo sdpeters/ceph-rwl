@@ -2669,6 +2669,7 @@ void ReplicatedWriteLog<I>::log_perf() {
   stringstream ss;
   utime_t now = ceph_clock_now();
   ss << "\"test_time\": \"" << now << "\",";
+  ss << "\"image\": \"" << m_image_ctx.name << "\",";
   bl.append(ss);
   bl.append("\"stats\": ");
   m_image_ctx.cct->get_perfcounters_collection()->dump_formatted(f, 0);
@@ -2829,12 +2830,11 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
     m_bytes_allocated_cap = effective_pool_size;
   }
 
-  perf_start(m_image_ctx.id);
-
   /* Start the sync point following the last one seen in the log */
   new_sync_point(later.contexts);
   ldout(cct,20) << "new sync point = [" << m_current_sync_point << "]" << dendl;
 
+  m_dump_perfcounters_on_shutdown = true;
   on_finish->complete(0);
 
   arm_periodic_stats();
@@ -2844,6 +2844,8 @@ template <typename I>
 void ReplicatedWriteLog<I>::init(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
+  perf_start(m_image_ctx.id);
+
   Context *ctx = new FunctionContext(
     [this, on_finish](int r) {
       if (r >= 0) {
@@ -2900,7 +2902,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	Mutex::Locker timer_locker(m_timer_lock);
 	m_timer.cancel_all_events();
       }
-      if (m_perfcounter) {
+      if (m_perfcounter && m_dump_perfcounters_on_shutdown) {
 	log_perf();
       }
       if (use_finishers) {
@@ -2947,7 +2949,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	  });
       }
       ldout(m_image_ctx.cct, 6) << "retiring entries" << dendl;
-      while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
+      while (retire_entries(/*MAX_ALLOC_PER_TRANSACTION*/)) { }
       ldout(m_image_ctx.cct, 6) << "waiting for internal async operations" << dendl;
       // Second op tracker wait after flush completion for process_work()
       {
@@ -3041,6 +3043,8 @@ void ReplicatedWriteLog<I>::process_work() {
 	  break;
 	}
 	retired++;
+	dispatch_deferred_writes();
+	process_writeback_dirty_entries();
       }
       ldout(m_image_ctx.cct, 10) << "Retired " << retired << " entries" << dendl;
     }
@@ -3419,7 +3423,9 @@ template <typename I>
 void ReplicatedWriteLog<I>::flush(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   bool all_clean = false;
-  m_perfcounter->inc(l_librbd_rwl_flush, 1);
+  if (m_perfcounter) {
+    m_perfcounter->inc(l_librbd_rwl_flush, 1);
+  }
 
   {
     Mutex::Locker locker(m_lock);
