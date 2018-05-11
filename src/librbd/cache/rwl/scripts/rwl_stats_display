@@ -1,4 +1,6 @@
 #!/bin/bash
+#
+# Display RWL stats extracted from Ceph client log file
 #set -x
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 stats_file=$1
@@ -11,9 +13,11 @@ fi
 eval "$(jq -r '@sh "test_time=\(.test_time) rbd_vol=\(.stats | keys[0])"' $stats_file)"
 #rwl_version=`jq -r '.rwl_version' $stats_file`
 
-echo "Volume $rbd_vol, time $test_time"
-echo
+# Only the first volume
+#echo "Volume $rbd_vol, time $test_time"
+#echo
 
-$DIR/rwl_stats_quick < $stats_file
+#$DIR/rwl_stats_quick < $stats_file
 $DIR/rwl_stats_internal < $stats_file
-$DIR/rwl_hist.py < $stats_file
+#$DIR/rwl_hist.py < $stats_file
+$DIR/rwl_stats_display.py < $stats_file

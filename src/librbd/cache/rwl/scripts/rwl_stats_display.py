@@ -93,13 +93,7 @@ def print_1D_histogram(histogram):
     content += "\n"
     print content
 
-def print_histograms(perf_file, combine_sizes):
-
-    try:
-        j = json.load(perf_file)
-    except Exception as e:
-        return ("Couldn't read {}, result: \n{}".format(perf_file,e))
-
+def print_histograms(j, combine_sizes):
     histograms = j['histograms']
     for rbd_vol_name in histograms.keys():
         #print ('Considering: histograms.{}'.format(rbd_vol_name))
@@ -121,7 +115,39 @@ def print_histograms(perf_file, combine_sizes):
                 print_histogram(histogram)
             print
             #print "Done"
-            
+
+def print_file_histograms(perf_file, combine_sizes):
+    try:
+        j = json.load(perf_file)
+    except Exception as e:
+        return ("Couldn't read {}, result: \n{}".format(perf_file,e))
+
+    print_histograms(j, combine_sizes)
+
+# Generator produces JSON objects from the supplied file
+def parse(json_file):
+    decoder = json.JSONDecoder(strict=False)
+    buffer = ''
+    #for chunk in iter(json_file.readline, ''):
+    for chunk in json_file:
+        buffer += chunk
+        #print ('chunk={}'.format(chunk))
+        while buffer:
+            try:
+                result, index = decoder.raw_decode(buffer)
+                #print ('--- Found object')
+                yield result
+                # Leading whitespace makes next parse fail. Dump remaining
+                # line because all these JSON objects start on new lines
+                #buffer = buffer[index:]
+                buffer = ''
+                #print ('buffer={}, index={}'.format(buffer, index))
+            except ValueError as e:
+                # Not enough data to decode, read more
+                break
+        #print ("-- end buffer")
+    #print ("-- end file, buffer={}".format(buffer))
+                                                                                                   
 def main():
     parser = argparse.ArgumentParser(
         description='Dump histograms from an RWL perf dump')
@@ -140,8 +166,9 @@ def main():
     else:
         perf_file = sys.stdin
         
-    print_histograms(perf_file, args.combine_sizes)
-
+    #print_file_histograms(perf_file, args.combine_sizes)
+    for json_object in parse(perf_file):
+        print_histograms(json_object, args.combine_sizes)
 
 if __name__ == '__main__':
     main()
