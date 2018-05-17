@@ -32,6 +32,7 @@ set(librbd_internal_srcs
   cache/ImageWriteback.cc
   cache/ObjectCacherObjectDispatch.cc
   cache/PassthroughImageCache.cc
+  cache/FileImageCache.cc
   deep_copy/ImageCopyRequest.cc
   deep_copy/MetadataCopyRequest.cc
   deep_copy/ObjectCopyRequest.cc
