@@ -1319,8 +1319,8 @@ void ReplicatedWriteLog<I>::invalidate(Extents&& image_extents,
     while (image_length > 0) {
       uint64_t block = m_meta_store->offset_to_block(image_offset);
       uint32_t block_start_offset = image_offset % BLOCK_SIZE;
-      uint32_t block_end_offset = MIN(block_start_offset + image_length,
-                                      BLOCK_SIZE);
+      uint32_t block_end_offset = min(block_start_offset + image_length,
+                                      uint64_t(BLOCK_SIZE));
       uint32_t block_length = block_end_offset - block_start_offset;
 
       m_policy->invalidate(block);
