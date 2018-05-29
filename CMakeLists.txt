@@ -236,7 +236,7 @@ if(WITH_SPDK)
   set(HAVE_SPDK TRUE)
 endif(WITH_SPDK)
 
-option(WITH_PMEM "Enable PMEM" OFF)
+option(WITH_PMEM "Enable PMEM" ON)
 if(WITH_PMEM)
   set(HAVE_PMEM ON)
   if(NOT WITH_BLUESTORE)
