@@ -322,9 +322,8 @@ public:
   std::shared_ptr<SyncPointLogEntry> sync_point_entry;
   WriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry, const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : GenericLogEntry(image_offset_bytes, write_bytes), sync_point_entry(sync_point_entry) { }
-  WriteLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes) {
-    WriteLogEntry(nullptr, image_offset_bytes, write_bytes);
-  }
+  WriteLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
+    : GenericLogEntry(image_offset_bytes, write_bytes), sync_point_entry(nullptr) { }
   WriteLogEntry(const WriteLogEntry&) = delete;
   WriteLogEntry &operator=(const WriteLogEntry&) = delete;
   BlockExtent block_extent();
@@ -334,7 +333,13 @@ public:
     os << "(Write) ";
     GenericLogEntry::format(os);
     os << ", "
-       << "sync_point_entry=[" << *sync_point_entry << "], "
+       << "sync_point_entry=[";
+    if (sync_point_entry) {
+      os << *sync_point_entry;
+    } else {
+      os << "nullptr";
+    }
+    os << "], "
        << "referring_map_entries=" << referring_map_entries << ", "
        << "reader_count=" << reader_count << ", "
        << "flushing=" << flushing << ", "
