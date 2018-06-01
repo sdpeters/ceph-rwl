@@ -100,7 +100,11 @@ void CloseRequest<I>::handle_shut_down_io_queue(int r) {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
-  send_shut_down_exclusive_lock();
+  /* It's unsafe to do this synchronously because this thread may
+     still hold owner_lock */
+  m_image_ctx->op_work_queue->queue(new FunctionContext([this](int r) {
+	send_shut_down_exclusive_lock();
+      }));
 }
 
 template <typename I>
