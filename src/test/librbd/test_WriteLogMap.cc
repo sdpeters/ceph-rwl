@@ -29,6 +29,9 @@ TEST_F(TestWriteLogMap, Simple) {
 
   /* WriteLogEntry takes offset, length, in bytes */
   auto e1 = make_shared<WriteLogEntry>(BlockToBytes(4), BlockToBytes(8));
+  WriteLogEntry *e1_ptr = e1.get();
+  ASSERT_EQ(BlockToBytes(4), e1_ptr->ram_entry.image_offset_bytes);
+  ASSERT_EQ(BlockToBytes(8), e1_ptr->ram_entry.write_bytes);
   map.add_log_entry(e1);
 
   /* BlockExtent takes first, last, in blocks */
