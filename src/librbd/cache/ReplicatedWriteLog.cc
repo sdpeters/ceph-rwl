@@ -672,6 +672,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 		<< "bl=" << bl << ", "
 		<< "on_finish=" << on_finish << dendl;
 
+  assert(m_initialized);
   bl->clear();
   m_perfcounter->inc(l_librbd_rwl_rd_req, 1);
 
@@ -1992,6 +1993,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
   utime_t now = ceph_clock_now();
   m_perfcounter->inc(l_librbd_rwl_wr_req, 1);
 
+  assert(m_initialized);
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
@@ -2069,6 +2071,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 		 << "length=" << length << ", "
 		 << "on_finish=" << on_finish << dendl;
 
+  assert(m_initialized);
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
@@ -2340,6 +2343,14 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
   ldout(cct, 20) << "on_finish=" << on_finish << dendl;
   m_perfcounter->inc(l_librbd_rwl_aio_flush, 1);
 
+  /* May be called even if initilizatin fails */
+  if (!m_initialized) {
+    ldout(cct, 20) << "never initialized" << dendl;
+    /* Deadlock if completed here */
+    m_image_ctx.op_work_queue->queue(on_finish);
+    return;
+  }
+  
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
@@ -2414,6 +2425,7 @@ void ReplicatedWriteLog<I>::aio_writesame(uint64_t offset, uint64_t length,
 		 << "length=" << length << ", "
 		 << "data_len=" << bl.length() << ", "
 		 << "on_finish=" << on_finish << dendl;
+  assert(m_initialized);
   {
 
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
@@ -2446,6 +2458,7 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 						  int fadvise_flags,
 						  Context *on_finish) {
 
+  assert(m_initialized);
   m_perfcounter->inc(l_librbd_rwl_cmp, 1);
 
   // TBD: Must pass through block guard. Dispatch read through RWL. In completion
@@ -2720,7 +2733,6 @@ void ReplicatedWriteLog<I>::arm_periodic_stats() {
 template <typename I>
 void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  DeferredContexts later;
   ldout(cct, 20) << dendl;
   TOID(struct WriteLogPoolRoot) pool_root;
 
@@ -2831,10 +2843,15 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish) {
   }
 
   /* Start the sync point following the last one seen in the log */
-  new_sync_point(later.contexts);
-  ldout(cct,20) << "new sync point = [" << m_current_sync_point << "]" << dendl;
+  {
+      DeferredContexts later;
+
+      new_sync_point(later.contexts);
+      ldout(cct,20) << "new sync point = [" << m_current_sync_point << "]" << dendl;
+  }
 
   m_dump_perfcounters_on_shutdown = true;
+  m_initialized = true;
   on_finish->complete(0);
 
   arm_periodic_stats();
@@ -3344,6 +3361,7 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
   m_perfcounter->inc(l_librbd_rwl_invalidate_cache, 1);
   ldout(cct, 20) << dendl;
 
+  assert(m_initialized);
   assert(is_block_aligned(invalidate_extent));
 
   /* Invalidate must pass through block guard to ensure all layers of cache are
@@ -3390,6 +3408,7 @@ void ReplicatedWriteLog<I>::invalidate(Extents&& image_extents,
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "image_extents=" << image_extents << dendl;
 
+  assert(m_initialized);
   // TODO - Selective invalidate does not pass through block guard, but
   // whatever calls it must. Appends invalidate entry. Affected region is
   // treated as a RWL miss on reads, and are not flushable (each affected entry

@@ -696,6 +696,7 @@ private:
   void detain_guarded_request(GuardedRequest &&req);
   void release_guarded_request(BlockGuardCell *cell);
 
+  std::atomic<bool> m_initialized = {false};
   const char* rwl_pool_layout_name = POBJ_LAYOUT_NAME(rbd_rwl);
 
   ImageCtxT &m_image_ctx;
