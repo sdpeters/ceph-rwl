@@ -28,6 +28,7 @@ namespace io {
 
 using librbd::util::get_image_ctx;
 using librbd::util::create_context_callback;
+using librbd::util::create_async_context_callback;
 
 namespace {
 
@@ -115,9 +116,11 @@ private:
 template <typename I>
 struct C_AioFlush : public C_AioRequest {
   I &image_ctx;
+  FlushSource m_flush_source;
+  ZTracer::Trace &m_trace;
 
-  C_AioFlush(I &image_ctx, AioCompletion *aio_comp)
-    : C_AioRequest(aio_comp), image_ctx(image_ctx) {
+  C_AioFlush(I &image_ctx, AioCompletion *aio_comp, FlushSource flush_source, ZTracer::Trace &trace)
+    : C_AioRequest(aio_comp), image_ctx(image_ctx), m_flush_source(flush_source), m_trace(trace) {
   }
 
   virtual void complete(int r) override {
@@ -134,35 +137,41 @@ struct C_AioFlush : public C_AioRequest {
     bool journaling = false;
     {
       RWLock::RLocker snap_locker(image_ctx.snap_lock);
-      if (image_ctx.journal != nullptr &&
-          image_ctx.journal->is_journal_appending()) {
-        // track op now to prevent potential race with disabling journal
-        m_completion->start_op(true);
-        journaling = true;
-      }
+      journaling = (m_flush_source == FLUSH_SOURCE_USER &&
+		    image_ctx.journal != nullptr &&
+		    image_ctx.journal->is_journal_appending());
     }
 
-    Context *ctx = create_context_callback<
-      C_AioFlush<I>, &C_AioFlush<I>::handle_flush>(this);
-#if 0 // associate_journal_event() no longer exists
+    Context *ctx = create_async_context_callback(
+      image_ctx, create_context_callback<
+      C_AioFlush<I>, &C_AioFlush<I>::handle_flush>(this));
+
     if (journaling) {
-      // flush op completes when flush journal event (and all predecessor
-      // events) safely written
+      // in-flight ops are flushed prior to closing the journal
       uint64_t journal_tid = image_ctx.journal->append_io_event(
-        journal::EventEntry(journal::AioFlushEvent()),
-        {}, 0, 0, false);
-      m_completion->associate_journal_event(journal_tid);
+	journal::EventEntry(journal::AioFlushEvent()), 0, 0, false, 0);
 
-      image_ctx.journal->flush_event(journal_tid, ctx);
+      ctx = new FunctionContext(
+	[this, journal_tid, ctx](int r) {
+	  image_ctx.journal->commit_io_event(journal_tid, r);
+	  ctx->complete(r);
+	});
+      ctx = new FunctionContext(
+	[this, journal_tid, ctx](int r) {
+	  image_ctx.journal->flush_event(journal_tid, ctx);
+	});
     } else {
-#endif
-      // flush op completes when writeback cache (if enabled) flushes
-      // all dirty blocks
-      image_ctx.flush_async_operations(ctx);
-
-      // track flush op for block writes
-      m_completion->start_op(true);
-//    }
+      // flush rbd cache only when journaling is not enabled
+      auto object_dispatch_spec = ObjectDispatchSpec::create_flush(
+        &image_ctx, OBJECT_DISPATCH_LAYER_NONE, m_flush_source, m_trace,
+	ctx);
+      ctx = new FunctionContext([this, object_dispatch_spec](int r) {
+	  ldout(image_ctx.cct, 20) << "C_AioFlush::" << __func__ << " " << this << ": r=" << r
+	                           << dendl;
+	  object_dispatch_spec->send();
+	});
+    }
+    image_ctx.flush_async_operations(ctx);
   }
 
   void handle_flush(int r) {
@@ -609,13 +618,13 @@ template <typename I>
 void ImageFlushRequest<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
 
+  ldout(image_ctx.cct, 20) << "ImageFlushRequest::" << __func__ << " " << this
+                           << dendl;
+
   AioCompletion *aio_comp = this->m_aio_comp;
   aio_comp->set_request_count(1);
 
-  C_AioFlush<I> *ctx = new C_AioFlush<I>(image_ctx, aio_comp);
-  image_ctx.flush_async_operations(ctx);
-
-  aio_comp->put();
+  C_AioFlush<I> *ctx = new C_AioFlush<I>(image_ctx, aio_comp, m_flush_source, this->m_trace);
 
   // ensure all in-flight IOs are settled if non-user flush request
   image_ctx.flush_async_operations(ctx);
@@ -632,6 +641,9 @@ template <typename I>
 void ImageFlushRequest<I>::send_image_cache_request() {
   I &image_ctx = this->m_image_ctx;
   assert(image_ctx.image_cache != nullptr);
+
+  ldout(image_ctx.cct, 20) << "ImageFlushRequest::" << __func__ << " " << this
+                           << dendl;
 
   AioCompletion *aio_comp = this->m_aio_comp;
   aio_comp->set_request_count(1);
