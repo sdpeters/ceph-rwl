@@ -208,7 +208,8 @@ struct WriteLogPmemEntry {
     uint8_t unmap :1;       /* has_data will be 0 if this
 			       is an unmap */
   };
-  uint64_t _unused = 0;     /* Padding to 64 bytes */
+  uint32_t entry_index = 0; /* For debug consistency check. Can be removed if we need teh space */
+  uint32_t _unused = 0;     /* Padding to 64 bytes */
   WriteLogPmemEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes),
       entry_valid(0), sync_point(0), sequenced(0), has_data(0), unmap(0) {
@@ -233,7 +234,8 @@ struct WriteLogPmemEntry {
        << "sync_gen_number=" << entry.sync_gen_number << ", "
        << "write_sequence_number=" << entry.write_sequence_number << ", "
        << "image_offset_bytes=" << entry.image_offset_bytes << ", "
-       << "write_bytes=" << entry.write_bytes;
+       << "write_bytes=" << entry.write_bytes << ", "
+       << "entry_index=" << entry.entry_index;
     return os;
   };
 };
@@ -814,9 +816,11 @@ private:
   void perf_start(const std::string name);
   void perf_stop();
   void log_perf();
+  void periodic_stats();
   void arm_periodic_stats();
 
-  void rwl_init(Context *on_finish);
+  void rwl_init(Context *on_finish, Contexts &later);
+  void load_existing_entries(Contexts &later);
   void wake_up();
   void process_work();
 
@@ -826,6 +830,7 @@ private:
   bool can_retire_entry(const std::shared_ptr<GenericLogEntry> log_entry);
   bool retire_entries(const unsigned long int frees_per_tx = MAX_FREE_PER_TRANSACTION);
 
+  void init_flush_new_sync_point(Contexts &later);
   void new_sync_point(Contexts &later);
   C_FlushRequest* make_flush_req(Context *on_finish);
   void flush_new_sync_point(C_FlushRequest *flush_req, Contexts &later);
