@@ -3195,7 +3195,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	  });
       }
       ldout(m_image_ctx.cct, 6) << "retiring entries" << dendl;
-      while (retire_entries(/*MAX_ALLOC_PER_TRANSACTION*/)) { }
+      while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
       ldout(m_image_ctx.cct, 6) << "waiting for internal async operations" << dendl;
       // Second op tracker wait after flush completion for process_work()
       {
@@ -3214,6 +3214,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    ctx->complete(r);
 	  });
       }
+      m_shutting_down = true;
       // flush all writes to OSDs
       ldout(m_image_ctx.cct, 6) << "flushing" << dendl;
       flush(next_ctx);
@@ -3273,7 +3274,7 @@ void ReplicatedWriteLog<I>::process_work() {
       Mutex::Locker locker(m_lock);
       m_wake_up_requested = false;
     }
-    if (m_alloc_failed_since_retire ||
+    if (m_alloc_failed_since_retire || m_shutting_down ||
 	m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) {
       int retired = 0;
       utime_t started = ceph_clock_now();
@@ -3281,11 +3282,11 @@ void ReplicatedWriteLog<I>::process_work() {
 				 << ", allocated > high_water="
 				 << (m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER))
 				 << dendl;
-      while (m_alloc_failed_since_retire ||
+      while (m_alloc_failed_since_retire || m_shutting_down ||
 	     (m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) ||
 	     ((m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_LOW_WATER)) &&
 	      (utime_t(ceph_clock_now() - started).to_msec() < RETIRE_BATCH_TIME_LIMIT_MS))) {
-	if (!retire_entries()) {
+	if (!retire_entries(m_shutting_down ? MAX_ALLOC_PER_TRANSACTION : MAX_FREE_PER_TRANSACTION)) {
 	  break;
 	}
 	retired++;

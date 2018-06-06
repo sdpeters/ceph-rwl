@@ -704,6 +704,7 @@ private:
   void release_guarded_request(BlockGuardCell *cell);
 
   std::atomic<bool> m_initialized = {false};
+  std::atomic<bool> m_shutting_down = {false};
   const char* rwl_pool_layout_name = POBJ_LAYOUT_NAME(rbd_rwl);
 
   ImageCtxT &m_image_ctx;
