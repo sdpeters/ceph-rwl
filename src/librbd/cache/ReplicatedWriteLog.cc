@@ -2948,22 +2948,21 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, Contexts &later) {
 
   Mutex::Locker locker(m_lock);
   assert(!m_initialized);
-  ldout(cct,5) << "rwl_enabled:" << m_image_ctx.rwl_enabled << dendl;
-  ldout(cct,5) << "rwl_size:" << m_image_ctx.rwl_size << dendl;
+  ldout(cct,5) << "rwl_enabled: " << m_image_ctx.rwl_enabled << dendl;
+  ldout(cct,5) << "rwl_size: " << m_image_ctx.rwl_size << dendl;
   std::string rwl_path = m_image_ctx.rwl_path;
-  ldout(cct,5) << "rwl_path:" << m_image_ctx.rwl_path << dendl;
+  ldout(cct,5) << "rwl_path: " << m_image_ctx.rwl_path << dendl;
 
   std::string log_pool_name = rwl_path + "/rbd-rwl." + m_image_ctx.id + ".pool";
   std::string log_poolset_name = rwl_path + "/rbd-rwl." + m_image_ctx.id + ".poolset";
-  m_log_pool_config_size = max(cct->_conf->get_val<uint64_t>("rbd_rwl_size"), MIN_POOL_SIZE);
+  m_log_pool_config_size = max(m_image_ctx.rwl_size, MIN_POOL_SIZE);
 
   if (access(log_poolset_name.c_str(), F_OK) == 0) {
     m_log_pool_name = log_poolset_name;
   } else {
     m_log_pool_name = log_pool_name;
-    lderr(cct) << "failed to open poolset" << log_poolset_name
-	       << ":" << pmemobj_errormsg()
-	       << ". Opening/creating simple/unreplicated pool" << dendl;
+    ldout(cct, 5) << "failed to open poolset" << log_poolset_name
+	          << ". Opening/creating simple/unreplicated pool" << dendl;
   }
 
   if (access(m_log_pool_name.c_str(), F_OK) != 0) {
