@@ -156,22 +156,16 @@ struct C_AioFlush : public C_AioRequest {
 	  image_ctx.journal->commit_io_event(journal_tid, r);
 	  ctx->complete(r);
 	});
-      ctx = new FunctionContext(
-	[this, journal_tid, ctx](int r) {
-	  image_ctx.journal->flush_event(journal_tid, ctx);
-	});
+      image_ctx.journal->flush_event(journal_tid, ctx);
     } else {
       // flush rbd cache only when journaling is not enabled
       auto object_dispatch_spec = ObjectDispatchSpec::create_flush(
         &image_ctx, OBJECT_DISPATCH_LAYER_NONE, m_flush_source, m_trace,
 	ctx);
-      ctx = new FunctionContext([this, object_dispatch_spec](int r) {
-	  ldout(image_ctx.cct, 20) << "C_AioFlush::" << __func__ << " " << this << ": r=" << r
-	                           << dendl;
-	  object_dispatch_spec->send();
-	});
+      ldout(image_ctx.cct, 20) << "C_AioFlush::" << __func__ << " " << this << ": r=" << r
+			       << dendl;
+      object_dispatch_spec->send();
     }
-    image_ctx.flush_async_operations(ctx);
   }
 
   void handle_flush(int r) {
