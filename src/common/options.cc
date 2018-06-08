@@ -6424,7 +6424,7 @@ static std::vector<Option> get_rbd_options() {
     .set_description("discard data on zeroed write same instead of writing zero"),
 
     Option("rbd_persistent_cache_enabled", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
-    .set_default(true)
+    .set_default(false)
     .set_description(""),
 
     Option("rbd_persistent_cache_writeback", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
