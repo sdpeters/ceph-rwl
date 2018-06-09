@@ -2962,7 +2962,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, Contexts &later) {
   } else {
     m_log_pool_name = log_pool_name;
     ldout(cct, 5) << "failed to open poolset" << log_poolset_name
-	          << ". Opening/creating simple/unreplicated pool" << dendl;
+		  << ". Opening/creating simple/unreplicated pool" << dendl;
   }
 
   if (access(m_log_pool_name.c_str(), F_OK) != 0) {
@@ -3273,7 +3273,7 @@ void ReplicatedWriteLog<I>::process_work() {
       Mutex::Locker locker(m_lock);
       m_wake_up_requested = false;
     }
-    if (m_alloc_failed_since_retire || m_shutting_down ||
+    if (m_alloc_failed_since_retire || m_shutting_down || m_invalidating ||
 	m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) {
       int retired = 0;
       utime_t started = ceph_clock_now();
@@ -3281,11 +3281,13 @@ void ReplicatedWriteLog<I>::process_work() {
 				 << ", allocated > high_water="
 				 << (m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER))
 				 << dendl;
-      while (m_alloc_failed_since_retire || m_shutting_down ||
+      while (m_alloc_failed_since_retire || m_shutting_down || m_invalidating ||
 	     (m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) ||
 	     ((m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_LOW_WATER)) &&
 	      (utime_t(ceph_clock_now() - started).to_msec() < RETIRE_BATCH_TIME_LIMIT_MS))) {
-	if (!retire_entries(m_shutting_down ? MAX_ALLOC_PER_TRANSACTION : MAX_FREE_PER_TRANSACTION)) {
+	if (!retire_entries((m_shutting_down || m_invalidating)
+			    ? MAX_ALLOC_PER_TRANSACTION
+			    : MAX_FREE_PER_TRANSACTION)) {
 	  break;
 	}
 	retired++;
@@ -3321,6 +3323,8 @@ bool ReplicatedWriteLog<I>::can_flush_entry(std::shared_ptr<GenericLogEntry> log
   assert(log_entry->ram_entry.is_write());
   assert(m_lock.is_locked_by_me());
 
+  if (m_invalidating) return true;
+
   /* For OWB we can flush entries with the same sync gen number (write between
    * aio_flush() calls) concurrently. Here we'll consider an entry flushable if
    * its sync gen number is <= the lowest sync gen number carried by all the
@@ -3354,6 +3358,7 @@ bool ReplicatedWriteLog<I>::can_flush_entry(std::shared_ptr<GenericLogEntry> log
 template <typename I>
 Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<GenericLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
+  bool invalidating = m_invalidating; // snapshot so we behave consistently
 
   ldout(cct, 20) << "" << dendl;
   assert(log_entry->ram_entry.is_write());
@@ -3367,11 +3372,16 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
   m_flush_ops_in_flight += 1;
   m_flush_bytes_in_flight += write_entry->ram_entry.write_bytes;
 
-  /* Construct bl for pmem buffer */
-  write_entry->add_reader();
   write_entry->flushing = true;
-  m_async_op_tracker.start_op();
-  buffer::raw *entry_buf =
+
+  /* Construct bl for pmem buffer now while we hold m_entry_reader_lock */
+  buffer::raw *entry_buf = nullptr;
+  if (invalidating) {
+    /* If we're invalidating the RWL, we don't actually flush, so don't create the buffer. */
+  } else {
+    write_entry->add_reader();
+    m_async_op_tracker.start_op();
+    entry_buf =
     buffer::claim_buffer(write_entry->ram_entry.write_bytes,
 			 (char*)write_entry->pmem_buffer,
 			 make_deleter([this, write_entry]
@@ -3382,13 +3392,14 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 					write_entry->remove_reader();
 					m_async_op_tracker.finish_op();
 				      }));
+  }
 
   /* The caller will send the flush write later when we're not holding m_lock */
   return new FunctionContext(
-    [this, cct, log_entry, write_entry, entry_buf](int r) {
+    [this, cct, log_entry, write_entry, entry_buf, invalidating](int r) {
       /* Flush write completion action */
       Context *ctx = new FunctionContext(
-	[this, cct, log_entry, write_entry](int r) {
+	[this, cct, log_entry, write_entry, invalidating](int r) {
 	  {
 	    Mutex::Locker locker(m_lock);
 	    m_flush_ops_in_flight -= 1;
@@ -3402,19 +3413,25 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 	      write_entry->flushed = true;
 	      assert(m_bytes_dirty >= write_entry->ram_entry.write_bytes);
 	      m_bytes_dirty -= write_entry->ram_entry.write_bytes;
-	      ldout(cct, 20) << "flushed: " << write_entry << dendl;
+	      ldout(cct, 20) << "flushed: " << write_entry
+			     << " invalidating=" << invalidating << dendl;
 	    }
 	    wake_up();
 	  }
 	});
 
-      bufferlist entry_bl;
-      entry_bl.push_back(entry_buf);
-      ldout(cct, 15) << "flushing:" << write_entry
-		     << " " << *write_entry << dendl;
-      m_image_writeback->aio_write({{write_entry->ram_entry.image_offset_bytes,
-				     write_entry->ram_entry.write_bytes}},
-				   std::move(entry_bl), 0, ctx);
+      if (invalidating) {
+	/* When invalidating we just do the flush bookeeping */
+	ctx->complete(0);
+      } else {
+	bufferlist entry_bl;
+	entry_bl.push_back(entry_buf);
+	ldout(cct, 15) << "flushing:" << write_entry
+		       << " " << *write_entry << dendl;
+	m_image_writeback->aio_write({{write_entry->ram_entry.image_offset_bytes,
+				       write_entry->ram_entry.write_bytes}},
+				     std::move(entry_bl), 0, ctx);
+      }
     });
 }
 
@@ -3422,21 +3439,26 @@ template <typename I>
 void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
   CephContext *cct = m_image_ctx.cct;
   bool all_clean = false;
+  int flushed = 0;
 
   ldout(cct, 20) << "Look for dirty entries" << dendl;
   {
     DeferredContexts post_unlock;
     RWLock::RLocker entry_reader_locker(m_entry_reader_lock);
-    while (true) {
+    while (flushed < IN_FLIGHT_FLUSH_WRITE_LIMIT) {
       Mutex::Locker locker(m_lock);
       if (m_dirty_log_entries.empty()) {
 	ldout(cct, 20) << "Nothing new to flush" << dendl;
+
+	/* Check if we should take flush complete actions */
+	all_clean = !m_flush_ops_in_flight; // and m_dirty_log_entries is empty
 	break;
       }
       auto candidate = m_dirty_log_entries.front();
       bool flushable = can_flush_entry(candidate);
       if (flushable) {
 	post_unlock.contexts.push_back(construct_flush_entry_ctx(candidate));
+	flushed++;
       }
       if (flushable || !candidate->ram_entry.is_write()) {
 	/* Remove if we're flushing it, or it's not a write */
@@ -3446,10 +3468,6 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
 	break;
       }
     }
-
-    /* Check for and take flush complete actions */
-    all_clean = (0 == m_flush_ops_in_flight &&
-		 m_dirty_log_entries.empty());
   }
 
   if (all_clean) {
@@ -3594,6 +3612,8 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
   return true;
 }
 
+/* Invalidates entire RWL. All entries are removed. Unflushed writes
+ * are discarded. Consider flushing first. */
 template <typename I>
 void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -3611,14 +3631,19 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext(
       [this, on_finish, invalidate_extent](BlockGuardCell *cell, bool detained) {
-	CephContext *cct = m_image_ctx.cct;
-	ldout(cct, 6) << "invalidate_extent=" << invalidate_extent << " "
-		      << "cell=" << cell << dendl;
+	DeferredContexts on_exit;
+	ldout(m_image_ctx.cct, 6) << "invalidate_extent=" << invalidate_extent << " "
+				  << "cell=" << cell << dendl;
 
 	assert(cell);
 
 	Context *ctx = new FunctionContext(
 	  [this, cell, on_finish](int r) {
+	    Mutex::Locker locker(m_lock);
+	    m_invalidating = false;
+	    ldout(m_image_ctx.cct, 5) << "Done invalidating" << dendl;
+	    assert(m_log_entries.size() == 0);
+	    assert(m_dirty_log_entries.size() == 0);
 	    on_finish->complete(r);
 	    release_guarded_request(cell);
 	  });
@@ -3631,10 +3656,26 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
 		  ctx->complete(r);
 		});
 	    }
+	    /* Discards all RWL entries */
+	    while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
 	    /* Invalidate from caches below */
 	    m_image_writeback->invalidate(next_ctx);
 	  });
-	invalidate({invalidate_extent}, ctx);
+	ctx = new FunctionContext(
+	  [this, ctx](int r) {
+	    /* With m_invalidating set, flush discards everything in
+	     * the dirty entries list without writing them to OSDs. It
+	     * also waits for in-flihgt flushes to complete, and keeps
+	     * the flushing stats consistent. */
+	    flush(ctx);
+	  });
+	ldout(m_image_ctx.cct, 5) << "Invalidating" << dendl;
+	Mutex::Locker locker(m_lock);
+	m_invalidating = true;
+	/* We're throwing everything away, but we want the last entry
+	 * to be a sync point so we can cleanly resume. */
+	auto flush_req = make_flush_req(ctx);
+	flush_new_sync_point(flush_req, on_exit.contexts);
       });
   BlockExtent invalidate_block_extent(block_extent(invalidate_extent));
   detain_guarded_request(GuardedRequest(invalidate_block_extent.block_start,

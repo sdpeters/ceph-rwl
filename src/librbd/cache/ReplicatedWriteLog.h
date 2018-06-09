@@ -320,7 +320,7 @@ public:
   /* TODO: occlusion by subsequent writes */
   /* TODO: flush state: portions flushed, in-progress flushes */
   bool flushing = false;
-  bool flushed = false;
+  bool flushed = false; // or invalidated
   std::shared_ptr<SyncPointLogEntry> sync_point_entry;
   WriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry, const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : GenericLogEntry(image_offset_bytes, write_bytes), sync_point_entry(sync_point_entry) { }
@@ -705,6 +705,7 @@ private:
 
   std::atomic<bool> m_initialized = {false};
   std::atomic<bool> m_shutting_down = {false};
+  std::atomic<bool> m_invalidating = {false};
   const char* rwl_pool_layout_name = POBJ_LAYOUT_NAME(rbd_rwl);
 
   ImageCtxT &m_image_ctx;
