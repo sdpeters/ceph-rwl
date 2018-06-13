@@ -9,6 +9,7 @@
 //#endif
 #include "common/RWLock.h"
 #include "common/Timer.h"
+#include "common/WorkQueue.h"
 #include "librbd/cache/ImageCache.h"
 #include "librbd/Utils.h"
 #include "librbd/cache/BlockGuard.h"
@@ -813,6 +814,9 @@ private:
   std::atomic<bool> m_periodic_stats_enabled = {true};
   mutable Mutex m_timer_lock; /* Used only by m_timer */
   SafeTimer m_timer;
+
+  ThreadPool m_thread_pool;
+  ContextWQ m_work_queue;
 
   const Extent whole_volume_extent(void);
   void perf_start(const std::string name);

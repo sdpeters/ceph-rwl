@@ -8,6 +8,7 @@
 #include "common/deleter.h"
 #include "common/dout.h"
 #include "common/errno.h"
+#include "common/io_priority.h"
 #include "common/WorkQueue.h"
 #include "librbd/ImageCtx.h"
 #include <map>
@@ -502,8 +503,16 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
     m_blocks_to_log_entries(image_ctx.cct),
     m_timer_lock("librbd::cache::ReplicatedWriteLog::m_timer_lock",
 	   false, true, true, image_ctx.cct),
-    m_timer(image_ctx.cct, m_timer_lock, false) {
+    m_timer(image_ctx.cct, m_timer_lock, false),
+    m_thread_pool(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::thread_pool", "tp_rwl",
+		  /*image_ctx.cct->_conf->get_val<int64_t>("rbd_op_threads")*/ 6, // TODO: Add config value
+		  /*"rbd_op_threads"*/""), //TODO: match above
+    m_work_queue("librbd::cache::ReplicatedWriteLog::work_queue",
+		 image_ctx.cct->_conf->get_val<int64_t>("rbd_op_thread_timeout"),
+		 &m_thread_pool) {
   assert(lower);
+  m_thread_pool.set_ioprio(IOPRIO_CLASS_BE, 0);
+  m_thread_pool.start();
   if (use_finishers) {
     m_persist_finisher.start();
     m_log_append_finisher.start();
@@ -1218,7 +1227,7 @@ void ReplicatedWriteLog<I>::schedule_append(GenericLogOperations &ops)
     if (use_finishers) {
       m_log_append_finisher.queue(append_ctx);
     } else {
-      m_image_ctx.op_work_queue->queue(append_ctx);
+      m_work_queue.queue(append_ctx);
     }
   }
 
@@ -1296,7 +1305,7 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperations &ops)
     if (use_finishers) {
       m_persist_finisher.queue(flush_ctx);
     } else {
-      m_image_ctx.op_work_queue->queue(flush_ctx);
+      m_work_queue.queue(flush_ctx);
     }
   }
 }
@@ -1542,7 +1551,7 @@ void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperations&& ops, 
   if (use_finishers) {
     m_on_persist_finisher.queue(complete_ctx);
   } else {
-    m_image_ctx.op_work_queue->queue(complete_ctx);
+    m_work_queue.queue(complete_ctx);
   }
 }
 
@@ -1787,7 +1796,7 @@ void ReplicatedWriteLog<I>::dispatch_deferred_writes(void)
       }
       if (allocated_req && front_req && allocated) {
 	/* Push dispatch of the first allocated req to a wq */
-	m_image_ctx.op_work_queue->queue(new FunctionContext(
+	m_work_queue.queue(new FunctionContext(
 	  [this, allocated_req](int r) {
 	    allocated_req->dispatch();
 	  }), 0);
@@ -2128,7 +2137,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
   // discard down to the next layer (another cache or the image). We will not
   // append a discard entry to the log (which would produce zeros for all reads
   // to that extent). The invalidate will append an invalidate entry to the
-  // log, which will cause erads to that extent to be treated as misses. This
+  // log, which will cause reads to that extent to be treated as misses. This
   // guarantees all reads of the discarded region will always return the same
   // (possibly unpredictable) content.
   GuardedRequestFunctionContext *guarded_ctx =
@@ -3159,6 +3168,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	m_on_persist_finisher.wait_for_empty();
 	m_on_persist_finisher.stop();
       }
+      m_thread_pool.stop();
       {
 	Mutex::Locker locker(m_lock);
 	assert(m_dirty_log_entries.size() == 0);
@@ -3253,7 +3263,7 @@ void ReplicatedWriteLog<I>::wake_up() {
   m_wake_up_scheduled = true;
   m_async_process_work++;
   m_async_op_tracker.start_op();
-  m_image_ctx.op_work_queue->queue(new FunctionContext(
+  m_work_queue.queue(new FunctionContext(
     [this](int r) {
       process_work();
       m_async_process_work--;
@@ -3394,45 +3404,47 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 				      }));
   }
 
-  /* The caller will send the flush write later when we're not holding m_lock */
-  return new FunctionContext(
-    [this, cct, log_entry, write_entry, entry_buf, invalidating](int r) {
-      /* Flush write completion action */
-      Context *ctx = new FunctionContext(
-	[this, cct, log_entry, write_entry, invalidating](int r) {
-	  {
-	    Mutex::Locker locker(m_lock);
-	    m_flush_ops_in_flight -= 1;
-	    m_flush_bytes_in_flight -= write_entry->ram_entry.write_bytes;
-	    write_entry->flushing = false;
-	    if (r < 0) {
-	      lderr(cct) << "failed to flush write log entry"
-			 << cpp_strerror(r) << dendl;
-	      m_dirty_log_entries.push_front(log_entry);
-	    } else {
-	      write_entry->flushed = true;
-	      assert(m_bytes_dirty >= write_entry->ram_entry.write_bytes);
-	      m_bytes_dirty -= write_entry->ram_entry.write_bytes;
-	      ldout(cct, 20) << "flushed: " << write_entry
-			     << " invalidating=" << invalidating << dendl;
-	    }
-	    wake_up();
-	  }
-	});
-
-      if (invalidating) {
-	/* When invalidating we just do the flush bookeeping */
-	ctx->complete(0);
-      } else {
-	bufferlist entry_bl;
-	entry_bl.push_back(entry_buf);
-	ldout(cct, 15) << "flushing:" << write_entry
-		       << " " << *write_entry << dendl;
-	m_image_writeback->aio_write({{write_entry->ram_entry.image_offset_bytes,
-				       write_entry->ram_entry.write_bytes}},
-				     std::move(entry_bl), 0, ctx);
+  /* Flush write completion action */
+  Context *ctx = new FunctionContext(
+    [this, cct, log_entry, write_entry, invalidating](int r) {
+      {
+	Mutex::Locker locker(m_lock);
+	m_flush_ops_in_flight -= 1;
+	m_flush_bytes_in_flight -= write_entry->ram_entry.write_bytes;
+	write_entry->flushing = false;
+	if (r < 0) {
+	  lderr(cct) << "failed to flush write log entry"
+		     << cpp_strerror(r) << dendl;
+	  m_dirty_log_entries.push_front(log_entry);
+	} else {
+	  write_entry->flushed = true;
+	  assert(m_bytes_dirty >= write_entry->ram_entry.write_bytes);
+	  m_bytes_dirty -= write_entry->ram_entry.write_bytes;
+	  ldout(cct, 20) << "flushed: " << write_entry
+	  << " invalidating=" << invalidating << dendl;
+	}
+	wake_up();
       }
     });
+
+  if (invalidating) {
+    /* When invalidating we just do the flush bookeeping */
+    return(ctx);
+  } else {
+    return new FunctionContext(
+      [this, cct, write_entry, entry_buf, ctx](int r) {
+	m_image_ctx.op_work_queue->queue(new FunctionContext(
+	  [this, cct, write_entry, entry_buf, ctx](int r) {
+	    bufferlist entry_bl;
+	    entry_bl.push_back(entry_buf);
+	    ldout(cct, 15) << "flushing:" << write_entry
+			   << " " << *write_entry << dendl;
+	    m_image_writeback->aio_write({{write_entry->ram_entry.image_offset_bytes,
+					   write_entry->ram_entry.write_bytes}},
+					 std::move(entry_bl), 0, ctx);
+	  }));
+      });
+  }
 }
 
 template <typename I>
