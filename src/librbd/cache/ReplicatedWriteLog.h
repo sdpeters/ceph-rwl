@@ -183,8 +183,8 @@ static const uint64_t BLOCK_ALLOC_OVERHEAD_BYTES = 16;
 static const uint8_t RWL_POOL_VERSION = 1;
 static const uint64_t MAX_LOG_ENTRIES = (1024 * 1024);
 //static const uint64_t MAX_LOG_ENTRIES = (1024 * 128);
-static const double RETIRE_HIGH_WATER = 0.97;
-static const double RETIRE_LOW_WATER = 0.90;
+static const double RETIRE_HIGH_WATER = 0.50;
+static const double RETIRE_LOW_WATER = 0.40;
 static const int RETIRE_BATCH_TIME_LIMIT_MS = 250;
 
 POBJ_LAYOUT_BEGIN(rbd_rwl);

@@ -3276,6 +3276,8 @@ void ReplicatedWriteLog<I>::process_work() {
   CephContext *cct = m_image_ctx.cct;
   int max_iterations = 4;
   bool wake_up_requested = false;
+  uint64_t high_water_bytes = m_bytes_allocated_cap * RETIRE_HIGH_WATER;
+  uint64_t low_water_bytes = m_bytes_allocated_cap * RETIRE_LOW_WATER;
   ldout(cct, 20) << dendl;
 
   do {
@@ -3284,16 +3286,16 @@ void ReplicatedWriteLog<I>::process_work() {
       m_wake_up_requested = false;
     }
     if (m_alloc_failed_since_retire || m_shutting_down || m_invalidating ||
-	m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) {
+	m_bytes_allocated > high_water_bytes) {
       int retired = 0;
       utime_t started = ceph_clock_now();
       ldout(m_image_ctx.cct, 10) << "alloc_fail=" << m_alloc_failed_since_retire
 				 << ", allocated > high_water="
-				 << (m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER))
+				 << (m_bytes_allocated > high_water_bytes)
 				 << dendl;
       while (m_alloc_failed_since_retire || m_shutting_down || m_invalidating ||
-	     (m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_HIGH_WATER)) ||
-	     ((m_bytes_allocated > (m_bytes_allocated_cap * RETIRE_LOW_WATER)) &&
+	     (m_bytes_allocated > high_water_bytes) ||
+	     ((m_bytes_allocated > low_water_bytes) &&
 	      (utime_t(ceph_clock_now() - started).to_msec() < RETIRE_BATCH_TIME_LIMIT_MS))) {
 	if (!retire_entries((m_shutting_down || m_invalidating)
 			    ? MAX_ALLOC_PER_TRANSACTION
