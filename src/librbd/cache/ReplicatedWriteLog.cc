@@ -882,15 +882,6 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cel
 {
   CephContext *cct = m_image_ctx.cct;
   WriteLogGuard::BlockOperations block_reqs;
-  WriteLogGuard::BlockOperations unblocked_reqs;
-  struct acquired_req {
-    BlockGuardCell *cell;
-    GuardedRequest& req;
-
-    acquired_req(BlockGuardCell *cell, GuardedRequest& req)
-      : cell(cell), req(req) { };
-  };
-  std::list<acquired_req> block_reqs_acquired;
   ldout(cct, 20) << "released_cell=" << released_cell << dendl;
 
   {
@@ -907,8 +898,8 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cel
 	  assert(detained_cell != released_cell);
 	  ldout(cct, 20) << "current barrier cell=" << detained_cell << " req=" << req << dendl;
 	}
-	ldout(cct, 20) << "acquire deferred for cell=" << detained_cell << " req=" << req << dendl;
-	block_reqs_acquired.push_back(acquired_req(detained_cell, req));
+	req.on_guard_acquire->acquired(detained_cell, req.detained);
+	m_work_queue.queue(req.on_guard_acquire);
       }
     }
 
@@ -919,24 +910,16 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cel
       m_barrier_cell = nullptr;
       /* Move waiting requests into the blockguard. Stop if there's another barrier */
       while (!m_barrier_in_progress && !m_awaiting_barrier.empty()) {
-	unblocked_reqs.splice(unblocked_reqs.end(),
-			      m_awaiting_barrier,
-			      m_awaiting_barrier.begin());
-	auto &req = unblocked_reqs.back();
+	auto &req = m_awaiting_barrier.front();
+	m_awaiting_barrier.pop_front();
 	ldout(cct, 20) << "submitting queued request to blockguard: " << req << dendl;
 	BlockGuardCell *detained_cell = detain_guarded_request_barrier_helper(req);
 	if (detained_cell) {
-	  ldout(cct, 20) << "acquire deferred for cell=" << detained_cell << " req=" << req << dendl;
-	  block_reqs_acquired.push_back(acquired_req(detained_cell, req));
+	  req.on_guard_acquire->acquired(detained_cell, req.detained);
+	  m_work_queue.queue(req.on_guard_acquire);
 	}
       }
     }
-  }
-
-  /* Do acquire work outside blockguard lock */
-  for (auto &acquired : block_reqs_acquired) {
-    acquired.req.on_guard_acquire->acquired(acquired.cell, acquired.req.detained);
-    m_work_queue.queue(acquired.req.on_guard_acquire);
   }
 
   ldout(cct, 20) << "exit" << dendl;
