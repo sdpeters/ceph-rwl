@@ -174,15 +174,28 @@ GuardedRequestFunctionContext::GuardedRequestFunctionContext(boost::function<voi
 GuardedRequestFunctionContext::~GuardedRequestFunctionContext(void) { }
 
 void GuardedRequestFunctionContext::finish(int r) {
-  assert(true == m_callback_invoked);
+  assert(true == m_acquired);
+  m_callback(m_cell, m_detained);
 }
 
+/* Must be followed by complete() */
 void GuardedRequestFunctionContext::acquired(BlockGuardCell *cell, bool detained) {
   bool initial = false;
-  if (m_callback_invoked.compare_exchange_strong(initial, true)) {
-    m_callback(cell, detained);
+  if (m_acquired.compare_exchange_strong(initial, true)) {
+    m_cell = cell;
+    m_detained = detained;
   }
-  complete(0);
+}
+
+/* acquired must have already been called */
+void GuardedRequestFunctionContext::complete(int r) {
+  Context::complete(r);
+}
+
+/* One-step acquire + complete */
+void GuardedRequestFunctionContext::complete(BlockGuardCell *cell, bool detained, int r) {
+  acquired(cell, detained);
+  complete(r);
 }
 
 WriteLogMapEntry::WriteLogMapEntry(const BlockExtent block_extent,
@@ -860,7 +873,7 @@ void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
     cell = detain_guarded_request_barrier_helper(req);
   }
   if (cell) {
-    req.on_guard_acquire->acquired(cell, req.detained);
+    req.on_guard_acquire->complete(cell, req.detained, 0);
   }
 }
 
@@ -923,6 +936,7 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cel
   /* Do acquire work outside blockguard lock */
   for (auto &acquired : block_reqs_acquired) {
     acquired.req.on_guard_acquire->acquired(acquired.cell, acquired.req.detained);
+    m_work_queue.queue(acquired.req.on_guard_acquire);
   }
 
   ldout(cct, 20) << "exit" << dendl;

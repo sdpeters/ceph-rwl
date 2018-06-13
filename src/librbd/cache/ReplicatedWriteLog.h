@@ -545,15 +545,21 @@ public:
 
 class GuardedRequestFunctionContext : public Context {
 private:
-  std::atomic<bool> m_callback_invoked = {false};
+  std::atomic<bool> m_acquired = {false};
   boost::function<void(BlockGuardCell*,bool)> m_callback;
+  BlockGuardCell *m_cell = nullptr;
+  bool m_detained = false;
+  void finish(int r) override;
 public:
   GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*,bool)> &&callback);
   ~GuardedRequestFunctionContext(void);
   GuardedRequestFunctionContext(const GuardedRequestFunctionContext&) = delete;
   GuardedRequestFunctionContext &operator=(const GuardedRequestFunctionContext&) = delete;
-  void finish(int r) override;
+  /* Complete with acquired(cell, detained) then complete(int), or
+   * directly with complete(cell, detained); */
   void acquired(BlockGuardCell *cell, bool detained);
+  void complete(int r) override;
+  void complete(BlockGuardCell *cell, bool detained, int r);
 };
 
 struct GuardedRequest {
