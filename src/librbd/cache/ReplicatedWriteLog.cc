@@ -1050,20 +1050,24 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
     }
   }
 
-  bool alloc_resources() {
+  virtual bool alloc_resources() {
     return m_io_alloc_resources_callback(this);
   }
 
   void deferred() {
     bool initial = false;
     if (m_deferred.compare_exchange_strong(initial, true)) {
-      if (m_io_deferred_callback != null_io_deferred_cb<T>) {
-	m_io_deferred_callback(this);
-      }
+      deferred_handler();
     }
   }
 
-  void dispatch() {
+  virtual void deferred_handler() {
+    if (m_io_deferred_callback != null_io_deferred_cb<T>) {
+      m_io_deferred_callback(this);
+    }
+  }
+
+  virtual void dispatch() {
     m_io_dispatch_callback(this);
   }
 
@@ -1145,6 +1149,18 @@ struct C_FlushRequest : public C_BlockIORequest<T> {
   }
 
   ~C_FlushRequest() {
+  }
+
+  virtual bool alloc_resources() {
+    return rwl.alloc_flush_req_resources(this);
+  }
+
+  virtual void deferred_handler() {
+    rwl.m_perfcounter->inc(l_librbd_rwl_aio_flush_def, 1);
+  }
+
+  virtual void dispatch() {
+    rwl.dispatch_aio_flush(this);
   }
 
   const char *get_name() const override {
@@ -2213,6 +2229,83 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 }
 
 template <typename I>
+bool ReplicatedWriteLog<I>::alloc_flush_req_resources(C_FlushRequestT *flush_req) {
+    /* ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
+     *			    << "req=[" << *flush_req << "]" << dendl; */
+    assert(!flush_req->m_log_entry_allocated);
+    bool allocated_here = false;
+    Mutex::Locker locker(m_lock);
+    if (m_free_log_entries) {
+      m_free_log_entries--;
+      flush_req->m_log_entry_allocated = true;
+      allocated_here = true;
+    }
+    return allocated_here;
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::dispatch_aio_flush(C_FlushRequestT *flush_req) {
+  utime_t now = ceph_clock_now();
+  ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
+			     << "req=[" << *flush_req << "]" << dendl;
+  assert(flush_req->m_log_entry_allocated);
+  flush_req->m_dispatched_time = now;
+
+  /* Handler for sync point appending */
+  sync_complete_callback_t<This> appending_cb =
+    [this](SyncPointLogOperationT *op, int result) {
+    std::shared_ptr<SyncPointT> sync_point = op->sync_point;
+    assert(sync_point);
+    std::vector<Context*> on_append;
+    {
+      Mutex::Locker locker(m_lock);
+      if (!sync_point->m_appending) {
+	ldout(m_image_ctx.cct, 20) << "Sync point op=[" << *op
+				   << "] appending" << dendl;
+	sync_point->m_appending = true;
+      }
+      on_append.swap(sync_point->m_on_sync_point_appending);
+    }
+    finish_contexts(m_image_ctx.cct, on_append, result);
+  };
+
+  /* Handler for sync point persist complete */
+  sync_complete_callback_t<This> comp_cb =
+    [this](SyncPointLogOperationT *op, int result) {
+    std::shared_ptr<SyncPointT> sync_point = op->sync_point;
+    assert(sync_point);
+    ldout(m_image_ctx.cct, 20) << "Sync point op =[" << *op
+    << "] completed" << dendl;
+    {
+      Mutex::Locker locker(m_lock);
+      /* Remove link from next sync point */
+      assert(sync_point->later_sync_point);
+      assert(sync_point->later_sync_point->earlier_sync_point ==
+	     sync_point);
+      sync_point->later_sync_point->earlier_sync_point = nullptr;
+    }
+
+    /* Do append now in case completion occurred before the
+     * normal append callback executed, and to handle
+     * on_append work that was queued after the sync point
+     * entered the appending state. */
+    op->appending();
+
+    /* This flush request will be one of these contexts */
+    finish_contexts(m_image_ctx.cct,
+		    sync_point->m_on_sync_point_persisted, result);
+  };
+
+  flush_req->op =
+    std::make_shared<SyncPointLogOperationT>(*this, flush_req->to_append, appending_cb, comp_cb, now);
+
+  m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
+  GenericLogOperationsT ops;
+  ops.push_back(flush_req->op);
+  schedule_append(ops);
+}
+
+template <typename I>
 C_FlushRequest<ReplicatedWriteLog<I>>* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
   utime_t flush_begins = ceph_clock_now();
   bufferlist bl;
@@ -2221,83 +2314,19 @@ C_FlushRequest<ReplicatedWriteLog<I>>* ReplicatedWriteLog<I>::make_flush_req(Con
     new C_FlushRequestT(*this, flush_begins, Extents({whole_volume_extent()}),
 			std::move(bl), 0, on_finish,
 			[this](C_BlockIORequestT* req)->bool {
+			  assert(0);
 			  auto *flush_req = (C_FlushRequestT*)req;
-			  /* ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
-			   *			    << "req=[" << *flush_req << "]" << dendl; */
-			  assert(!flush_req->m_log_entry_allocated);
-			  bool allocated_here = false;
-			  Mutex::Locker locker(m_lock);
-			  if (m_free_log_entries) {
-			    m_free_log_entries--;
-			    flush_req->m_log_entry_allocated = true;
-			    allocated_here = true;
-			  }
-			  return allocated_here;
+			  return flush_req->alloc_resources();
 			},
 			[this](C_BlockIORequestT* req) {
-			 // TODO: move to completion
+			  assert(0);
+			  // TODO: move to completion
 			  m_perfcounter->inc(l_librbd_rwl_aio_flush_def, 1);
 			},
 			[this](C_BlockIORequestT* req) {
-			  utime_t now = ceph_clock_now();
+			  assert(0);
 			  auto *flush_req = (C_FlushRequestT*)req;
-			  ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
-			  << "req=[" << *flush_req << "]" << dendl;
-			  assert(flush_req->m_log_entry_allocated);
-			  flush_req->m_dispatched_time = now;
-
-			  /* Handler for sync point appending */
-			  sync_complete_callback_t<This> appending_cb =
-			  [this](SyncPointLogOperationT *op, int result) {
-			    std::shared_ptr<SyncPointT> sync_point = op->sync_point;
-			    assert(sync_point);
-			    std::vector<Context*> on_append;
-			    {
-			      Mutex::Locker locker(m_lock);
-			      if (!sync_point->m_appending) {
-				ldout(m_image_ctx.cct, 20) << "Sync point op=[" << *op
-							   << "] appending" << dendl;
-				sync_point->m_appending = true;
-			      }
-			      on_append.swap(sync_point->m_on_sync_point_appending);
-			    }
-			    finish_contexts(m_image_ctx.cct, on_append, result);
-			  };
-
-			  /* Handler for sync point persist complete */
-			  sync_complete_callback_t<This> comp_cb =
-			  [this](SyncPointLogOperationT *op, int result) {
-			    std::shared_ptr<SyncPointT> sync_point = op->sync_point;
-			    assert(sync_point);
-			    ldout(m_image_ctx.cct, 20) << "Sync point op =[" << *op
-						       << "] completed" << dendl;
-			    {
-			      Mutex::Locker locker(m_lock);
-			      /* Remove link from next sync point */
-			      assert(sync_point->later_sync_point);
-			      assert(sync_point->later_sync_point->earlier_sync_point ==
-				     sync_point);
-			      sync_point->later_sync_point->earlier_sync_point = nullptr;
-			    }
-
-			    /* Do append now in case completion occurred before the
-			     * normal append callback executed, and to handle
-			     * on_append work that was queued after the sync point
-			     * entered the appending state. */
-			    op->appending();
-
-			    /* This flush request will be one of these contexts */
-			    finish_contexts(m_image_ctx.cct,
-					    sync_point->m_on_sync_point_persisted, result);
-			  };
-
-			  flush_req->op =
-			  std::make_shared<SyncPointLogOperationT>(*this, flush_req->to_append, appending_cb, comp_cb, now);
-
-			  m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
-			  GenericLogOperationsT ops;
-			  ops.push_back(flush_req->op);
-			  schedule_append(ops);
+			  flush_req->dispatch();
 			});
 
   flush_req->_on_finish = new FunctionContext(

@@ -898,17 +898,19 @@ private:
 
   void init_flush_new_sync_point(Contexts &later);
   void new_sync_point(Contexts &later);
+  bool alloc_flush_req_resources(C_FlushRequestT *flush_req);
+  void dispatch_aio_flush(C_FlushRequestT *flush_req);
   C_FlushRequest<ReplicatedWriteLog<ImageCtxT>>* make_flush_req(Context *on_finish);
-  void flush_new_sync_point(C_FlushRequest<This> *flush_req, Contexts &later);
+  void flush_new_sync_point(C_FlushRequestT *flush_req, Contexts &later);
 
   void invalidate(Extents&& image_extents, Context *on_finish);
 
-  void complete_write_req(C_WriteRequest<This> *write_req, const int result);
+  void complete_write_req(C_WriteRequestT *write_req, const int result);
   void dispatch_deferred_writes(void);
-  bool alloc_write_resources(C_WriteRequest<This> *write_req);
-  void release_write_lanes(C_WriteRequest<This> *write_req);
-  void alloc_and_dispatch_io_req(C_BlockIORequest<This> *write_req);
-  void dispatch_aio_write(C_WriteRequest<This> *write_req);
+  bool alloc_write_resources(C_WriteRequestT *write_req);
+  void release_write_lanes(C_WriteRequestT *write_req);
+  void alloc_and_dispatch_io_req(C_BlockIORequestT *write_req);
+  void dispatch_aio_write(C_WriteRequestT *write_req);
   void append_scheduled_ops(void);
   void schedule_append(GenericLogOperationsT &ops);
   void flush_then_append_scheduled_ops(void);
