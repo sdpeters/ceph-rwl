@@ -958,14 +958,6 @@ struct WriteRequestResources {
  * may be completed from here before the IO persists.
  */
 template <typename T>
-using  io_alloc_resources_callback_t = boost::function<bool(C_BlockIORequest<T>*)>;
-template <typename T>
-using  io_deferred_callback_t = boost::function<void(C_BlockIORequest<T>*)>;
-template <typename T>
-auto const null_io_deferred_cb = [](C_BlockIORequest<T>* req){};
-template <typename T>
-using  io_dispatch_callback_t = boost::function<void(C_BlockIORequest<T>*)>;
-template <typename T>
 struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
   using C_GuardedBlockIORequest<T>::rwl;
   Extents m_image_extents;
@@ -985,9 +977,6 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
   bool m_waited_lanes = false;            /* This IO waited for free persist/replicate lanes */
   bool m_waited_entries = false;          /* This IO waited for free log entries */
   bool m_waited_buffers = false;          /* This IO waited for data buffers (pmemobj_reserve() failed) */
-  io_alloc_resources_callback_t<T> m_io_alloc_resources_callback;
-  io_deferred_callback_t<T> m_io_deferred_callback;
-  io_dispatch_callback_t<T> m_io_dispatch_callback;
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_BlockIORequest<T> &req) {
     os << "m_image_extents=[" << req.m_image_extents << "], "
@@ -1003,16 +992,10 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
     return os;
   };
   C_BlockIORequest(T &rwl, const utime_t arrived, Extents &&image_extents,
-		   bufferlist&& bl, const int fadvise_flags, Context *user_req,
-		   io_alloc_resources_callback_t<T> io_alloc_resources_callback,
-		   io_deferred_callback_t<T> io_deferred_callback,
-		   io_dispatch_callback_t<T> io_dispatch_callback)
+		   bufferlist&& bl, const int fadvise_flags, Context *user_req)
     : C_GuardedBlockIORequest<T>(rwl), m_image_extents(std::move(image_extents)),
       bl(std::move(bl)), fadvise_flags(fadvise_flags),
-      user_req(user_req), m_image_extents_summary(m_image_extents), m_arrived_time(arrived),
-      m_io_alloc_resources_callback(io_alloc_resources_callback),
-      m_io_deferred_callback(io_deferred_callback),
-      m_io_dispatch_callback(io_dispatch_callback) {
+      user_req(user_req), m_image_extents_summary(m_image_extents), m_arrived_time(arrived) {
     ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
@@ -1050,9 +1033,7 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
     }
   }
 
-  virtual bool alloc_resources() {
-    return m_io_alloc_resources_callback(this);
-  }
+  virtual bool alloc_resources() =0;
 
   void deferred() {
     bool initial = false;
@@ -1061,15 +1042,9 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
     }
   }
 
-  virtual void deferred_handler() {
-    if (m_io_deferred_callback != null_io_deferred_cb<T>) {
-      m_io_deferred_callback(this);
-    }
-  }
+  virtual void deferred_handler() = 0;
 
-  virtual void dispatch() {
-    m_io_dispatch_callback(this);
-  }
+  virtual void dispatch()  = 0;
 
   virtual const char *get_name() const override {
     return "C_BlockIORequest";
@@ -1099,12 +1074,8 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
   };
 
   C_WriteRequest(T &rwl, const utime_t arrived, Extents &&image_extents,
-		 bufferlist&& bl, const int fadvise_flags, Context *user_req,
-		 io_alloc_resources_callback_t<T> io_alloc_resources_callback,
-		 io_deferred_callback_t<T> io_deferred_callback,
-		 io_dispatch_callback_t<T> io_dispatch_callback)
-    : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req,
-		       io_alloc_resources_callback, io_deferred_callback, io_dispatch_callback) {
+		 bufferlist&& bl, const int fadvise_flags, Context *user_req)
+    : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req) {
     ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
@@ -1112,13 +1083,13 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
     ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
-  virtual bool alloc_resources() {
+  virtual bool alloc_resources() override {
     return rwl.alloc_write_resources(this);
   }
 
-  virtual void deferred_handler() { }
+  virtual void deferred_handler() override { }
 
-  virtual void dispatch() {
+  virtual void dispatch() override {
     rwl.dispatch_aio_write(this);
   }
 
@@ -1149,27 +1120,23 @@ struct C_FlushRequest : public C_BlockIORequest<T> {
   };
 
   C_FlushRequest(T &rwl, const utime_t arrived, Extents &&image_extents,
-		 bufferlist&& bl, const int fadvise_flags, Context *user_req,
-		 io_alloc_resources_callback_t<T> io_alloc_resources_callback,
-		 io_deferred_callback_t<T> io_deferred_callback,
-		 io_dispatch_callback_t<T> io_dispatch_callback)
-    : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req,
-		       io_alloc_resources_callback, io_deferred_callback, io_dispatch_callback) {
+		 bufferlist&& bl, const int fadvise_flags, Context *user_req)
+    : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req) {
     ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
   ~C_FlushRequest() {
   }
 
-  virtual bool alloc_resources() {
+  virtual bool alloc_resources() override {
     return rwl.alloc_flush_resources(this);
   }
 
-  virtual void deferred_handler() {
+  virtual void deferred_handler() override {
     rwl.m_perfcounter->inc(l_librbd_rwl_aio_flush_def, 1);
   }
 
-  virtual void dispatch() {
+  virtual void dispatch() override {
     rwl.dispatch_aio_flush(this);
   }
 
@@ -2093,24 +2060,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
   }
 
   auto *write_req =
-    new C_WriteRequestT(*this, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish,
-			[this](C_BlockIORequestT* req)->bool {
-			  assert(0);
-			  auto *write_req = (C_WriteRequestT*)req;
-			  ldout(m_image_ctx.cct, 20) << "req type=" << write_req->get_name()
-						     << "req=[" << *write_req << "]" << dendl;
-			  return alloc_write_resources(write_req);
-			},
-			null_io_deferred_cb<This>,
-			// [this](C_BlockIORequest* req) {
-			//	 /* Deferred write perf counter moved to write completion */
-			//	 m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
-			// },
-			[this](C_BlockIORequestT* req) {
-			  assert(0);
-			  auto *write_req = (C_WriteRequestT*)req;
-			  dispatch_aio_write(write_req);
-			});
+    new C_WriteRequestT(*this, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish);
   m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
 
   /* The lambda below will be called when the block guard for all
@@ -2324,22 +2274,7 @@ C_FlushRequest<ReplicatedWriteLog<I>>* ReplicatedWriteLog<I>::make_flush_req(Con
 
   auto *flush_req =
     new C_FlushRequestT(*this, flush_begins, Extents({whole_volume_extent()}),
-			std::move(bl), 0, on_finish,
-			[this](C_BlockIORequestT* req)->bool {
-			  assert(0);
-			  auto *flush_req = (C_FlushRequestT*)req;
-			  return flush_req->alloc_resources();
-			},
-			[this](C_BlockIORequestT* req) {
-			  assert(0);
-			  // TODO: move to completion
-			  m_perfcounter->inc(l_librbd_rwl_aio_flush_def, 1);
-			},
-			[this](C_BlockIORequestT* req) {
-			  assert(0);
-			  auto *flush_req = (C_FlushRequestT*)req;
-			  flush_req->dispatch();
-			});
+			std::move(bl), 0, on_finish);
 
   flush_req->_on_finish = new FunctionContext(
     [this, flush_req](int r) {
