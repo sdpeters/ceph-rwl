@@ -1112,6 +1112,16 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
     ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
+  virtual bool alloc_resources() {
+    return rwl.alloc_write_resources(this);
+  }
+
+  virtual void deferred_handler() { }
+
+  virtual void dispatch() {
+    rwl.dispatch_aio_write(this);
+  }
+
   const char *get_name() const override {
     return "C_WriteRequest";
   }
@@ -1152,7 +1162,7 @@ struct C_FlushRequest : public C_BlockIORequest<T> {
   }
 
   virtual bool alloc_resources() {
-    return rwl.alloc_flush_req_resources(this);
+    return rwl.alloc_flush_resources(this);
   }
 
   virtual void deferred_handler() {
@@ -2085,6 +2095,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
   auto *write_req =
     new C_WriteRequestT(*this, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish,
 			[this](C_BlockIORequestT* req)->bool {
+			  assert(0);
 			  auto *write_req = (C_WriteRequestT*)req;
 			  ldout(m_image_ctx.cct, 20) << "req type=" << write_req->get_name()
 						     << "req=[" << *write_req << "]" << dendl;
@@ -2096,6 +2107,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
 			//	 m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
 			// },
 			[this](C_BlockIORequestT* req) {
+			  assert(0);
 			  auto *write_req = (C_WriteRequestT*)req;
 			  dispatch_aio_write(write_req);
 			});
@@ -2229,7 +2241,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 }
 
 template <typename I>
-bool ReplicatedWriteLog<I>::alloc_flush_req_resources(C_FlushRequestT *flush_req) {
+bool ReplicatedWriteLog<I>::alloc_flush_resources(C_FlushRequestT *flush_req) {
     /* ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
      *			    << "req=[" << *flush_req << "]" << dendl; */
     assert(!flush_req->m_log_entry_allocated);

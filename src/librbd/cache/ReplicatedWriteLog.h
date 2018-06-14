@@ -898,7 +898,7 @@ private:
 
   void init_flush_new_sync_point(Contexts &later);
   void new_sync_point(Contexts &later);
-  bool alloc_flush_req_resources(C_FlushRequestT *flush_req);
+  bool alloc_flush_resources(C_FlushRequestT *flush_req);
   void dispatch_aio_flush(C_FlushRequestT *flush_req);
   C_FlushRequest<ReplicatedWriteLog<ImageCtxT>>* make_flush_req(Context *on_finish);
   void flush_new_sync_point(C_FlushRequestT *flush_req, Contexts &later);
