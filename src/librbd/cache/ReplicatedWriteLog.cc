@@ -89,13 +89,10 @@ GenericLogOperation<T>::GenericLogOperation(T &rwl, const utime_t dispatch_time)
 }
 
 template <typename T>
-SyncPointLogOperation<T>::SyncPointLogOperation(T &rwl, std::shared_ptr<SyncPoint<T>> sync_point,
-						sync_point_appending_callback_t<T> sync_point_appending_callback,
-						sync_complete_callback_t<T> sync_complete_callback,
+SyncPointLogOperation<T>::SyncPointLogOperation(T &rwl,
+						std::shared_ptr<SyncPoint<T>> sync_point,
 						const utime_t dispatch_time)
-  : GenericLogOperation<T>(rwl, dispatch_time), sync_point(sync_point),
-    sync_point_appending_callback(sync_point_appending_callback),
-    sync_complete_callback(sync_complete_callback) {
+  : GenericLogOperation<T>(rwl, dispatch_time), sync_point(sync_point) {
 }
 
 template <typename T>
@@ -103,12 +100,43 @@ SyncPointLogOperation<T>::~SyncPointLogOperation() { }
 
 template <typename T>
 void SyncPointLogOperation<T>::appending() {
-  sync_point_appending_callback(this, 0);
+  assert(sync_point);
+  std::vector<Context*> on_append;
+  {
+    Mutex::Locker locker(rwl.m_lock);
+    if (!sync_point->m_appending) {
+      ldout(rwl.m_image_ctx.cct, 20) << "Sync point op=[" << *this
+				     << "] appending" << dendl;
+      sync_point->m_appending = true;
+    }
+    on_append.swap(sync_point->m_on_sync_point_appending);
+  }
+  finish_contexts(rwl.m_image_ctx.cct, on_append);
 }
 
 template <typename T>
 void SyncPointLogOperation<T>::complete(int result) {
-  sync_complete_callback(this, result);
+  assert(sync_point);
+  ldout(rwl.m_image_ctx.cct, 20) << "Sync point op =[" << *this
+				 << "] completed" << dendl;
+  {
+    Mutex::Locker locker(rwl.m_lock);
+    /* Remove link from next sync point */
+    assert(sync_point->later_sync_point);
+    assert(sync_point->later_sync_point->earlier_sync_point ==
+	   sync_point);
+    sync_point->later_sync_point->earlier_sync_point = nullptr;
+  }
+
+  /* Do append now in case completion occurred before the
+   * normal append callback executed, and to handle
+   * on_append work that was queued after the sync point
+   * entered the appending state. */
+  appending();
+
+  /* This flush request will be one of these contexts */
+  finish_contexts(rwl.m_image_ctx.cct,
+		  sync_point->m_on_sync_point_persisted, result);
 }
 
 template <typename T>
@@ -2213,53 +2241,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_flush(C_FlushRequestT *flush_req) {
   assert(flush_req->m_log_entry_allocated);
   flush_req->m_dispatched_time = now;
 
-  /* Handler for sync point appending */
-  sync_complete_callback_t<This> appending_cb =
-    [this](SyncPointLogOperationT *op, int result) {
-    std::shared_ptr<SyncPointT> sync_point = op->sync_point;
-    assert(sync_point);
-    std::vector<Context*> on_append;
-    {
-      Mutex::Locker locker(m_lock);
-      if (!sync_point->m_appending) {
-	ldout(m_image_ctx.cct, 20) << "Sync point op=[" << *op
-				   << "] appending" << dendl;
-	sync_point->m_appending = true;
-      }
-      on_append.swap(sync_point->m_on_sync_point_appending);
-    }
-    finish_contexts(m_image_ctx.cct, on_append, result);
-  };
-
-  /* Handler for sync point persist complete */
-  sync_complete_callback_t<This> comp_cb =
-    [this](SyncPointLogOperationT *op, int result) {
-    std::shared_ptr<SyncPointT> sync_point = op->sync_point;
-    assert(sync_point);
-    ldout(m_image_ctx.cct, 20) << "Sync point op =[" << *op
-    << "] completed" << dendl;
-    {
-      Mutex::Locker locker(m_lock);
-      /* Remove link from next sync point */
-      assert(sync_point->later_sync_point);
-      assert(sync_point->later_sync_point->earlier_sync_point ==
-	     sync_point);
-      sync_point->later_sync_point->earlier_sync_point = nullptr;
-    }
-
-    /* Do append now in case completion occurred before the
-     * normal append callback executed, and to handle
-     * on_append work that was queued after the sync point
-     * entered the appending state. */
-    op->appending();
-
-    /* This flush request will be one of these contexts */
-    finish_contexts(m_image_ctx.cct,
-		    sync_point->m_on_sync_point_persisted, result);
-  };
-
-  flush_req->op =
-    std::make_shared<SyncPointLogOperationT>(*this, flush_req->to_append, appending_cb, comp_cb, now);
+  flush_req->op = std::make_shared<SyncPointLogOperationT>(*this, flush_req->to_append, now);
 
   m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
   GenericLogOperationsT ops;

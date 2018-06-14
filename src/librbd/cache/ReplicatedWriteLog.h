@@ -462,20 +462,12 @@ template <typename T>
 class SyncPointLogOperation;
 
 template <typename T>
-using sync_point_appending_callback_t = boost::function<void(SyncPointLogOperation<T>*,int)>;
-
-template <typename T>
-using sync_complete_callback_t = boost::function<void(SyncPointLogOperation<T>*,int)>;
-
-template <typename T>
 class SyncPointLogOperation : public GenericLogOperation<T> {
 public:
+  using GenericLogOperation<T>::rwl;
   std::shared_ptr<SyncPoint<T>> sync_point;
-  sync_complete_callback_t<T> sync_point_appending_callback;
-  sync_complete_callback_t<T> sync_complete_callback;
-  SyncPointLogOperation(T &rwl, std::shared_ptr<SyncPoint<T>> sync_point,
-			sync_point_appending_callback_t<T> sync_point_appending_callback,
-			sync_complete_callback_t<T> sync_complete_callback,
+  SyncPointLogOperation(T &rwl,
+			std::shared_ptr<SyncPoint<T>> sync_point,
 			const utime_t dispatch_time);
   ~SyncPointLogOperation();
   SyncPointLogOperation(const SyncPointLogOperation&) = delete;
