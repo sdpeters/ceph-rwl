@@ -148,6 +148,9 @@ struct ImageCtx;
 
 namespace cache {
 
+template <typename ImageCtxT = librbd::ImageCtx>
+class ReplicatedWriteLog;
+
 namespace rwl {
 typedef std::list<Context *> Contexts;
 
@@ -360,13 +363,14 @@ typedef std::list<std::shared_ptr<GenericLogEntry>> GenericLogEntries;
 
 /**** Write log entries end ****/
 
+template <typename T>
 class SyncPoint {
 public:
-  CephContext *m_cct;
+  T &rwl;
   std::shared_ptr<SyncPointLogEntry> log_entry;
   /* Use m_lock for earlier/later links */
-  std::shared_ptr<SyncPoint> earlier_sync_point; /* NULL if earlier has completed */
-  std::shared_ptr<SyncPoint> later_sync_point;
+  std::shared_ptr<SyncPoint<T>> earlier_sync_point; /* NULL if earlier has completed */
+  std::shared_ptr<SyncPoint<T>> later_sync_point;
   uint64_t m_final_op_sequence_num = 0;
   /* A sync point can't appear in the log until all the writes bearing
    * it and all the prior sync points have been appended and
@@ -391,7 +395,7 @@ public:
    * aio_flush() calls are added to this. */
   std::vector<Context*> m_on_sync_point_persisted;
 
-  SyncPoint(CephContext *cct, const uint64_t sync_gen_num);
+  SyncPoint(T &rwl, const uint64_t sync_gen_num);
   ~SyncPoint();
   SyncPoint(const SyncPoint&) = delete;
   SyncPoint &operator=(const SyncPoint&) = delete;
@@ -411,17 +415,25 @@ public:
   };
 };
 
+template <typename T>
 class WriteLogOperationSet;
+
+template <typename T>
 class WriteLogOperation;
+
+template <typename T>
 class SyncPointLogOperation;
+
+template <typename T>
 class GenericLogOperation {
 public:
+  T &rwl;
   utime_t m_dispatch_time; // When op created
   utime_t m_buf_persist_time; // When buffer persist begins
   utime_t m_buf_persist_comp_time; // When buffer persist completes
   utime_t m_log_append_time; // When log append begins
   utime_t m_log_append_comp_time; // When log append completes
-  GenericLogOperation(const utime_t dispatch_time);
+  GenericLogOperation(T &rwl, const utime_t dispatch_time);
   virtual ~GenericLogOperation() { };
   GenericLogOperation(const GenericLogOperation&) = delete;
   GenericLogOperation &operator=(const GenericLogOperation&) = delete;
@@ -446,29 +458,36 @@ public:
   virtual bool is_sync_point() { return false; }
 };
 
+template <typename T>
 class SyncPointLogOperation;
-typedef boost::function<void(SyncPointLogOperation*,int)> sync_point_appending_callback_t;
-typedef boost::function<void(SyncPointLogOperation*,int)> sync_complete_callback_t;
-class SyncPointLogOperation : public GenericLogOperation {
+
+template <typename T>
+using sync_point_appending_callback_t = boost::function<void(SyncPointLogOperation<T>*,int)>;
+
+template <typename T>
+using sync_complete_callback_t = boost::function<void(SyncPointLogOperation<T>*,int)>;
+
+template <typename T>
+class SyncPointLogOperation : public GenericLogOperation<T> {
 public:
-  std::shared_ptr<SyncPoint> sync_point;
-  sync_complete_callback_t sync_point_appending_callback;
-  sync_complete_callback_t sync_complete_callback;
-  SyncPointLogOperation(std::shared_ptr<SyncPoint> sync_point,
-			sync_point_appending_callback_t sync_point_appending_callback,
-			sync_complete_callback_t sync_complete_callback,
+  std::shared_ptr<SyncPoint<T>> sync_point;
+  sync_complete_callback_t<T> sync_point_appending_callback;
+  sync_complete_callback_t<T> sync_complete_callback;
+  SyncPointLogOperation(T &rwl, std::shared_ptr<SyncPoint<T>> sync_point,
+			sync_point_appending_callback_t<T> sync_point_appending_callback,
+			sync_complete_callback_t<T> sync_complete_callback,
 			const utime_t dispatch_time);
   ~SyncPointLogOperation();
   SyncPointLogOperation(const SyncPointLogOperation&) = delete;
   SyncPointLogOperation &operator=(const SyncPointLogOperation&) = delete;
   std::ostream &format(std::ostream &os) const {
     os << "(Sync Point) ";
-    GenericLogOperation::format(os);
+    GenericLogOperation<T>::format(os);
     os << "sync_point=[" << *sync_point << "]";
     return os;
   };
   friend std::ostream &operator<<(std::ostream &os,
-				  const SyncPointLogOperation &op) {
+				  const SyncPointLogOperation<T> &op) {
     return op.format(os);
   }
   const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_sync_point_log_entry(); }
@@ -478,7 +497,8 @@ public:
   void complete(int r);
 };
 
-class WriteLogOperation : public GenericLogOperation {
+template <typename T>
+class WriteLogOperation : public GenericLogOperation<T> {
 private:
   Mutex m_lock;
 public:
@@ -487,20 +507,20 @@ public:
   pobj_action *buffer_alloc_action = nullptr;
   Context *on_write_append; /* Completion for things waiting on this write's position in the log to be guaranteed */
   Context *on_write_persist; /* Completion for things waiting on this write to persist */
-  WriteLogOperation(WriteLogOperationSet &set, const uint64_t image_offset_bytes, const uint64_t write_bytes);
+  WriteLogOperation(WriteLogOperationSet<T> &set, const uint64_t image_offset_bytes, const uint64_t write_bytes);
   ~WriteLogOperation();
   WriteLogOperation(const WriteLogOperation&) = delete;
   WriteLogOperation &operator=(const WriteLogOperation&) = delete;
   std::ostream &format(std::ostream &os) const {
     os << "(Write) ";
-    GenericLogOperation::format(os);
+    GenericLogOperation<T>::format(os);
     os << "log_entry=[" << *log_entry << "], "
        << "bl=[" << bl << "],"
        << "buffer_alloc_action=" << buffer_alloc_action;
     return os;
   };
   friend std::ostream &operator<<(std::ostream &os,
-				  const WriteLogOperation &op) {
+				  const WriteLogOperation<T> &op) {
     return op.format(os);
   }
   const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_write_log_entry(); }
@@ -509,13 +529,20 @@ public:
   void appending();
   void complete(int r);
 };
-typedef std::list<std::shared_ptr<WriteLogOperation>> WriteLogOperations;
-typedef std::list<std::shared_ptr<GenericLogOperation>> GenericLogOperations;
-typedef std::vector<std::shared_ptr<GenericLogOperation>> GenericLogOperationsVector;
 
+template <typename T>
+using WriteLogOperations = std::list<std::shared_ptr<WriteLogOperation<T>>>;
+
+template <typename T>
+using GenericLogOperations = std::list<std::shared_ptr<GenericLogOperation<T>>>;
+
+template <typename T>
+using GenericLogOperationsVector = std::vector<std::shared_ptr<GenericLogOperation<T>>>;
+
+template <typename T>
 class WriteLogOperationSet {
 public:
-  CephContext *m_cct;
+  T &rwl;
   BlockExtent m_extent; /* in blocks */
   Context *m_on_finish;
   bool m_persist_on_flush;
@@ -524,16 +551,16 @@ public:
   Context *m_on_ops_appending;
   C_Gather *m_extent_ops_persist;
   Context *m_on_ops_persist;
-  GenericLogOperations operations;
+  GenericLogOperations<T> operations;
   utime_t m_dispatch_time; /* When set created */
-  std::shared_ptr<SyncPoint> sync_point;
-  WriteLogOperationSet(CephContext *cct, const utime_t dispatched, std::shared_ptr<SyncPoint> sync_point,
+  std::shared_ptr<SyncPoint<T>> sync_point;
+  WriteLogOperationSet(T &rwl, const utime_t dispatched, std::shared_ptr<SyncPoint<T>> sync_point,
 		       const bool persist_on_flush, BlockExtent extent, Context *on_finish);
   ~WriteLogOperationSet();
   WriteLogOperationSet(const WriteLogOperationSet&) = delete;
   WriteLogOperationSet &operator=(const WriteLogOperationSet&) = delete;
   friend std::ostream &operator<<(std::ostream &os,
-				  const WriteLogOperationSet &s) {
+				  const WriteLogOperationSet<T> &s) {
     os << "m_extent=[" << s.m_extent.block_start << "," << s.m_extent.block_end << "] "
        << "m_on_finish=" << s.m_on_finish << ", "
        << "m_cell=" << (void*)s.m_cell << ", "
@@ -654,23 +681,41 @@ private:
   BlockExtentToWriteLogMapEntries m_block_to_log_entry_map;
 };
 
+template <typename T>
+struct C_GuardedBlockIORequest;
+
 } // namespace rwl
 
 using namespace librbd::cache::rwl;
 
-
+template <typename T>
 struct C_BlockIORequest;
+
+template <typename T>
 struct C_WriteRequest;
+
+template <typename T>
 struct C_FlushRequest;
 
 /**
  * Prototype pmem-based, client-side, replicated write log
  */
-template <typename ImageCtxT = librbd::ImageCtx>
+template <typename ImageCtxT>
 class ReplicatedWriteLog : public ImageCache<ImageCtxT> {
 public:
   using typename ImageCache<ImageCtxT>::Extent;
   using typename ImageCache<ImageCtxT>::Extents;
+  using This = ReplicatedWriteLog<ImageCtxT>;
+  using SyncPointT = rwl::SyncPoint<This>;
+  using GenericLogOperationT = rwl::GenericLogOperation<This>;
+  using WriteLogOperationT = rwl::WriteLogOperation<This>;
+  using WriteLogOperationSetT = rwl::WriteLogOperationSet<This>;
+  using SyncPointLogOperationT = rwl::SyncPointLogOperation<This>;
+  using GenericLogOperationsT = rwl::GenericLogOperations<This>;
+  using GenericLogOperationsVectorT = rwl::GenericLogOperationsVector<This>;
+  using C_BlockIORequestT = C_BlockIORequest<This>;
+  using C_WriteRequestT = C_WriteRequest<This>;
+  using C_FlushRequestT = C_FlushRequest<This>;
   ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<ImageCtxT> *lower);
   ~ReplicatedWriteLog();
   ReplicatedWriteLog(const ReplicatedWriteLog&) = delete;
@@ -700,10 +745,19 @@ public:
   void flush(Context *on_finish) override;
 
 private:
+  friend class rwl::SyncPoint<This>;
+  friend class rwl::GenericLogOperation<This>;
+  friend class rwl::WriteLogOperation<This>;
+  friend class rwl::WriteLogOperationSet<This>;
+  friend class rwl::SyncPointLogOperation<This>;
+  friend class rwl::C_GuardedBlockIORequest<This>;
+  friend class C_BlockIORequest<This>;
+  friend class C_WriteRequest<This>;
+  friend class C_FlushRequest<This>;
   typedef std::function<void(uint64_t)> ReleaseBlock;
   typedef std::function<void(BlockGuard::BlockIO)> AppendDetainedBlock;
-  typedef std::list<C_WriteRequest *> C_WriteRequests;
-  typedef std::list<C_BlockIORequest *> C_BlockIORequests;
+  typedef std::list<C_WriteRequest<This> *> C_WriteRequests;
+  typedef std::list<C_BlockIORequest<This> *> C_BlockIORequests;
 
   BlockGuardCell* detain_guarded_request_helper(GuardedRequest &req);
   BlockGuardCell* detain_guarded_request_barrier_helper(GuardedRequest &req);
@@ -746,7 +800,7 @@ private:
 
   /* Starts at 0 for a new write log. Incremented on every flush. */
   uint64_t m_current_sync_gen = 0;
-  std::shared_ptr<SyncPoint> m_current_sync_point = nullptr;
+  std::shared_ptr<SyncPointT> m_current_sync_point = nullptr;
   /* Starts at 0 on each sync gen increase. Incremented before applied
      to an operation */
   uint64_t m_last_op_sequence_num = 0;
@@ -796,8 +850,8 @@ private:
   Finisher m_log_append_finisher;
   Finisher m_on_persist_finisher;
 
-  GenericLogOperations m_ops_to_flush; /* Write ops needing flush in local log */
-  GenericLogOperations m_ops_to_append; /* Write ops needing event append in local log */
+  GenericLogOperationsT m_ops_to_flush; /* Write ops needing flush in local log */
+  GenericLogOperationsT m_ops_to_append; /* Write ops needing event append in local log */
 
   WriteLogMap m_blocks_to_log_entries;
 
@@ -844,26 +898,26 @@ private:
 
   void init_flush_new_sync_point(Contexts &later);
   void new_sync_point(Contexts &later);
-  C_FlushRequest* make_flush_req(Context *on_finish);
-  void flush_new_sync_point(C_FlushRequest *flush_req, Contexts &later);
+  C_FlushRequest<ReplicatedWriteLog<ImageCtxT>>* make_flush_req(Context *on_finish);
+  void flush_new_sync_point(C_FlushRequest<This> *flush_req, Contexts &later);
 
   void invalidate(Extents&& image_extents, Context *on_finish);
 
-  void complete_write_req(C_WriteRequest *write_req, const int result);
+  void complete_write_req(C_WriteRequest<This> *write_req, const int result);
   void dispatch_deferred_writes(void);
-  bool alloc_write_resources(C_WriteRequest *write_req);
-  void release_write_lanes(C_WriteRequest *write_req);
-  void alloc_and_dispatch_io_req(C_BlockIORequest *write_req);
-  void dispatch_aio_write(C_WriteRequest *write_req);
+  bool alloc_write_resources(C_WriteRequest<This> *write_req);
+  void release_write_lanes(C_WriteRequest<This> *write_req);
+  void alloc_and_dispatch_io_req(C_BlockIORequest<This> *write_req);
+  void dispatch_aio_write(C_WriteRequest<This> *write_req);
   void append_scheduled_ops(void);
-  void schedule_append(GenericLogOperations &ops);
+  void schedule_append(GenericLogOperationsT &ops);
   void flush_then_append_scheduled_ops(void);
-  void schedule_flush_and_append(GenericLogOperations &ops);
-  void flush_pmem_buffer(GenericLogOperations &ops);
-  void alloc_op_log_entries(GenericLogOperations &ops);
-  void flush_op_log_entries(GenericLogOperationsVector &ops);
-  int append_op_log_entries(GenericLogOperations &ops);
-  void complete_op_log_entries(GenericLogOperations&& ops, const int r);
+  void schedule_flush_and_append(GenericLogOperationsT &ops);
+  void flush_pmem_buffer(GenericLogOperationsT &ops);
+  void alloc_op_log_entries(GenericLogOperationsT &ops);
+  void flush_op_log_entries(GenericLogOperationsVectorT &ops);
+  int append_op_log_entries(GenericLogOperationsT &ops);
+  void complete_op_log_entries(GenericLogOperationsT&& ops, const int r);
 };
 
 } // namespace cache

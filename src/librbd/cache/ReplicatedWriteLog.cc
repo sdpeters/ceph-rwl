@@ -66,45 +66,54 @@ BlockExtent WriteLogEntry::block_extent() { return ram_entry.block_extent(); }
 void WriteLogEntry::add_reader() { reader_count++; }
 void WriteLogEntry::remove_reader() { reader_count--; }
 
-SyncPoint::SyncPoint(CephContext *cct, uint64_t sync_gen_num)
-  : m_cct(cct), log_entry(std::make_shared<SyncPointLogEntry>(sync_gen_num)) {
-  m_prior_log_entries_persisted = new C_Gather(cct, nullptr);
-  m_sync_point_persist = new C_Gather(cct, nullptr);
+template <typename T>
+SyncPoint<T>::SyncPoint(T &rwl, uint64_t sync_gen_num)
+  : rwl(rwl), log_entry(std::make_shared<SyncPointLogEntry>(sync_gen_num)) {
+  m_prior_log_entries_persisted = new C_Gather(rwl.m_image_ctx.cct, nullptr);
+  m_sync_point_persist = new C_Gather(rwl.m_image_ctx.cct, nullptr);
   m_on_sync_point_appending.reserve(MAX_WRITES_PER_SYNC_POINT + 2);
   m_on_sync_point_persisted.reserve(MAX_WRITES_PER_SYNC_POINT + 2);
-  ldout(cct, 20) << "sync point " << sync_gen_num << dendl;
+  ldout(rwl.m_image_ctx.cct, 20) << "sync point " << sync_gen_num << dendl;
 }
 
-SyncPoint::~SyncPoint() {
+template <typename T>
+SyncPoint<T>::~SyncPoint() {
   assert(m_on_sync_point_appending.empty());
   assert(m_on_sync_point_persisted.empty());
   assert(!earlier_sync_point);
 }
 
-GenericLogOperation::GenericLogOperation(const utime_t dispatch_time) : m_dispatch_time(dispatch_time) {
+template <typename T>
+GenericLogOperation<T>::GenericLogOperation(T &rwl, const utime_t dispatch_time)
+  : rwl(rwl), m_dispatch_time(dispatch_time) {
 }
 
-SyncPointLogOperation::SyncPointLogOperation(std::shared_ptr<SyncPoint> sync_point,
-					     sync_point_appending_callback_t sync_point_appending_callback,
-					     sync_complete_callback_t sync_complete_callback,
-					     const utime_t dispatch_time)
-  : GenericLogOperation(dispatch_time), sync_point(sync_point),
+template <typename T>
+SyncPointLogOperation<T>::SyncPointLogOperation(T &rwl, std::shared_ptr<SyncPoint<T>> sync_point,
+						sync_point_appending_callback_t<T> sync_point_appending_callback,
+						sync_complete_callback_t<T> sync_complete_callback,
+						const utime_t dispatch_time)
+  : GenericLogOperation<T>(rwl, dispatch_time), sync_point(sync_point),
     sync_point_appending_callback(sync_point_appending_callback),
     sync_complete_callback(sync_complete_callback) {
 }
 
-SyncPointLogOperation::~SyncPointLogOperation() { }
+template <typename T>
+SyncPointLogOperation<T>::~SyncPointLogOperation() { }
 
-void SyncPointLogOperation::appending() {
+template <typename T>
+void SyncPointLogOperation<T>::appending() {
   sync_point_appending_callback(this, 0);
 }
 
-void SyncPointLogOperation::complete(int result) {
+template <typename T>
+void SyncPointLogOperation<T>::complete(int result) {
   sync_complete_callback(this, result);
 }
 
-WriteLogOperation::WriteLogOperation(WriteLogOperationSet &set, uint64_t image_offset_bytes, uint64_t write_bytes)
-  : GenericLogOperation(set.m_dispatch_time), m_lock("librbd::cache::rwl::WriteLogOperation::m_lock"),
+template <typename T>
+WriteLogOperation<T>::WriteLogOperation(WriteLogOperationSet<T> &set, uint64_t image_offset_bytes, uint64_t write_bytes)
+  : GenericLogOperation<T>(set.rwl, set.m_dispatch_time), m_lock("librbd::cache::rwl::WriteLogOperation::m_lock"),
     log_entry(std::make_shared<WriteLogEntry>(set.sync_point->log_entry, image_offset_bytes, write_bytes)) {
   on_write_append = set.m_extent_ops_appending->new_sub();
   on_write_persist = set.m_extent_ops_persist->new_sub();
@@ -112,10 +121,12 @@ WriteLogOperation::WriteLogOperation(WriteLogOperationSet &set, uint64_t image_o
   log_entry->sync_point_entry->m_bytes += write_bytes;
 }
 
-WriteLogOperation::~WriteLogOperation() { }
+template <typename T>
+WriteLogOperation<T>::~WriteLogOperation() { }
 
 /* Called when the write log operation is appending and its log position is guaranteed */
-void WriteLogOperation::appending() {
+template <typename T>
+void WriteLogOperation<T>::appending() {
   Context *on_append = nullptr;
   {
     Mutex::Locker locker(m_lock);
@@ -128,7 +139,8 @@ void WriteLogOperation::appending() {
 }
 
 /* Called when the write log operation is completed in all log replicas */
-void WriteLogOperation::complete(int result) {
+template <typename T>
+void WriteLogOperation<T>::complete(int result) {
   appending();
   Context *on_persist = nullptr;
   {
@@ -141,14 +153,15 @@ void WriteLogOperation::complete(int result) {
   }
 }
 
-WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, utime_t dispatched, std::shared_ptr<SyncPoint> sync_point,
+template <typename T>
+WriteLogOperationSet<T>::WriteLogOperationSet(T &rwl, utime_t dispatched, std::shared_ptr<SyncPoint<T>> sync_point,
 					   bool persist_on_flush, BlockExtent extent, Context *on_finish)
-  : m_cct(cct), m_extent(extent), m_on_finish(on_finish),
+  : rwl(rwl), m_extent(extent), m_on_finish(on_finish),
     m_persist_on_flush(persist_on_flush), m_dispatch_time(dispatched), sync_point(sync_point) {
   m_on_ops_appending = sync_point->m_prior_log_entries_persisted->new_sub();
   m_on_ops_persist = nullptr;
   m_extent_ops_persist =
-    new C_Gather(cct,
+    new C_Gather(rwl.m_image_ctx.cct,
 		 new FunctionContext( [this](int r) {
 		     //ldout(m_cct, 6) << "m_extent_ops_persist completed" << dendl;
 		     if (m_on_ops_persist) {
@@ -158,7 +171,7 @@ WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, utime_t dispatched,
 		   }));
   auto appending_persist_sub = m_extent_ops_persist->new_sub();
   m_extent_ops_appending =
-    new C_Gather(cct,
+    new C_Gather(rwl.m_image_ctx.cct,
 		 new FunctionContext( [this, appending_persist_sub](int r) {
 		     //ldout(m_cct, 6) << "m_extent_ops_appending completed" << dendl;
 		     m_on_ops_appending->complete(r);
@@ -166,7 +179,8 @@ WriteLogOperationSet::WriteLogOperationSet(CephContext *cct, utime_t dispatched,
 		   }));
 }
 
-WriteLogOperationSet::~WriteLogOperationSet() { }
+template <typename T>
+WriteLogOperationSet<T>::~WriteLogOperationSet() { }
 
 GuardedRequestFunctionContext::GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*,bool)> &&callback)
   : m_callback(std::move(callback)){ }
@@ -463,18 +477,18 @@ bool is_block_aligned(const Extents &image_extents) {
  * A request that can be deferred in a BlockGuard to sequence
  * overlapping operations.
  */
+template <typename T>
 struct C_GuardedBlockIORequest : public Context {
-protected:
-  CephContext *m_cct;
 private:
   BlockGuardCell* m_cell = nullptr;
 public:
-  C_GuardedBlockIORequest(CephContext *cct)
-    : m_cct(cct) {
-    ldout(m_cct, 99) << this << dendl;
+  T &rwl;
+  C_GuardedBlockIORequest(T &rwl)
+    : rwl(rwl) {
+    ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
   ~C_GuardedBlockIORequest() {
-    ldout(m_cct, 99) << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
   C_GuardedBlockIORequest(const C_GuardedBlockIORequest&) = delete;
   C_GuardedBlockIORequest &operator=(const C_GuardedBlockIORequest&) = delete;
@@ -482,12 +496,12 @@ public:
   virtual void send() = 0;
   virtual const char *get_name() const = 0;
   void set_cell(BlockGuardCell *cell) {
-    ldout(m_cct, 20) << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 20) << this << dendl;
     assert(cell);
     m_cell = cell;
   }
   BlockGuardCell *get_cell(void) {
-    ldout(m_cct, 20) << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 20) << this << dendl;
     return m_cell;
   }
 };
@@ -943,11 +957,17 @@ struct WriteRequestResources {
  * until the IO is persisted in all (live) log replicas.  User request
  * may be completed from here before the IO persists.
  */
-typedef boost::function<bool(C_BlockIORequest*)> io_alloc_resources_callback_t;
-typedef boost::function<void(C_BlockIORequest*)> io_deferred_callback_t;
-auto const null_io_deferred_cb = [](C_BlockIORequest* req){};
-typedef boost::function<void(C_BlockIORequest*)> io_dispatch_callback_t;
-struct C_BlockIORequest : public C_GuardedBlockIORequest {
+template <typename T>
+using  io_alloc_resources_callback_t = boost::function<bool(C_BlockIORequest<T>*)>;
+template <typename T>
+using  io_deferred_callback_t = boost::function<void(C_BlockIORequest<T>*)>;
+template <typename T>
+auto const null_io_deferred_cb = [](C_BlockIORequest<T>* req){};
+template <typename T>
+using  io_dispatch_callback_t = boost::function<void(C_BlockIORequest<T>*)>;
+template <typename T>
+struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
+  using C_GuardedBlockIORequest<T>::rwl;
   Extents m_image_extents;
   bufferlist bl;
   int fadvise_flags;
@@ -965,11 +985,11 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
   bool m_waited_lanes = false;            /* This IO waited for free persist/replicate lanes */
   bool m_waited_entries = false;          /* This IO waited for free log entries */
   bool m_waited_buffers = false;          /* This IO waited for data buffers (pmemobj_reserve() failed) */
-  io_alloc_resources_callback_t m_io_alloc_resources_callback;
-  io_deferred_callback_t m_io_deferred_callback;
-  io_dispatch_callback_t m_io_dispatch_callback;
+  io_alloc_resources_callback_t<T> m_io_alloc_resources_callback;
+  io_deferred_callback_t<T> m_io_deferred_callback;
+  io_dispatch_callback_t<T> m_io_dispatch_callback;
   friend std::ostream &operator<<(std::ostream &os,
-				  const C_BlockIORequest &req) {
+				  const C_BlockIORequest<T> &req) {
     os << "m_image_extents=[" << req.m_image_extents << "], "
        << "m_image_extents_summary=[" << req.m_image_extents_summary << "], "
        << "bl=" << req.bl << ", "
@@ -982,50 +1002,50 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
        << "m_waited_buffers=" << req.m_waited_buffers << "";
     return os;
   };
-  C_BlockIORequest(CephContext *cct, const utime_t arrived, Extents &&image_extents,
+  C_BlockIORequest(T &rwl, const utime_t arrived, Extents &&image_extents,
 		   bufferlist&& bl, const int fadvise_flags, Context *user_req,
-		   io_alloc_resources_callback_t io_alloc_resources_callback,
-		   io_deferred_callback_t io_deferred_callback,
-		   io_dispatch_callback_t io_dispatch_callback)
-    : C_GuardedBlockIORequest(cct), m_image_extents(std::move(image_extents)),
+		   io_alloc_resources_callback_t<T> io_alloc_resources_callback,
+		   io_deferred_callback_t<T> io_deferred_callback,
+		   io_dispatch_callback_t<T> io_dispatch_callback)
+    : C_GuardedBlockIORequest<T>(rwl), m_image_extents(std::move(image_extents)),
       bl(std::move(bl)), fadvise_flags(fadvise_flags),
       user_req(user_req), m_image_extents_summary(m_image_extents), m_arrived_time(arrived),
       m_io_alloc_resources_callback(io_alloc_resources_callback),
       m_io_deferred_callback(io_deferred_callback),
       m_io_dispatch_callback(io_dispatch_callback) {
-    ldout(m_cct, 99) << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
   virtual ~C_BlockIORequest() {
-    ldout(m_cct, 99) << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
   void complete_user_request(int r) {
     bool initial = false;
     if (m_user_req_completed.compare_exchange_strong(initial, true)) {
-      ldout(m_cct, 15) << this << " completing user req" << dendl;
+      ldout(rwl.m_image_ctx.cct, 15) << this << " completing user req" << dendl;
       m_user_req_completed_time = ceph_clock_now();
       user_req->complete(r);
     } else {
-      ldout(m_cct, 20) << this << " user req already completed" << dendl;
+      ldout(rwl.m_image_ctx.cct, 20) << this << " user req already completed" << dendl;
     }
   }
 
   virtual void send() override {
     /* Should never be called */
-    ldout(m_cct, 2) << this << " unexpected" << dendl;
+    ldout(rwl.m_image_ctx.cct, 2) << this << " unexpected" << dendl;
   }
 
   virtual void finish(int r) {
-    ldout(m_cct, 20) << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 20) << this << dendl;
 
     complete_user_request(r);
     bool initial = false;
     if (m_on_finish_completed.compare_exchange_strong(initial, true)) {
-      ldout(m_cct, 15) << this << " completing _on_finish" << dendl;
+      ldout(rwl.m_image_ctx.cct, 15) << this << " completing _on_finish" << dendl;
       _on_finish->complete(0);
     } else {
-      ldout(m_cct, 20) << this << " _on_finish already completed" << dendl;
+      ldout(rwl.m_image_ctx.cct, 20) << this << " _on_finish already completed" << dendl;
       assert(0);
     }
   }
@@ -1037,7 +1057,7 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
   void deferred() {
     bool initial = false;
     if (m_deferred.compare_exchange_strong(initial, true)) {
-      if (m_io_deferred_callback != null_io_deferred_cb) {
+      if (m_io_deferred_callback != null_io_deferred_cb<T>) {
 	m_io_deferred_callback(this);
       }
     }
@@ -1058,13 +1078,15 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest {
  * how we guarantee to each log replica that they will never see
  * overlapping writes).
  */
-struct C_WriteRequest : public C_BlockIORequest {
+template <typename T>
+struct C_WriteRequest : public C_BlockIORequest<T> {
+  using C_BlockIORequest<T>::rwl;
   WriteRequestResources m_resources;
-  unique_ptr<WriteLogOperationSet> m_op_set = nullptr;
+  unique_ptr<WriteLogOperationSet<T>> m_op_set = nullptr;
   bool m_do_early_flush = false;
   friend std::ostream &operator<<(std::ostream &os,
-				  const C_WriteRequest &req) {
-    os << (C_BlockIORequest&)req
+				  const C_WriteRequest<T> &req) {
+    os << (C_BlockIORequest<T>&)req
        << " m_resources.allocated=" << req.m_resources.allocated;
     if (req.m_op_set) {
        os << "m_op_set=" << *req.m_op_set;
@@ -1072,18 +1094,18 @@ struct C_WriteRequest : public C_BlockIORequest {
     return os;
   };
 
-  C_WriteRequest(CephContext *cct, const utime_t arrived, Extents &&image_extents,
+  C_WriteRequest(T &rwl, const utime_t arrived, Extents &&image_extents,
 		 bufferlist&& bl, const int fadvise_flags, Context *user_req,
-		 io_alloc_resources_callback_t io_alloc_resources_callback,
-		 io_deferred_callback_t io_deferred_callback,
-		 io_dispatch_callback_t io_dispatch_callback)
-    : C_BlockIORequest(cct, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req,
+		 io_alloc_resources_callback_t<T> io_alloc_resources_callback,
+		 io_deferred_callback_t<T> io_deferred_callback,
+		 io_dispatch_callback_t<T> io_dispatch_callback)
+    : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req,
 		       io_alloc_resources_callback, io_deferred_callback, io_dispatch_callback) {
-    ldout(m_cct, 99) << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
   ~C_WriteRequest() {
-    ldout(m_cct, 99) << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
   const char *get_name() const override {
@@ -1098,26 +1120,28 @@ struct C_WriteRequest : public C_BlockIORequest {
  * proceed while this flush waits for prio IOs to complete
  * and any required sync points to be persisted.
  */
-struct C_FlushRequest : public C_BlockIORequest {
+template <typename T>
+struct C_FlushRequest : public C_BlockIORequest<T> {
+  using C_BlockIORequest<T>::rwl;
   std::atomic<bool> m_log_entry_allocated = {false};
   bool m_internal = false;
-  std::shared_ptr<SyncPoint> to_append;
-  std::shared_ptr<SyncPointLogOperation> op;
+  std::shared_ptr<SyncPoint<T>> to_append;
+  std::shared_ptr<SyncPointLogOperation<T>> op;
   friend std::ostream &operator<<(std::ostream &os,
-				  const C_FlushRequest &req) {
-    os << (C_BlockIORequest&)req
+				  const C_FlushRequest<T> &req) {
+    os << (C_BlockIORequest<T>&)req
        << " m_log_entry_allocated=" << req.m_log_entry_allocated;
     return os;
   };
 
-  C_FlushRequest(CephContext *cct, const utime_t arrived, Extents &&image_extents,
+  C_FlushRequest(T &rwl, const utime_t arrived, Extents &&image_extents,
 		 bufferlist&& bl, const int fadvise_flags, Context *user_req,
-		 io_alloc_resources_callback_t io_alloc_resources_callback,
-		 io_deferred_callback_t io_deferred_callback,
-		 io_dispatch_callback_t io_dispatch_callback)
-    : C_BlockIORequest(cct, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req,
+		 io_alloc_resources_callback_t<T> io_alloc_resources_callback,
+		 io_deferred_callback_t<T> io_deferred_callback,
+		 io_dispatch_callback_t<T> io_dispatch_callback)
+    : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req,
 		       io_alloc_resources_callback, io_deferred_callback, io_dispatch_callback) {
-    ldout(m_cct, 99) << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
   ~C_FlushRequest() {
@@ -1136,7 +1160,7 @@ const unsigned long int ops_appended_together = MAX_ALLOC_PER_TRANSACTION;
 template <typename I>
 void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 {
-  GenericLogOperations ops;
+  GenericLogOperationsT ops;
   int append_result = 0;
   bool ops_remain = false;
   bool appending = false; /* true if we set m_appending */
@@ -1195,9 +1219,9 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
  * all prior log entries are persisted everywhere.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_append(GenericLogOperations &ops)
+void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsT &ops)
 {
-  std::vector<std::shared_ptr<GenericLogOperation>> appending;
+  GenericLogOperationsVectorT appending;
   bool need_finisher;
 
   /* Prepare copy of ops list to mark appending after the input list is moved
@@ -1241,7 +1265,7 @@ const unsigned long int ops_flushed_together = 4;
 template <typename I>
 void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
 {
-  GenericLogOperations ops;
+  GenericLogOperationsT ops;
   bool ops_remain = false;
   //ldout(m_image_ctx.cct, 20) << dendl;
   do {
@@ -1280,7 +1304,7 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
  * then get their log entries appended.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperations &ops)
+void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsT &ops)
 {
   bool need_finisher;
   //ldout(m_image_ctx.cct, 20) << dendl;
@@ -1311,7 +1335,7 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperations &ops)
  * Flush the pmem regions for the data blocks of a set of operations
  */
 template <typename I>
-void ReplicatedWriteLog<I>::flush_pmem_buffer(GenericLogOperations &ops)
+void ReplicatedWriteLog<I>::flush_pmem_buffer(GenericLogOperationsT &ops)
 {
   for (auto &operation : ops) {
     if (operation->is_write()) {
@@ -1342,7 +1366,7 @@ void ReplicatedWriteLog<I>::flush_pmem_buffer(GenericLogOperations &ops)
  * Acquires m_lock
  */
 template <typename I>
-void ReplicatedWriteLog<I>::alloc_op_log_entries(GenericLogOperations &ops)
+void ReplicatedWriteLog<I>::alloc_op_log_entries(GenericLogOperationsT &ops)
 {
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
@@ -1374,7 +1398,7 @@ void ReplicatedWriteLog<I>::alloc_op_log_entries(GenericLogOperations &ops)
  * be contiguous in persistent memory.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::flush_op_log_entries(GenericLogOperationsVector &ops)
+void ReplicatedWriteLog<I>::flush_op_log_entries(GenericLogOperationsVectorT &ops)
 {
   if (ops.empty()) return;
 
@@ -1399,10 +1423,10 @@ void ReplicatedWriteLog<I>::flush_op_log_entries(GenericLogOperationsVector &ops
  * of these must already have been persisted to its reserved area.
  */
 template <typename I>
-int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
+int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperationsT &ops)
 {
   CephContext *cct = m_image_ctx.cct;
-  GenericLogOperationsVector entries_to_flush;
+  GenericLogOperationsVectorT entries_to_flush;
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
   int ret = 0;
@@ -1464,7 +1488,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
     D_RW(pool_root)->first_free_entry = m_first_free_entry;
     for (auto &operation : ops) {
       if (operation->is_write()) {
-	auto write_op = (std::shared_ptr<WriteLogOperation>&) operation;
+	auto write_op = (std::shared_ptr<WriteLogOperationT>&) operation;
 	pmemobj_tx_publish(write_op->buffer_alloc_action, 1);
       } else {
 	//ldout(m_image_ctx.cct, 20) << "skipping non-write op: " << *operation << dendl;
@@ -1492,7 +1516,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
  * Complete a set of write ops with the result of append_op_entries.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperations&& ops, int result)
+void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperationsT&& ops, int result)
 {
   //ldout(m_image_ctx.cct, 20) << dendl;
   m_async_complete_ops++;
@@ -1553,7 +1577,7 @@ void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperations&& ops, 
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequest *write_req, int result)
+void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequestT *write_req, int result)
 {
   CephContext *cct = m_image_ctx.cct;
 
@@ -1610,7 +1634,7 @@ void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequest *write_req, int re
  * Lanes are released after the write persists via release_write_lanes()
  */
 template <typename I>
-bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
+bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequestT *write_req)
 {
   bool alloc_succeeds = true;
   bool no_space = false;
@@ -1733,8 +1757,8 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequest *write_req)
 template <typename I>
 void ReplicatedWriteLog<I>::dispatch_deferred_writes(void)
 {
-  C_BlockIORequest *front_req = nullptr;     /* req still on front of deferred list */
-  C_BlockIORequest *allocated_req = nullptr; /* req that was allocated, and is now off the list */
+  C_BlockIORequestT *front_req = nullptr;     /* req still on front of deferred list */
+  C_BlockIORequestT *allocated_req = nullptr; /* req that was allocated, and is now off the list */
   bool allocated = false; /* front_req allocate succeeded */
   bool cleared_dispatching_flag = false;
 
@@ -1818,7 +1842,7 @@ void ReplicatedWriteLog<I>::dispatch_deferred_writes(void)
  * deferred write
  */
 template <typename I>
-void ReplicatedWriteLog<I>::release_write_lanes(C_WriteRequest *write_req)
+void ReplicatedWriteLog<I>::release_write_lanes(C_WriteRequestT *write_req)
 {
   {
     Mutex::Locker locker(m_lock);
@@ -1834,7 +1858,7 @@ void ReplicatedWriteLog<I>::release_write_lanes(C_WriteRequest *write_req)
  * resources are available, or queued if they aren't.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::alloc_and_dispatch_io_req(C_BlockIORequest *req)
+void ReplicatedWriteLog<I>::alloc_and_dispatch_io_req(C_BlockIORequestT *req)
 {
   bool dispatch_here = false;
 
@@ -1869,7 +1893,7 @@ void ReplicatedWriteLog<I>::alloc_and_dispatch_io_req(C_BlockIORequest *req)
  * Acquires m_lock
  */
 template <typename I>
-void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
+void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
 {
   CephContext *cct = m_image_ctx.cct;
   WriteLogEntries log_entries;
@@ -1900,7 +1924,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
       flush_new_sync_point(nullptr, on_exit.contexts);
     }
     write_req->m_op_set =
-      make_unique<WriteLogOperationSet>(cct, now, m_current_sync_point, m_persist_on_flush,
+      make_unique<WriteLogOperationSetT>(*this, now, m_current_sync_point, m_persist_on_flush,
 					BlockExtent(write_req->m_image_extents_summary.first_block,
 						    write_req->m_image_extents_summary.last_block),
 					set_complete);
@@ -1908,8 +1932,8 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
     auto allocation = write_req->m_resources.buffers.begin();
     for (auto &extent : write_req->m_image_extents) {
       /* operation->on_write_persist connected to m_prior_log_entries_persisted Gather */
-      std::shared_ptr<WriteLogOperation> operation =
-	std::make_shared<WriteLogOperation>(*write_req->m_op_set, extent.first, extent.second);
+      auto operation =
+	std::make_shared<WriteLogOperationT>(*write_req->m_op_set, extent.first, extent.second);
       write_req->m_op_set->operations.emplace_back(operation);
       log_entries.emplace_back(operation->log_entry);
       m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
@@ -1954,7 +1978,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequest *write_req)
 
   /* Write data */
   for (auto &operation : write_req->m_op_set->operations) {
-    auto write_op = (std::shared_ptr<WriteLogOperation>&) operation;
+    auto write_op = (std::shared_ptr<WriteLogOperationT>&) operation;
     bufferlist::iterator i(&write_op->bl);
     m_perfcounter->inc(l_librbd_rwl_log_op_bytes, write_op->log_entry->ram_entry.write_bytes);
     //ldout(cct, 20) << write_op->bl << dendl;
@@ -2042,23 +2066,23 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
     return;
   }
 
-  C_WriteRequest *write_req =
-    new C_WriteRequest(cct, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish,
-		       [this](C_BlockIORequest* req)->bool {
-			 C_WriteRequest *write_req = (C_WriteRequest*)req;
-			 ldout(m_image_ctx.cct, 20) << "req type=" << write_req->get_name()
-						    << "req=[" << *write_req << "]" << dendl;
-			 return alloc_write_resources(write_req);
-		       },
-		       null_io_deferred_cb,
-		       // [this](C_BlockIORequest* req) {
-		       //	 /* Deferred write perf counter moved to write completion */
-		       //	 m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
-		       // },
-		       [this](C_BlockIORequest* req) {
-			 C_WriteRequest *write_req = (C_WriteRequest*)req;
-			 dispatch_aio_write(write_req);
-		       });
+  auto *write_req =
+    new C_WriteRequestT(*this, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish,
+			[this](C_BlockIORequestT* req)->bool {
+			  auto *write_req = (C_WriteRequestT*)req;
+			  ldout(m_image_ctx.cct, 20) << "req type=" << write_req->get_name()
+						     << "req=[" << *write_req << "]" << dendl;
+			  return alloc_write_resources(write_req);
+			},
+			null_io_deferred_cb<This>,
+			// [this](C_BlockIORequest* req) {
+			//	 /* Deferred write perf counter moved to write completion */
+			//	 m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
+			// },
+			[this](C_BlockIORequestT* req) {
+			  auto *write_req = (C_WriteRequestT*)req;
+			  dispatch_aio_write(write_req);
+			});
   m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
 
   /* The lambda below will be called when the block guard for all
@@ -2189,92 +2213,92 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 }
 
 template <typename I>
-C_FlushRequest* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
+C_FlushRequest<ReplicatedWriteLog<I>>* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
   utime_t flush_begins = ceph_clock_now();
   bufferlist bl;
 
-  C_FlushRequest *flush_req =
-    new C_FlushRequest(m_image_ctx.cct, flush_begins, Extents({whole_volume_extent()}),
-		       std::move(bl), 0, on_finish,
-		       [this](C_BlockIORequest* req)->bool {
-			 C_FlushRequest *flush_req = (C_FlushRequest*)req;
-			 /* ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
-			  *			    << "req=[" << *flush_req << "]" << dendl; */
-			 assert(!flush_req->m_log_entry_allocated);
-			 bool allocated_here = false;
-			 Mutex::Locker locker(m_lock);
-			 if (m_free_log_entries) {
-			   m_free_log_entries--;
-			   flush_req->m_log_entry_allocated = true;
-			   allocated_here = true;
-			 }
-			 return allocated_here;
-		       },
-		       [this](C_BlockIORequest* req) {
+  auto *flush_req =
+    new C_FlushRequestT(*this, flush_begins, Extents({whole_volume_extent()}),
+			std::move(bl), 0, on_finish,
+			[this](C_BlockIORequestT* req)->bool {
+			  auto *flush_req = (C_FlushRequestT*)req;
+			  /* ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
+			   *			    << "req=[" << *flush_req << "]" << dendl; */
+			  assert(!flush_req->m_log_entry_allocated);
+			  bool allocated_here = false;
+			  Mutex::Locker locker(m_lock);
+			  if (m_free_log_entries) {
+			    m_free_log_entries--;
+			    flush_req->m_log_entry_allocated = true;
+			    allocated_here = true;
+			  }
+			  return allocated_here;
+			},
+			[this](C_BlockIORequestT* req) {
 			 // TODO: move to completion
-			 m_perfcounter->inc(l_librbd_rwl_aio_flush_def, 1);
-		       },
-		       [this](C_BlockIORequest* req) {
-			 utime_t now = ceph_clock_now();
-			 C_FlushRequest *flush_req = (C_FlushRequest*)req;
-			 ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
-			 << "req=[" << *flush_req << "]" << dendl;
-			 assert(flush_req->m_log_entry_allocated);
-			 flush_req->m_dispatched_time = now;
+			  m_perfcounter->inc(l_librbd_rwl_aio_flush_def, 1);
+			},
+			[this](C_BlockIORequestT* req) {
+			  utime_t now = ceph_clock_now();
+			  auto *flush_req = (C_FlushRequestT*)req;
+			  ldout(m_image_ctx.cct, 20) << "req type=" << flush_req->get_name() << " "
+			  << "req=[" << *flush_req << "]" << dendl;
+			  assert(flush_req->m_log_entry_allocated);
+			  flush_req->m_dispatched_time = now;
 
-			 /* Handler for sync point appending */
-			 sync_complete_callback_t appending_cb =
-			 [this](SyncPointLogOperation *op, int result) {
-			   std::shared_ptr<SyncPoint> sync_point = op->sync_point;
-			   assert(sync_point);
-			   std::vector<Context*> on_append;
-			   {
-			     Mutex::Locker locker(m_lock);
-			     if (!sync_point->m_appending) {
-			       ldout(m_image_ctx.cct, 20) << "Sync point op=[" << *op
-							  << "] appending" << dendl;
-			       sync_point->m_appending = true;
-			     }
-			     on_append.swap(sync_point->m_on_sync_point_appending);
-			   }
-			   finish_contexts(m_image_ctx.cct, on_append, result);
-			 };
+			  /* Handler for sync point appending */
+			  sync_complete_callback_t<This> appending_cb =
+			  [this](SyncPointLogOperationT *op, int result) {
+			    std::shared_ptr<SyncPointT> sync_point = op->sync_point;
+			    assert(sync_point);
+			    std::vector<Context*> on_append;
+			    {
+			      Mutex::Locker locker(m_lock);
+			      if (!sync_point->m_appending) {
+				ldout(m_image_ctx.cct, 20) << "Sync point op=[" << *op
+							   << "] appending" << dendl;
+				sync_point->m_appending = true;
+			      }
+			      on_append.swap(sync_point->m_on_sync_point_appending);
+			    }
+			    finish_contexts(m_image_ctx.cct, on_append, result);
+			  };
 
-			 /* Handler for sync point persist complete */
-			 sync_complete_callback_t comp_cb =
-			 [this](SyncPointLogOperation *op, int result) {
-			   std::shared_ptr<SyncPoint> sync_point = op->sync_point;
-			   assert(sync_point);
-			   ldout(m_image_ctx.cct, 20) << "Sync point op =[" << *op
-						      << "] completed" << dendl;
-			   {
-			     Mutex::Locker locker(m_lock);
-			     /* Remove link from next sync point */
-			     assert(sync_point->later_sync_point);
-			     assert(sync_point->later_sync_point->earlier_sync_point ==
-				    sync_point);
-			     sync_point->later_sync_point->earlier_sync_point = nullptr;
-			   }
+			  /* Handler for sync point persist complete */
+			  sync_complete_callback_t<This> comp_cb =
+			  [this](SyncPointLogOperationT *op, int result) {
+			    std::shared_ptr<SyncPointT> sync_point = op->sync_point;
+			    assert(sync_point);
+			    ldout(m_image_ctx.cct, 20) << "Sync point op =[" << *op
+						       << "] completed" << dendl;
+			    {
+			      Mutex::Locker locker(m_lock);
+			      /* Remove link from next sync point */
+			      assert(sync_point->later_sync_point);
+			      assert(sync_point->later_sync_point->earlier_sync_point ==
+				     sync_point);
+			      sync_point->later_sync_point->earlier_sync_point = nullptr;
+			    }
 
-			   /* Do append now in case completion occurred before the
-			    * normal append callback executed, and to handle
-			    * on_append work that was queued after the sync point
-			    * entered the appending state. */
-			   op->appending();
+			    /* Do append now in case completion occurred before the
+			     * normal append callback executed, and to handle
+			     * on_append work that was queued after the sync point
+			     * entered the appending state. */
+			    op->appending();
 
-			   /* This flush request will be one of these contexts */
-			   finish_contexts(m_image_ctx.cct,
-					   sync_point->m_on_sync_point_persisted, result);
-			 };
+			    /* This flush request will be one of these contexts */
+			    finish_contexts(m_image_ctx.cct,
+					    sync_point->m_on_sync_point_persisted, result);
+			  };
 
-			 flush_req->op =
-			 std::make_shared<SyncPointLogOperation>(flush_req->to_append, appending_cb, comp_cb, now);
+			  flush_req->op =
+			  std::make_shared<SyncPointLogOperationT>(*this, flush_req->to_append, appending_cb, comp_cb, now);
 
-			 m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
-			 GenericLogOperations ops;
-			 ops.push_back(flush_req->op);
-			 schedule_append(ops);
-		       });
+			  m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
+			  GenericLogOperationsT ops;
+			  ops.push_back(flush_req->op);
+			  schedule_append(ops);
+			});
 
   flush_req->_on_finish = new FunctionContext(
     [this, flush_req](int r) {
@@ -2309,7 +2333,7 @@ void ReplicatedWriteLog<I>::init_flush_new_sync_point(Contexts &later) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequest *flush_req, Contexts &later) {
+void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequestT *flush_req, Contexts &later) {
   assert(m_lock.is_locked_by_me());
 
   if (!flush_req) {
@@ -2325,7 +2349,7 @@ void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequest *flush_req, Cont
 
   /* Add a new sync point. */
   new_sync_point(later);
-  std::shared_ptr<SyncPoint> to_append = m_current_sync_point->earlier_sync_point;
+  std::shared_ptr<SyncPointT> to_append = m_current_sync_point->earlier_sync_point;
   assert(to_append);
 
   /* This flush request will append/persist the (now) previous sync point */
@@ -2333,7 +2357,7 @@ void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequest *flush_req, Cont
   to_append->m_append_scheduled = true;
 
   /* All prior sync points that are still in this list must already be scheduled for append */
-  std::shared_ptr<SyncPoint> previous = to_append->earlier_sync_point;
+  std::shared_ptr<SyncPointT> previous = to_append->earlier_sync_point;
   while (previous) {
     assert(previous->m_append_scheduled);
     previous = previous->earlier_sync_point;
@@ -2522,8 +2546,8 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 template <typename I>
 void ReplicatedWriteLog<I>::new_sync_point(Contexts &later) {
   CephContext *cct = m_image_ctx.cct;
-  std::shared_ptr<SyncPoint> old_sync_point = m_current_sync_point;
-  std::shared_ptr<SyncPoint> new_sync_point;
+  std::shared_ptr<SyncPointT> old_sync_point = m_current_sync_point;
+  std::shared_ptr<SyncPointT> new_sync_point;
   ldout(cct, 20) << dendl;
 
   assert(m_lock.is_locked_by_me());
@@ -2535,7 +2559,7 @@ void ReplicatedWriteLog<I>::new_sync_point(Contexts &later) {
    * log, and this advances to the next sync gen number. */
   ++m_current_sync_gen;
 
-  new_sync_point = std::make_shared<SyncPoint>(cct, m_current_sync_gen);
+  new_sync_point = std::make_shared<SyncPointT>(*this, m_current_sync_gen);
   m_current_sync_point = new_sync_point;
 
   /* If this log has been re-opened, old_sync_point will initially be
