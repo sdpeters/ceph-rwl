@@ -218,7 +218,7 @@ struct WriteLogPmemEntry {
     : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes),
       entry_valid(0), sync_point(0), sequenced(0), has_data(0), unmap(0) {
   }
-  BlockExtent block_extent();
+  const BlockExtent block_extent();
   bool is_sync_point() {
     return sync_point;
   }
@@ -332,7 +332,7 @@ public:
     : GenericLogEntry(image_offset_bytes, write_bytes), sync_point_entry(nullptr) { }
   WriteLogEntry(const WriteLogEntry&) = delete;
   WriteLogEntry &operator=(const WriteLogEntry&) = delete;
-  BlockExtent block_extent();
+  const BlockExtent block_extent();
   void add_reader();
   void remove_reader();
   std::ostream &format(std::ostream &os) const {
@@ -665,7 +665,7 @@ private:
   typedef std::set<WriteLogMapEntry,
 		   WriteLogMapEntryCompare> BlockExtentToWriteLogMapEntries;
 
-  WriteLogMapEntry block_extent_to_map_key(BlockExtent &block_extent);
+  WriteLogMapEntry block_extent_to_map_key(const BlockExtent &block_extent);
 
   CephContext *m_cct;
 
@@ -675,6 +675,8 @@ private:
 
 template <typename T>
 struct C_GuardedBlockIORequest;
+
+class DeferredContexts;
 
 } // namespace rwl
 
@@ -877,8 +879,8 @@ private:
   void periodic_stats();
   void arm_periodic_stats();
 
-  void rwl_init(Context *on_finish, Contexts &later);
-  void load_existing_entries(Contexts &later);
+  void rwl_init(Context *on_finish, DeferredContexts &later);
+  void load_existing_entries(DeferredContexts &later);
   void wake_up();
   void process_work();
 
@@ -888,12 +890,12 @@ private:
   bool can_retire_entry(const std::shared_ptr<GenericLogEntry> log_entry);
   bool retire_entries(const unsigned long int frees_per_tx = MAX_FREE_PER_TRANSACTION);
 
-  void init_flush_new_sync_point(Contexts &later);
-  void new_sync_point(Contexts &later);
+  void init_flush_new_sync_point(DeferredContexts &later);
+  void new_sync_point(DeferredContexts &later);
   bool alloc_flush_resources(C_FlushRequestT *flush_req);
   void dispatch_aio_flush(C_FlushRequestT *flush_req);
   C_FlushRequest<ReplicatedWriteLog<ImageCtxT>>* make_flush_req(Context *on_finish);
-  void flush_new_sync_point(C_FlushRequestT *flush_req, Contexts &later);
+  void flush_new_sync_point(C_FlushRequestT *flush_req, DeferredContexts &later);
 
   void invalidate(Extents&& image_extents, Context *on_finish);
 

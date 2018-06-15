@@ -29,27 +29,29 @@ namespace rwl {
 typedef ReplicatedWriteLog<ImageCtx>::Extent Extent;
 typedef ReplicatedWriteLog<ImageCtx>::Extents Extents;
 
-BlockExtent block_extent(const uint64_t offset_bytes, const uint64_t length_bytes)
+const BlockExtent block_extent(const uint64_t offset_bytes, const uint64_t length_bytes)
 {
   return BlockExtent(offset_bytes / MIN_WRITE_SIZE,
 		     ((offset_bytes + length_bytes) / MIN_WRITE_SIZE) - 1);
 }
 
-BlockExtent block_extent(const Extent& image_extent)
+const BlockExtent block_extent(const Extent& image_extent)
 {
   return block_extent(image_extent.first, image_extent.second);
 }
 
-Extent image_extent(const BlockExtent& block_extent)
+const Extent image_extent(const BlockExtent& block_extent)
 {
   return Extent(block_extent.block_start * MIN_WRITE_SIZE,
 		(block_extent.block_end - block_extent.block_start + 1) * MIN_WRITE_SIZE);
 }
 
-/* Defer a set of Contexts until destruct/exit */
+/* Defer a set of Contexts until destruct/exit. Used for deferring
+ * work on a given thread until a required lock is dropped. */
 class DeferredContexts {
+private:
+  std::vector<Context*> contexts;
 public:
-  Contexts contexts;
   ~DeferredContexts() {
     finish_contexts(nullptr, contexts, 0);
   }
@@ -58,11 +60,11 @@ public:
   }
 };
 
-BlockExtent WriteLogPmemEntry::block_extent() {
+const BlockExtent WriteLogPmemEntry::block_extent() {
   return BlockExtent(librbd::cache::rwl::block_extent(image_offset_bytes, write_bytes));
 }
 
-BlockExtent WriteLogEntry::block_extent() { return ram_entry.block_extent(); }
+const BlockExtent WriteLogEntry::block_extent() { return ram_entry.block_extent(); }
 void WriteLogEntry::add_reader() { reader_count++; }
 void WriteLogEntry::remove_reader() { reader_count--; }
 
@@ -481,7 +483,7 @@ bool WriteLogMap::WriteLogMapEntryCompare::operator()(const WriteLogMapEntry &lh
   return false;
 }
 
-WriteLogMapEntry WriteLogMap::block_extent_to_map_key(BlockExtent &block_extent) {
+WriteLogMapEntry WriteLogMap::block_extent_to_map_key(const BlockExtent &block_extent) {
   return WriteLogMapEntry(block_extent);
 }
 
@@ -627,6 +629,9 @@ public:
     first_block = 0;
     last_block = 0;
     if (extents.empty()) return;
+    /* These extents refer to image offsets between first_image_byte
+     * and last_image_byte, inclusive, but we don't guarantee here
+     * that they address all of those bytes. There may be gaps. */
     first_image_byte = extents.front().first;
     last_image_byte = first_image_byte + extents.front().second;
     for (auto &extent : extents) {
@@ -1942,7 +1947,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
        * writes. A group of sequenced writes may be safely flushed concurrently
        * if they all arrived before any of them completed.
        */
-      flush_new_sync_point(nullptr, on_exit.contexts);
+      flush_new_sync_point(nullptr, on_exit);
     }
     write_req->m_op_set =
       make_unique<WriteLogOperationSetT>(*this, now, m_current_sync_point, m_persist_on_flush,
@@ -2048,7 +2053,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
     /* The prior sync point is done, so we'll schedule append here */
     write_req->m_do_early_flush =
       !(write_req->m_detained || write_req->m_deferred || write_req->m_op_set->m_persist_on_flush);
-    on_exit.contexts.push_back(schedule_append_ctx);
+    on_exit.add(schedule_append_ctx);
   }
 }
 
@@ -2278,7 +2283,7 @@ C_FlushRequest<ReplicatedWriteLog<I>>* ReplicatedWriteLog<I>::make_flush_req(Con
 /* Make a new sync point and flush the previous during initialization, when there may or may
  * not be a previous sync point */
 template <typename I>
-void ReplicatedWriteLog<I>::init_flush_new_sync_point(Contexts &later) {
+void ReplicatedWriteLog<I>::init_flush_new_sync_point(DeferredContexts &later) {
   assert(m_lock.is_locked_by_me());
   assert(!m_initialized); /* Don't use this after init */
 
@@ -2291,7 +2296,7 @@ void ReplicatedWriteLog<I>::init_flush_new_sync_point(Contexts &later) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequestT *flush_req, Contexts &later) {
+void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequestT *flush_req, DeferredContexts &later) {
   assert(m_lock.is_locked_by_me());
 
   if (!flush_req) {
@@ -2338,7 +2343,7 @@ void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequestT *flush_req, Con
    * now has its finisher. If the sub is already complete, activation will
    * complete the Gather. The finisher will acquire m_lock, so we'll activate
    * this when we release m_lock.*/
-  later.push_back(new FunctionContext([this, to_append](int r) {
+  later.add(new FunctionContext([this, to_append](int r) {
 	to_append->m_sync_point_persist->activate();
       }));
 
@@ -2411,7 +2416,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
 	 */
 	/* If there have been writes since the last sync point ... */
 	if (m_current_sync_point->log_entry->m_writes) {
-	  flush_new_sync_point(flush_req, post_unlock.contexts);
+	  flush_new_sync_point(flush_req, post_unlock);
 	} else {
 	  /* There have been no writes to the current sync point. */
 	  if (m_current_sync_point->earlier_sync_point) {
@@ -2502,7 +2507,7 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
  * Begin a new sync point
  */
 template <typename I>
-void ReplicatedWriteLog<I>::new_sync_point(Contexts &later) {
+void ReplicatedWriteLog<I>::new_sync_point(DeferredContexts &later) {
   CephContext *cct = m_image_ctx.cct;
   std::shared_ptr<SyncPointT> old_sync_point = m_current_sync_point;
   std::shared_ptr<SyncPointT> new_sync_point;
@@ -2532,7 +2537,7 @@ void ReplicatedWriteLog<I>::new_sync_point(Contexts &later) {
     }
     /* This sync point will acquire no more sub-ops. Activation needs
      * to acquire m_lock, so defer to later*/
-    later.push_back(new FunctionContext(
+    later.add(new FunctionContext(
       [this, old_sync_point](int r) {
 	old_sync_point->m_prior_log_entries_persisted->activate();
       }));
@@ -2788,7 +2793,7 @@ void ReplicatedWriteLog<I>::arm_periodic_stats() {
  *
  */
 template <typename I>
-void ReplicatedWriteLog<I>::load_existing_entries(Contexts &later) {
+void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
   struct WriteLogPmemEntry *pmem_log_entries = D_RW(D_RW(pool_root)->log_entries);
@@ -2929,7 +2934,7 @@ void ReplicatedWriteLog<I>::load_existing_entries(Contexts &later) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, Contexts &later) {
+void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
   TOID(struct WriteLogPoolRoot) pool_root;
@@ -3076,7 +3081,7 @@ void ReplicatedWriteLog<I>::init(Context *on_finish) {
     [this, on_finish](int r) {
       if (r >= 0) {
 	DeferredContexts later;
-	rwl_init(on_finish, later.contexts);
+	rwl_init(on_finish, later);
 	periodic_stats();
       } else {
 	/* Don't init RWL if layer below failed to init */
@@ -3450,7 +3455,7 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
       auto candidate = m_dirty_log_entries.front();
       bool flushable = can_flush_entry(candidate);
       if (flushable) {
-	post_unlock.contexts.push_back(construct_flush_entry_ctx(candidate));
+	post_unlock.add(construct_flush_entry_ctx(candidate));
 	flushed++;
       }
       if (flushable || !candidate->ram_entry.is_write()) {
@@ -3668,7 +3673,7 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
 	/* We're throwing everything away, but we want the last entry
 	 * to be a sync point so we can cleanly resume. */
 	auto flush_req = make_flush_req(ctx);
-	flush_new_sync_point(flush_req, on_exit.contexts);
+	flush_new_sync_point(flush_req, on_exit);
       });
   BlockExtent invalidate_block_extent(block_extent(invalidate_extent));
   detain_guarded_request(GuardedRequest(invalidate_block_extent.block_start,
