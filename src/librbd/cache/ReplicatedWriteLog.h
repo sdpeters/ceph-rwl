@@ -355,6 +355,7 @@ public:
 
 typedef std::list<std::shared_ptr<WriteLogEntry>> WriteLogEntries;
 typedef std::list<std::shared_ptr<GenericLogEntry>> GenericLogEntries;
+typedef std::vector<std::shared_ptr<GenericLogEntry>> GenericLogEntriesVector;
 
 /**** Write log entries end ****/
 

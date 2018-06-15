@@ -1189,7 +1189,7 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 	    ops_to_append = ops_appended_together;
 	  }
 	  std::advance(last_in_batch, ops_to_append);
-	  ops.splice(ops.begin(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
+	  ops.splice(ops.end(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
 	  ops_remain = true; /* Always check again before leaving */
 	  //ops_remain = !m_ops_to_append.empty();
 	  //ldout(m_image_ctx.cct, 20) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
@@ -1284,7 +1284,7 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
 	}
 	//ldout(m_image_ctx.cct, 20) << "should flush " << ops_to_flush << dendl;
 	std::advance(last_in_batch, ops_to_flush);
-	ops.splice(ops.begin(), m_ops_to_flush, m_ops_to_flush.begin(), last_in_batch);
+	ops.splice(ops.end(), m_ops_to_flush, m_ops_to_flush.begin(), last_in_batch);
 	ops_remain = !m_ops_to_flush.empty();
 	//ldout(m_image_ctx.cct, 20) << "flushing " << ops.size() << ", " << m_ops_to_flush.size() << " remain" << dendl;
       } else {
@@ -3445,7 +3445,7 @@ bool ReplicatedWriteLog<I>::can_retire_entry(std::shared_ptr<GenericLogEntry> lo
 template <typename I>
 bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx) {
   CephContext *cct = m_image_ctx.cct;
-  GenericLogEntries retiring_entries;
+  GenericLogEntriesVector retiring_entries;
   uint32_t initial_first_valid_entry;
   uint32_t first_valid_entry;
 
