@@ -113,7 +113,6 @@ SyncPointLogOperation<T>::~SyncPointLogOperation() { }
 template <typename T>
 void SyncPointLogOperation<T>::appending() {
   assert(sync_point);
-  std::vector<Context*> on_append;
   {
     Mutex::Locker locker(rwl.m_lock);
     if (!sync_point->m_appending) {
@@ -121,9 +120,11 @@ void SyncPointLogOperation<T>::appending() {
 				     << "] appending" << dendl;
       sync_point->m_appending = true;
     }
-    on_append.swap(sync_point->m_on_sync_point_appending);
+    for (auto &ctx : sync_point->m_on_sync_point_appending) {
+      rwl.m_work_queue.queue(ctx);
+    }
+    sync_point->m_on_sync_point_appending.clear();
   }
-  finish_contexts(rwl.m_image_ctx.cct, on_append);
 }
 
 template <typename T>
@@ -147,8 +148,10 @@ void SyncPointLogOperation<T>::complete(int result) {
   appending();
 
   /* This flush request will be one of these contexts */
-  finish_contexts(rwl.m_image_ctx.cct,
-		  sync_point->m_on_sync_point_persisted, result);
+  for (auto &ctx : sync_point->m_on_sync_point_persisted) {
+    rwl.m_work_queue.queue(ctx, result);
+  }
+  sync_point->m_on_sync_point_persisted.clear();
 }
 
 template <typename T>
@@ -751,10 +754,9 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
    * read. The buffers we insert here refer directly to regions of various
    * write log entry data buffers.
    *
-   * TBD: Locking. These buffer objects hold a reference on those
-   * write log entries to prevent them from being retired from the log
-   * while the read is completing. The WriteLogEntry references are
-   * released by the buffer destructor.
+   * Locking: These buffer objects hold a reference on the write log entries
+   * they refer to. Log entries can't be retired until there are no references.
+   * The WriteLogEntry references are released by the buffer destructor.
    */
   for (auto &extent : image_extents) {
     uint64_t extent_offset = 0;
@@ -1923,7 +1925,13 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
       /* Create new sync point and persist the previous one. This sequenced
        * write will bear a sync gen number shared with no already completed
        * writes. A group of sequenced writes may be safely flushed concurrently
-       * if they all arrived before any of them completed.
+       * if they all arrived before any of them completed. We'll insert one on
+       * an aio_flush() from the application. Here we're inserting one to cap
+       * the number of bytes and writes per sync point. When the application is
+       * not issuing flushes, we insert sync points to record some ovserved
+       * write concurrency information that enables us to safely issue >1 flush
+       * write (for writes observed here to have been in flight simultaneously)
+       * at a time in persist-on-write mode.
        */
       flush_new_sync_point(nullptr, on_exit);
     }
@@ -1992,8 +2000,13 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
   /*
    * Entries are added to m_log_entries in alloc_op_log_entries() when their
    * order is established. They're added to m_dirty_log_entries when the write
-   * completes to all replicas (they must not be flushed before then, and
-   * shouldn't be read until then either).
+   * completes to all replicas. They must not be flushed before then. We don't
+   * prevent the application from reading these before they persist. If we
+   * supported coherent shared access, that might be a problem (the write could
+   * fail after another initiator had read it). As it is the cost of running
+   * reads through the block guard (and exempting them from the barrier, which
+   * doesn't need to apply to them) to prevent reading before the previous
+   * write of that data persists doesn't seem justified.
    */
 
   if (write_req->m_op_set->m_persist_on_flush) {
@@ -2023,10 +2036,23 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
   Mutex::Locker locker(m_lock);
   if (!write_req->m_op_set->m_persist_on_flush &&
       write_req->m_op_set->sync_point->earlier_sync_point) {
+    /* In persist-on-write mode, we defer the append of this write until the
+     * previous sync point is appending (meaning all the writes before it are
+     * persisted and that previous sync point can now appear in the log). Since
+     * we insert sync points in persist-on-write mode when writes have already
+     * completed to the current sync point, this limits us to one inserted sync
+     * point in flight at a time,and gives the next inserted sync point some
+     * time to accumulate a few writes if they arrive soon. Without this we can
+     * insert an absurd number of sync points, each with one or two
+     * writes. That uses a lot of log entries, and limits flushing to very few
+     * writes at a time. */
     write_req->m_do_early_flush = false;
     write_req->m_op_set->sync_point->earlier_sync_point->m_on_sync_point_appending.push_back(schedule_append_ctx);
   } else {
-    /* The prior sync point is done, so we'll schedule append here */
+    /* The prior sync point is done, so we'll schedule append here. If this is
+     * persist-on-write, and probably still the caller's thread, we'll use this
+     * caller's thread to perform the persist & replication of the payload
+     * buffer. */
     write_req->m_do_early_flush =
       !(write_req->m_detained || write_req->m_deferred || write_req->m_op_set->m_persist_on_flush);
     on_exit.add(schedule_append_ctx);
