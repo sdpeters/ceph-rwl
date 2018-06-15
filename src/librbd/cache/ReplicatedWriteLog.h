@@ -154,12 +154,7 @@ class ReplicatedWriteLog;
 namespace rwl {
 typedef std::list<Context *> Contexts;
 
-static const uint32_t MIN_WRITE_SIZE = 1;
-static const uint32_t BLOCK_SIZE = MIN_WRITE_SIZE;
-static const uint32_t MIN_MIN_WRITE_ALLOC_SIZE = 512;
-static const uint32_t MIN_WRITE_ALLOC_SIZE =
-  (MIN_WRITE_SIZE > MIN_MIN_WRITE_ALLOC_SIZE ?
-   MIN_WRITE_SIZE : MIN_MIN_WRITE_ALLOC_SIZE);
+static const uint32_t MIN_WRITE_ALLOC_SIZE = 512;
 /* Enables use of dedicated finishers for some RWL work */
 static const bool use_finishers = false;
 
@@ -582,18 +577,16 @@ public:
 };
 
 struct GuardedRequest {
+  const BlockExtent block_extent;
+  GuardedRequestFunctionContext *on_guard_acquire; /* Work to do when guard on range obtained */
+  const bool barrier = false; /* This is a barrier request */
+  bool current_barrier = false; /* This is the currently active barrier */
   bool detained = false;
   bool queued = false; /* Queued for barrier */
-  uint64_t first_block_num;
-  uint64_t last_block_num;
-  GuardedRequestFunctionContext *on_guard_acquire; /* Work to do when guard on range obtained */
-  bool barrier = false; /* This is a barrier request */
-  bool current_barrier = false; /* This is the currently active barrier */
 
-  GuardedRequest(uint64_t first_block_num, uint64_t last_block_num,
+  GuardedRequest(const BlockExtent block_extent,
 		 GuardedRequestFunctionContext *on_guard_acquire, bool barrier = false)
-    : first_block_num(first_block_num), last_block_num(last_block_num),
-      on_guard_acquire(on_guard_acquire), barrier(barrier) {
+    : block_extent(block_extent), on_guard_acquire(on_guard_acquire), barrier(barrier) {
   }
   friend std::ostream &operator<<(std::ostream &os,
 				  const GuardedRequest &r) {
@@ -601,8 +594,8 @@ struct GuardedRequest {
        << "current_barrier=" << r.current_barrier << ", "
        << "detained=" << r.detained << ", "
        << "queued=" << r.queued << ", "
-       << "first_block_num=" << r.first_block_num << ", "
-       << "last_block_num=" << r.last_block_num;
+       << "block_extent.block_start=" << r.block_extent.block_start << ", "
+       << "block_extent.block_start=" << r.block_extent.block_end;
     return os;
   };
 };

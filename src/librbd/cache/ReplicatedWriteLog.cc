@@ -29,10 +29,20 @@ namespace rwl {
 typedef ReplicatedWriteLog<ImageCtx>::Extent Extent;
 typedef ReplicatedWriteLog<ImageCtx>::Extents Extents;
 
+/*
+ * A BlockExtent identifies a range by first and last.
+ *
+ * An Extent ("image extent") identifies a range by start and length.
+ *
+ * The ImageCache interface is defined in terms of image extents, and
+ * requires no alignment of the beginning or end of the extent. We
+ * convert between image and block extents here using a "block size"
+ * of 1.
+ */
 const BlockExtent block_extent(const uint64_t offset_bytes, const uint64_t length_bytes)
 {
-  return BlockExtent(offset_bytes / MIN_WRITE_SIZE,
-		     ((offset_bytes + length_bytes) / MIN_WRITE_SIZE) - 1);
+  return BlockExtent(offset_bytes,
+		     offset_bytes + length_bytes - 1);
 }
 
 const BlockExtent block_extent(const Extent& image_extent)
@@ -42,8 +52,8 @@ const BlockExtent block_extent(const Extent& image_extent)
 
 const Extent image_extent(const BlockExtent& block_extent)
 {
-  return Extent(block_extent.block_start * MIN_WRITE_SIZE,
-		(block_extent.block_end - block_extent.block_start + 1) * MIN_WRITE_SIZE);
+  return Extent(block_extent.block_start,
+		block_extent.block_end - block_extent.block_start + 1);
 }
 
 /* Defer a set of Contexts until destruct/exit. Used for deferring
@@ -487,22 +497,6 @@ WriteLogMapEntry WriteLogMap::block_extent_to_map_key(const BlockExtent &block_e
   return WriteLogMapEntry(block_extent);
 }
 
-bool is_block_aligned(const Extent &extent) {
-  if (extent.first % MIN_WRITE_SIZE != 0 || extent.second % MIN_WRITE_SIZE != 0) {
-    return false;
-  }
-  return true;
-}
-
-bool is_block_aligned(const Extents &image_extents) {
-  for (auto &extent : image_extents) {
-    if (!is_block_aligned(extent)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 /**
  * A request that can be deferred in a BlockGuard to sequence
  * overlapping operations.
@@ -611,23 +605,17 @@ public:
   uint64_t total_bytes;
   uint64_t first_image_byte;
   uint64_t last_image_byte;
-  uint64_t first_block;
-  uint64_t last_block;
   friend std::ostream &operator<<(std::ostream &os,
 				  const ExtentsSummary &s) {
     os << "total_bytes=" << s.total_bytes << ", "
        << "first_image_byte=" << s.first_image_byte << ", "
-       << "last_image_byte=" << s.last_image_byte << ", "
-       << "first_block=" << s.first_block << ", "
-       << "last_block=" << s.last_block<< "";
+       << "last_image_byte=" << s.last_image_byte << "";
     return os;
   };
   ExtentsSummary(const ExtentsType &extents) {
     total_bytes = 0;
     first_image_byte = 0;
     last_image_byte = 0;
-    first_block = 0;
-    last_block = 0;
     if (extents.empty()) return;
     /* These extents refer to image offsets between first_image_byte
      * and last_image_byte, inclusive, but we don't guarantee here
@@ -643,8 +631,12 @@ public:
 	last_image_byte = extent.first + extent.second;
       }
     }
-    first_block = first_image_byte / MIN_WRITE_SIZE;
-    last_block = last_image_byte / MIN_WRITE_SIZE;
+  }
+  const BlockExtent block_extent() {
+    return BlockExtent(first_image_byte, last_image_byte);
+  }
+  const Extent image_extent() {
+    return image_extent(block_extent);
   }
 };
 
@@ -744,18 +736,6 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
   assert(m_initialized);
   bl->clear();
   m_perfcounter->inc(l_librbd_rwl_rd_req, 1);
-
-  // TODO: Handle unaligned IO:
-  // - Inflate read extents to block bounds, and submit onward
-  // - On read completion, discard leading/trailing buffer to match unaligned request
-  if (!is_block_aligned(image_extents)) {
-    lderr(cct) << "unaligned read fails" << dendl;
-    for (auto &extent : image_extents) {
-      lderr(cct) << "start: " << extent.first << " length: " << extent.second << dendl;
-    }
-    on_finish->complete(-EINVAL);
-    return;
-  }
 
   // TODO handle fadvise flags
 
@@ -868,13 +848,11 @@ BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_helper(GuardedRequ
   assert(m_blockguard_lock.is_locked_by_me());
   ldout(cct, 20) << dendl;
 
-  int r = m_write_log_guard.detain({req.first_block_num, req.last_block_num},
-				   &req, &cell);
+  int r = m_write_log_guard.detain(req.block_extent, &req, &cell);
   assert(r>=0);
   if (r > 0) {
     ldout(cct, 20) << "detaining guarded request due to in-flight requests: "
-		   << "start=" << req.first_block_num << ", "
-		   << "end=" << req.last_block_num << dendl;
+		   << "req=" << req << dendl;
     return nullptr;
   }
 
@@ -1951,9 +1929,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
     }
     write_req->m_op_set =
       make_unique<WriteLogOperationSetT>(*this, now, m_current_sync_point, m_persist_on_flush,
-					BlockExtent(write_req->m_image_extents_summary.first_block,
-						    write_req->m_image_extents_summary.last_block),
-					set_complete);
+					 write_req->m_image_extents_summary.block_extent(), set_complete);
     assert(write_req->m_resources.allocated);
     auto allocation = write_req->m_resources.buffers.begin();
     for (auto &extent : write_req->m_image_extents) {
@@ -2062,7 +2038,6 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
 				      bufferlist&& bl,
 				      int fadvise_flags,
 				      Context *on_finish) {
-  CephContext *cct = m_image_ctx.cct;
   utime_t now = ceph_clock_now();
   m_perfcounter->inc(l_librbd_rwl_wr_req, 1);
 
@@ -2073,23 +2048,6 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
       on_finish->complete(-EROFS);
       return;
     }
-  }
-
-  // TODO: Handle unaligned IO.
-  //
-  // - Inflate write extent to block bounds
-  // - Submit inflated write to blockguard
-  // - After blockguard dispatch reads through RWL for each unaligned extent edge
-  // - Reads complete to a gather
-  // - On read completion, write request is adjusted to block bounds using read data
-  // - Dispatch write request normally, appending completion context to discard read buffers
-  if (!is_block_aligned(image_extents)) {
-    lderr(cct) << "unaligned write fails" << dendl;
-    for (auto &extent : image_extents) {
-      lderr(cct) << "start: " << extent.first << " length: " << extent.second << dendl;
-    }
-    on_finish->complete(-EINVAL);
-    return;
   }
 
   auto *write_req =
@@ -2112,8 +2070,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
       alloc_and_dispatch_io_req(write_req);
     });
 
-  detain_guarded_request(GuardedRequest(write_req->m_image_extents_summary.first_block,
-					write_req->m_image_extents_summary.last_block,
+  detain_guarded_request(GuardedRequest(write_req->m_image_extents_summary.block_extent(),
 					guarded_ctx));
 }
 
@@ -2121,7 +2078,6 @@ template <typename I>
 void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 					bool skip_partial_discard, Context *on_finish) {
   Extent discard_extent = {offset, length};
-  Extent adjusted_discard_extent;
   m_perfcounter->inc(l_librbd_rwl_discard, 1);
 
   CephContext *cct = m_image_ctx.cct;
@@ -2137,18 +2093,6 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
       return;
     }
   }
-
-  /* We get adjusted_discard_extent adjusted to the enclosing block bounds (by
-   * converting from image extent to block extant and back). We'll use
-   * adjusted_discard_extent for the block guard, and the invalidate from RWL.
-   * We'll pass the original discard_extent down to the image. */
-  if (!is_block_aligned(discard_extent)) {
-    ldout(cct, 20) << "aligning discard to block size" << dendl;
-    adjusted_discard_extent = image_extent(block_extent(discard_extent));
-  } else {
-    adjusted_discard_extent = discard_extent;
-  }
-
 
   // TBD: Discard without flushing. Append a discard entry to the log, and
   // put the entry in the map. On read, extents that match discard entries are
@@ -2174,10 +2118,9 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
   // (possibly unpredictable) content.
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext(
-      [this, skip_partial_discard, on_finish, discard_extent, adjusted_discard_extent](BlockGuardCell *cell, bool detained) {
+      [this, skip_partial_discard, on_finish, discard_extent](BlockGuardCell *cell, bool detained) {
 	CephContext *cct = m_image_ctx.cct;
 	ldout(cct, 6) << "discard_extent=" << discard_extent << " "
-		      << "adjusted_discard_extent=" << adjusted_discard_extent << " "
 		      << "cell=" << cell << dendl;
 
 	assert(cell);
@@ -2188,7 +2131,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 	    release_guarded_request(cell);
 	  });
 	ctx = new FunctionContext(
-	  [this, skip_partial_discard, on_finish, discard_extent, adjusted_discard_extent, ctx](int r) {
+	  [this, skip_partial_discard, on_finish, discard_extent, ctx](int r) {
 	    Context *next_ctx = ctx;
 	    if (r < 0) {
 	      /* Override on_finish status with this error */
@@ -2201,7 +2144,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 					   skip_partial_discard, next_ctx);
 	  });
 	ctx = new FunctionContext(
-	  [this, skip_partial_discard, on_finish, discard_extent, adjusted_discard_extent, ctx](int r) {
+	  [this, skip_partial_discard, on_finish, discard_extent, ctx](int r) {
 	    Context *next_ctx = ctx;
 	    if (r < 0) {
 	      /* Override on_finish status with this error */
@@ -2210,17 +2153,14 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 		});
 	    }
 	    /* Invalidate from RWL */
-	    invalidate({adjusted_discard_extent}, next_ctx);
+	    invalidate({discard_extent}, next_ctx);
 	  });
 	flush(ctx);
     });
 
-  ldout(cct, 6) << "discard_extent=" << discard_extent << " "
-		<< "adjusted_discard_extent=" << adjusted_discard_extent << dendl;
-  BlockExtent discard_block_extent(block_extent(adjusted_discard_extent));
-  detain_guarded_request(GuardedRequest(discard_block_extent.block_start,
-					discard_block_extent.block_end,
-					guarded_ctx));
+  ldout(cct, 6) << "discard_extent=" << discard_extent << dendl;
+  BlockExtent discard_block_extent(block_extent(discard_extent));
+  detain_guarded_request(GuardedRequest(discard_block_extent, guarded_ctx));
 }
 
 template <typename I>
@@ -2435,8 +2375,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
       release_guarded_request(cell);
     });
 
-  detain_guarded_request(GuardedRequest(flush_req->m_image_extents_summary.first_block,
-					flush_req->m_image_extents_summary.last_block,
+  detain_guarded_request(GuardedRequest(flush_req->m_image_extents_summary.block_extent(),
 					guarded_ctx, true));
 }
 
@@ -3025,7 +2964,8 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
       return;
     }
     if (D_RO(pool_root)->block_size != MIN_WRITE_ALLOC_SIZE) {
-      lderr(cct) << "Pool block size is " << D_RO(pool_root)->block_size << " expected " << MIN_WRITE_ALLOC_SIZE << dendl;
+      lderr(cct) << "Pool block size is " << D_RO(pool_root)->block_size
+		 << " expected " << MIN_WRITE_ALLOC_SIZE << dendl;
       on_finish->complete(-EINVAL);
       return;
     }
@@ -3620,7 +3560,6 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
   ldout(cct, 20) << __func__ << ":" << dendl;
 
   assert(m_initialized);
-  assert(is_block_aligned(invalidate_extent));
 
   /* Invalidate must pass through block guard to ensure all layers of cache are
    * consistently invalidated. This ensures no in-flight write leaves some
@@ -3676,8 +3615,7 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
 	flush_new_sync_point(flush_req, on_exit);
       });
   BlockExtent invalidate_block_extent(block_extent(invalidate_extent));
-  detain_guarded_request(GuardedRequest(invalidate_block_extent.block_start,
-					invalidate_block_extent.block_end,
+  detain_guarded_request(GuardedRequest(invalidate_block_extent,
 					guarded_ctx));
 }
 
@@ -3698,9 +3636,8 @@ void ReplicatedWriteLog<I>::invalidate(Extents&& image_extents,
     uint64_t image_offset = extent.first;
     uint64_t image_length = extent.second;
     while (image_length > 0) {
-      uint32_t block_start_offset = image_offset % MIN_WRITE_SIZE;
-      uint32_t block_end_offset = min(block_start_offset + image_length,
-				      uint64_t(MIN_WRITE_SIZE));
+      uint32_t block_start_offset = image_offset;
+      uint32_t block_end_offset = block_start_offset + image_length;
       uint32_t block_length = block_end_offset - block_start_offset;
 
       image_offset += block_length;

@@ -22,7 +22,8 @@ public:
   CephContext *m_cct;
 };
 
-uint64_t BlockToBytes(int n) { return n * BLOCK_SIZE; }
+/* Block sie is 1 */
+uint64_t BlockToBytes(int n) { return n; }
     
 TEST_F(TestWriteLogMap, Simple) {
   WriteLogMap map(m_cct);
