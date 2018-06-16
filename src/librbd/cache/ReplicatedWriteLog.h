@@ -153,6 +153,7 @@ class ReplicatedWriteLog;
 
 namespace rwl {
 typedef std::list<Context *> Contexts;
+typedef std::vector<Context*> ContextsV;
 
 static const uint32_t MIN_WRITE_ALLOC_SIZE = 512;
 /* Enables use of dedicated finishers for some RWL work */
@@ -490,6 +491,7 @@ class WriteLogOperation : public GenericLogOperation<T> {
 private:
   Mutex m_lock;
 public:
+  using GenericLogOperation<T>::rwl;
   std::shared_ptr<WriteLogEntry> log_entry;
   bufferlist bl;
   pobj_action *buffer_alloc_action = nullptr;
@@ -519,13 +521,19 @@ public:
 };
 
 template <typename T>
-using WriteLogOperations = std::list<std::shared_ptr<WriteLogOperation<T>>>;
+using GenericLogOperationSharedPtr = std::shared_ptr<GenericLogOperation<T>>;
 
 template <typename T>
-using GenericLogOperations = std::list<std::shared_ptr<GenericLogOperation<T>>>;
+using GenericLogOperations = std::list<GenericLogOperationSharedPtr<T>>;
 
 template <typename T>
-using GenericLogOperationsVector = std::vector<std::shared_ptr<GenericLogOperation<T>>>;
+using GenericLogOperationsVector = std::vector<GenericLogOperationSharedPtr<T>>;
+
+template <typename T>
+using WriteLogOperationSharedPtr = std::shared_ptr<WriteLogOperation<T>>;
+
+template <typename T>
+using WriteLogOperations = std::list<WriteLogOperationSharedPtr<T>>;
 
 template <typename T>
 class WriteLogOperationSet {
@@ -539,7 +547,7 @@ public:
   Context *m_on_ops_appending;
   C_Gather *m_extent_ops_persist;
   Context *m_on_ops_persist;
-  GenericLogOperations<T> operations;
+  GenericLogOperationsVector<T> operations;
   utime_t m_dispatch_time; /* When set created */
   std::shared_ptr<SyncPoint<T>> sync_point;
   WriteLogOperationSet(T &rwl, const utime_t dispatched, std::shared_ptr<SyncPoint<T>> sync_point,
@@ -696,6 +704,7 @@ public:
   using This = ReplicatedWriteLog<ImageCtxT>;
   using SyncPointT = rwl::SyncPoint<This>;
   using GenericLogOperationT = rwl::GenericLogOperation<This>;
+  using GenericLogOperationSharedPtrT = rwl::GenericLogOperationSharedPtr<This>;
   using WriteLogOperationT = rwl::WriteLogOperation<This>;
   using WriteLogOperationSetT = rwl::WriteLogOperationSet<This>;
   using SyncPointLogOperationT = rwl::SyncPointLogOperation<This>;
@@ -900,10 +909,12 @@ private:
   void alloc_and_dispatch_io_req(C_BlockIORequestT *write_req);
   void dispatch_aio_write(C_WriteRequestT *write_req);
   void append_scheduled_ops(void);
+  void schedule_append(GenericLogOperationsVectorT &ops);
   void schedule_append(GenericLogOperationsT &ops);
+  void schedule_append(GenericLogOperationSharedPtrT op);
   void flush_then_append_scheduled_ops(void);
-  void schedule_flush_and_append(GenericLogOperationsT &ops);
-  void flush_pmem_buffer(GenericLogOperationsT &ops);
+  void schedule_flush_and_append(GenericLogOperationsVectorT &ops);
+  void flush_pmem_buffer(GenericLogOperationsVectorT &ops);
   void alloc_op_log_entries(GenericLogOperationsT &ops);
   void flush_op_log_entries(GenericLogOperationsVectorT &ops);
   int append_op_log_entries(GenericLogOperationsT &ops);

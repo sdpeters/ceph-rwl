@@ -177,7 +177,7 @@ void WriteLogOperation<T>::appending() {
     on_write_append = nullptr;
   }
   if (on_append) {
-    on_append->complete(0);
+    rwl.m_work_queue.queue(on_append);
   }
 }
 
@@ -1225,22 +1225,15 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
  * all prior log entries are persisted everywhere.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsT &ops)
+void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationSharedPtrT op)
 {
-  GenericLogOperationsVectorT appending;
   bool need_finisher;
-
-  /* Prepare copy of ops list to mark appending after the input list is moved
-   * to m_ops_to_append */
-  //ldout(m_image_ctx.cct, 20) << dendl;
-  appending.reserve(ops.size());
-  std::copy(std::begin(ops), std::end(ops), std::back_inserter(appending));
 
   {
     Mutex::Locker locker(m_lock);
 
     need_finisher = m_ops_to_append.empty() && !m_appending;
-    m_ops_to_append.splice(m_ops_to_append.end(), std::move(ops));
+    m_ops_to_append.push_back(op);
   }
 
   if (need_finisher) {
@@ -1258,8 +1251,22 @@ void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsT &ops)
     }
   }
 
-  for (auto op : appending) {
-    op->appending();
+  op->appending();
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsVectorT &ops)
+{
+  for (auto &op : ops) {
+    schedule_append(op);
+  }
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsT &ops)
+{
+  for (auto &op : ops) {
+    schedule_append(op);
   }
 }
 
@@ -1298,8 +1305,10 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
      * which is fine. We're unconcerned with completion order until we
      * get to the log message append step. */
     if (ops.size()) {
-      flush_pmem_buffer(ops);
-      schedule_append(ops);
+      GenericLogOperationsVectorT ops_vec;
+      std::move(std::begin(ops), std::end(ops), std::back_inserter(ops_vec));
+      flush_pmem_buffer(ops_vec);
+      schedule_append(ops_vec);
     }
   } while (ops_remain);
   append_scheduled_ops();
@@ -1310,15 +1319,16 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
  * then get their log entries appended.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsT &ops)
+void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsVectorT &ops)
 {
+  GenericLogOperationsT to_flush(ops.begin(), ops.end());
   bool need_finisher;
   //ldout(m_image_ctx.cct, 20) << dendl;
   {
     Mutex::Locker locker(m_lock);
 
     need_finisher = m_ops_to_flush.empty();
-    m_ops_to_flush.splice(m_ops_to_flush.end(), ops);
+    m_ops_to_flush.splice(m_ops_to_flush.end(), to_flush);
   }
 
   if (need_finisher) {
@@ -1341,7 +1351,7 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsT &ops
  * Flush the pmem regions for the data blocks of a set of operations
  */
 template <typename I>
-void ReplicatedWriteLog<I>::flush_pmem_buffer(GenericLogOperationsT &ops)
+void ReplicatedWriteLog<I>::flush_pmem_buffer(GenericLogOperationsVectorT &ops)
 {
   for (auto &operation : ops) {
     if (operation->is_write()) {
@@ -2215,9 +2225,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_flush(C_FlushRequestT *flush_req) {
   flush_req->op = std::make_shared<SyncPointLogOperationT>(*this, flush_req->to_append, now);
 
   m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
-  GenericLogOperationsT ops;
-  ops.push_back(flush_req->op);
-  schedule_append(ops);
+  schedule_append(flush_req->op);
 }
 
 template <typename I>
