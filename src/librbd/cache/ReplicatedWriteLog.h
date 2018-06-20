@@ -1075,8 +1075,6 @@ private:
   bool alloc_discard_resources(C_DiscardRequestT *discard_req);
   void dispatch_discard(C_DiscardRequestT *discard_req);
 
-  void invalidate(Extents&& image_extents, Context *on_finish);
-
   void complete_write_req(C_WriteRequestT *write_req, const int result);
   void dispatch_deferred_writes(void);
   bool alloc_write_resources(C_WriteRequestT *write_req);

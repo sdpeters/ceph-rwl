@@ -3826,35 +3826,6 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
 					guarded_ctx));
 }
 
-template <typename I>
-void ReplicatedWriteLog<I>::invalidate(Extents&& image_extents,
-				       Context *on_finish) {
-  CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << __func__ << ": image_extents=" << image_extents << dendl;
-
-  assert(m_initialized);
-  // TODO - Selective invalidate does not pass through block guard, but
-  // whatever calls it must. Appends invalidate entry. Affected region is
-  // treated as a RWL miss on reads, and are not flushable (each affected entry
-  // will be updated to indicate what portion was invalidated). Even in OWB
-  // flushing, portions of writes occluded by invalidates must not be
-  // flushed. Selective invalidate is *not* passed on to cache below.
-  for (auto &extent : image_extents) {
-    uint64_t image_offset = extent.first;
-    uint64_t image_length = extent.second;
-    while (image_length > 0) {
-      uint32_t block_start_offset = image_offset;
-      uint32_t block_end_offset = block_start_offset + image_length;
-      uint32_t block_length = block_end_offset - block_start_offset;
-
-      image_offset += block_length;
-      image_length -= block_length;
-    }
-  }
-
-  on_finish->complete(0);
-}
-
 /*
  * Internal flush - will actually flush the RWL.
  *
