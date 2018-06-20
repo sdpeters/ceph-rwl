@@ -165,7 +165,7 @@ TEST_F(TestWriteLogMap, OverlapMiddle) {
   int numfound = found0.size();
   ASSERT_EQ(1, numfound);
   ASSERT_EQ(e0, found0.front().log_entry);
-  WriteLogEntries entries = map.find_log_entries(BlockExtent(0, 0));
+  GeneralWriteLogEntries entries = map.find_log_entries(BlockExtent(0, 0));
   int entriesfound = entries.size();
   ASSERT_EQ(1, entriesfound);
   ASSERT_EQ(e0, entries.front());

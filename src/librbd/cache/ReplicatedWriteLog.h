@@ -200,29 +200,37 @@ struct WriteLogPmemEntry {
   TOID(uint8_t) write_data;
   struct {
     uint8_t entry_valid :1; /* if 0, this entry is free */
-    uint8_t sync_point :1;  /* No data. No write sequence
-			       number. Marks sync point for this sync
-			       gen number */
+    uint8_t sync_point :1;  /* No data. No write sequence number. Marks sync
+			       point for this sync gen number */
     uint8_t sequenced :1;   /* write sequence number is valid */
     uint8_t has_data :1;    /* write_data field is valid (else ignore) */
-    uint8_t unmap :1;       /* has_data will be 0 if this
-			       is an unmap */
+    uint8_t discard :1;     /* has_data will be 0 if this is a discard */
+    uint8_t writesame :1;   /* ws_datalen indicates length of data at write_bytes */
   };
-  uint32_t entry_index = 0; /* For debug consistency check. Can be removed if we need teh space */
-  uint32_t _unused = 0;     /* Padding to 64 bytes */
+  uint32_t ws_datalen = 0;  /* Length of data buffer (writesame only) */
+  uint32_t entry_index = 0; /* For debug consistency check. Can be removed if
+			     * we need teh space */
   WriteLogPmemEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes),
-      entry_valid(0), sync_point(0), sequenced(0), has_data(0), unmap(0) {
+      entry_valid(0), sync_point(0), sequenced(0), has_data(0), discard(0), writesame(0) {
   }
   const BlockExtent block_extent();
   bool is_sync_point() {
     return sync_point;
   }
-  bool is_unmap() {
-    return unmap;
+  bool is_discard() {
+    return discard;
+  }
+  bool is_writesame() {
+    return writesame;
   }
   bool is_write() {
-    return !is_sync_point() && !is_unmap();
+    /* Log entry is a basic write */
+    return !is_sync_point() && !is_discard() && !is_writesame();
+  }
+  bool is_writer() {
+    /* Log entry is any type that writes data */
+    return is_write() || is_discard() || is_writesame();
   }
   friend std::ostream &operator<<(std::ostream &os,
 				  const WriteLogPmemEntry &entry) {
@@ -230,11 +238,13 @@ struct WriteLogPmemEntry {
        << "sync_point=" << (bool)entry.sync_point << ", "
        << "sequenced=" << (bool)entry.sequenced << ", "
        << "has_data=" << (bool)entry.has_data << ", "
-       << "unmap=" << (bool)entry.unmap << ", "
+       << "discard=" << (bool)entry.discard << ", "
+       << "writesame=" << (bool)entry.writesame << ", "
        << "sync_gen_number=" << entry.sync_gen_number << ", "
        << "write_sequence_number=" << entry.write_sequence_number << ", "
        << "image_offset_bytes=" << entry.image_offset_bytes << ", "
        << "write_bytes=" << entry.write_bytes << ", "
+       << "ws_datalen=" << entry.ws_datalen << ", "
        << "entry_index=" << entry.entry_index;
     return os;
   };
@@ -258,7 +268,9 @@ struct WriteLogPoolRoot {
 };
 
 class SyncPointLogEntry;
+class GeneralWriteLogEntry;
 class WriteLogEntry;
+class DiscardLogEntry;
 class GenericLogEntry {
 public:
   WriteLogPmemEntry ram_entry;
@@ -270,6 +282,16 @@ public:
   virtual ~GenericLogEntry() { };
   GenericLogEntry(const GenericLogEntry&) = delete;
   GenericLogEntry &operator=(const GenericLogEntry&) = delete;
+  bool is_sync_point() { return ram_entry.is_sync_point(); }
+  bool is_discard() { return ram_entry.is_discard(); }
+  bool is_writesame() { return ram_entry.is_writesame(); }
+  bool is_write() { return ram_entry.is_write(); }
+  bool is_writer() { return ram_entry.is_writer(); }
+  virtual const GenericLogEntry* get_log_entry() = 0;
+  virtual const SyncPointLogEntry* get_sync_point_log_entry() { return nullptr; }
+  virtual const GeneralWriteLogEntry* get_gen_write_log_entry() { return nullptr; }
+  virtual const WriteLogEntry* get_write_log_entry() { return nullptr; }
+  virtual const DiscardLogEntry* get_discard_log_entry() { return nullptr; }
   virtual std::ostream &format(std::ostream &os) const {
     os << "ram_entry=[" << ram_entry << "], "
        << "pmem_entry=" << (void*)pmem_entry << ", "
@@ -297,6 +319,8 @@ public:
   }
   SyncPointLogEntry(const SyncPointLogEntry&) = delete;
   SyncPointLogEntry &operator=(const SyncPointLogEntry&) = delete;
+  const GenericLogEntry* get_log_entry() { return get_sync_point_log_entry(); }
+  const SyncPointLogEntry* get_sync_point_log_entry() { return this; }
   std::ostream &format(std::ostream &os) const {
     os << "(Sync Point) ";
     GenericLogEntry::format(os);
@@ -312,27 +336,26 @@ public:
   }
 };
 
-class WriteLogEntry : public GenericLogEntry {
+class GeneralWriteLogEntry : public GenericLogEntry {
+private:
+  friend class WriteLogEntry;
+  friend class DiscardLogEntry;
 public:
-  uint8_t *pmem_buffer = nullptr;
   uint32_t referring_map_entries = 0;
-  std::atomic<int> reader_count = {0};
-  /* TODO: occlusion by subsequent writes */
-  /* TODO: flush state: portions flushed, in-progress flushes */
   bool flushing = false;
-  bool flushed = false; // or invalidated
+  bool flushed = false; /* or invalidated */
   std::shared_ptr<SyncPointLogEntry> sync_point_entry;
-  WriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry, const uint64_t image_offset_bytes, const uint64_t write_bytes)
+  GeneralWriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
+		       const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : GenericLogEntry(image_offset_bytes, write_bytes), sync_point_entry(sync_point_entry) { }
-  WriteLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
+  GeneralWriteLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : GenericLogEntry(image_offset_bytes, write_bytes), sync_point_entry(nullptr) { }
-  WriteLogEntry(const WriteLogEntry&) = delete;
-  WriteLogEntry &operator=(const WriteLogEntry&) = delete;
+  GeneralWriteLogEntry(const GeneralWriteLogEntry&) = delete;
+  GeneralWriteLogEntry &operator=(const GeneralWriteLogEntry&) = delete;
   const BlockExtent block_extent();
-  void add_reader();
-  void remove_reader();
+  const GenericLogEntry* get_log_entry() { return get_gen_write_log_entry(); }
+  const GeneralWriteLogEntry* get_gen_write_log_entry() { return this; }
   std::ostream &format(std::ostream &os) const {
-    os << "(Write) ";
     GenericLogEntry::format(os);
     os << ", "
        << "sync_point_entry=[";
@@ -343,9 +366,36 @@ public:
     }
     os << "], "
        << "referring_map_entries=" << referring_map_entries << ", "
-       << "reader_count=" << reader_count << ", "
        << "flushing=" << flushing << ", "
        << "flushed=" << flushed;
+    return os;
+  };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const GeneralWriteLogEntry &entry) {
+    return entry.format(os);
+  }
+};
+
+class WriteLogEntry : public GeneralWriteLogEntry {
+public:
+  uint8_t *pmem_buffer = nullptr;
+  std::atomic<int> reader_count = {0};
+  WriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
+		const uint64_t image_offset_bytes, const uint64_t write_bytes)
+    : GeneralWriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) { }
+  WriteLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
+    : GeneralWriteLogEntry(nullptr, image_offset_bytes, write_bytes) { }
+  WriteLogEntry(const WriteLogEntry&) = delete;
+  WriteLogEntry &operator=(const WriteLogEntry&) = delete;
+  const BlockExtent block_extent();
+  void add_reader();
+  void remove_reader();
+  const GenericLogEntry* get_log_entry() { return get_write_log_entry(); }
+  const WriteLogEntry* get_write_log_entry() { return this; }
+  std::ostream &format(std::ostream &os) const {
+    os << "(Write) ";
+    GeneralWriteLogEntry::format(os);
+    os << "reader_count=" << reader_count;
     return os;
   };
   friend std::ostream &operator<<(std::ostream &os,
@@ -354,6 +404,36 @@ public:
   }
 };
 
+class DiscardLogEntry : public GeneralWriteLogEntry {
+public:
+  DiscardLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
+		  const uint64_t image_offset_bytes, const uint64_t write_bytes)
+    : GeneralWriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) {
+    ram_entry.discard = 1;
+  }
+  DiscardLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
+    : GeneralWriteLogEntry(nullptr, image_offset_bytes, write_bytes) {
+    ram_entry.discard = 1;
+  }
+  DiscardLogEntry(const DiscardLogEntry&) = delete;
+  DiscardLogEntry &operator=(const DiscardLogEntry&) = delete;
+  const BlockExtent block_extent();
+  void add_reader();
+  void remove_reader();
+  const GenericLogEntry* get_log_entry() { return get_discard_log_entry(); }
+  const DiscardLogEntry* get_discard_log_entry() { return this; }
+  std::ostream &format(std::ostream &os) const {
+    os << "(Discard) ";
+    GeneralWriteLogEntry::format(os);
+    return os;
+  };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const DiscardLogEntry &entry) {
+    return entry.format(os);
+  }
+};
+
+typedef std::list<std::shared_ptr<GeneralWriteLogEntry>> GeneralWriteLogEntries;
 typedef std::list<std::shared_ptr<WriteLogEntry>> WriteLogEntries;
 typedef std::list<std::shared_ptr<GenericLogEntry>> GenericLogEntries;
 typedef std::vector<std::shared_ptr<GenericLogEntry>> GenericLogEntriesVector;
@@ -419,17 +499,23 @@ template <typename T>
 class WriteLogOperation;
 
 template <typename T>
+class GeneralWriteLogOperation;
+
+template <typename T>
 class SyncPointLogOperation;
+
+template <typename T>
+class DiscardLogOperation;
 
 template <typename T>
 class GenericLogOperation {
 public:
   T &rwl;
-  utime_t m_dispatch_time; // When op created
-  utime_t m_buf_persist_time; // When buffer persist begins
+  utime_t m_dispatch_time;         // When op created
+  utime_t m_buf_persist_time;      // When buffer persist begins
   utime_t m_buf_persist_comp_time; // When buffer persist completes
-  utime_t m_log_append_time; // When log append begins
-  utime_t m_log_append_comp_time; // When log append completes
+  utime_t m_log_append_time;       // When log append begins
+  utime_t m_log_append_comp_time;  // When log append completes
   GenericLogOperation(T &rwl, const utime_t dispatch_time);
   virtual ~GenericLogOperation() { };
   GenericLogOperation(const GenericLogOperation&) = delete;
@@ -448,11 +534,17 @@ public:
   }
   virtual const std::shared_ptr<GenericLogEntry> get_log_entry() = 0;
   virtual const std::shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return nullptr; }
+  virtual const std::shared_ptr<GeneralWriteLogEntry> get_gen_write_log_entry() { return nullptr; }
   virtual const std::shared_ptr<WriteLogEntry> get_write_log_entry() { return nullptr; }
+  virtual const std::shared_ptr<DiscardLogEntry> get_discard_log_entry() { return nullptr; }
   virtual void appending() = 0;
   virtual void complete(int r) = 0;
   virtual bool is_write() { return false; }
   virtual bool is_sync_point() { return false; }
+  virtual bool is_discard() { return false; }
+  virtual bool is_writesame() { return false; }
+  virtual bool is_writing_op() { return false; }
+  virtual GeneralWriteLogOperation<T> *get_gen_write_op() { return nullptr; };
 };
 
 template <typename T>
@@ -487,25 +579,63 @@ public:
 };
 
 template <typename T>
-class WriteLogOperation : public GenericLogOperation<T> {
+class GeneralWriteLogOperation : public GenericLogOperation<T> {
 private:
+  friend class WriteLogOperation<T>;
+  friend class DiscardLogOperation<T>;
   Mutex m_lock;
 public:
   using GenericLogOperation<T>::rwl;
+  std::shared_ptr<SyncPoint<T>> sync_point;
+  Context *on_write_append = nullptr;  /* Completion for things waiting on this
+					* write's position in the log to be
+					* guaranteed */
+  Context *on_write_persist = nullptr; /* Completion for things waiting on this
+					* write to persist */
+  GeneralWriteLogOperation(T &rwl,
+			   std::shared_ptr<SyncPoint<T>> sync_point,
+			   const utime_t dispatch_time);
+  ~GeneralWriteLogOperation();
+  GeneralWriteLogOperation(const GeneralWriteLogOperation&) = delete;
+  GeneralWriteLogOperation &operator=(const GeneralWriteLogOperation&) = delete;
+  std::ostream &format(std::ostream &os) const {
+    GenericLogOperation<T>::format(os);
+    return os;
+  };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const GeneralWriteLogOperation<T> &op) {
+    return op.format(os);
+  }
+  GeneralWriteLogOperation<T> *get_gen_write_op() { return this; };
+  bool is_writing_op() { return true; }
+  void appending();
+  void complete(int r);
+};
+
+template <typename T>
+class WriteLogOperation : public GeneralWriteLogOperation<T> {
+public:
+  using GenericLogOperation<T>::rwl;
+  using GeneralWriteLogOperation<T>::m_lock;
+  using GeneralWriteLogOperation<T>::sync_point;
+  using GeneralWriteLogOperation<T>::on_write_append;
+  using GeneralWriteLogOperation<T>::on_write_persist;
   std::shared_ptr<WriteLogEntry> log_entry;
   bufferlist bl;
   pobj_action *buffer_alloc_action = nullptr;
-  Context *on_write_append; /* Completion for things waiting on this write's position in the log to be guaranteed */
-  Context *on_write_persist; /* Completion for things waiting on this write to persist */
   WriteLogOperation(WriteLogOperationSet<T> &set, const uint64_t image_offset_bytes, const uint64_t write_bytes);
   ~WriteLogOperation();
   WriteLogOperation(const WriteLogOperation&) = delete;
   WriteLogOperation &operator=(const WriteLogOperation&) = delete;
   std::ostream &format(std::ostream &os) const {
     os << "(Write) ";
-    GenericLogOperation<T>::format(os);
-    os << "log_entry=[" << *log_entry << "], "
-       << "bl=[" << bl << "],"
+    GeneralWriteLogOperation<T>::format(os);
+    if (log_entry) {
+      os << "log_entry=[" << *log_entry << "], ";
+    } else {
+      os << "log_entry=nullptr, ";
+    }
+    os << "bl=[" << bl << "],"
        << "buffer_alloc_action=" << buffer_alloc_action;
     return os;
   };
@@ -516,8 +646,42 @@ public:
   const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_write_log_entry(); }
   const std::shared_ptr<WriteLogEntry> get_write_log_entry() { return log_entry; }
   bool is_write() { return true; }
-  void appending();
-  void complete(int r);
+};
+
+template <typename T>
+class DiscardLogOperation : public GeneralWriteLogOperation<T> {
+public:
+  using GenericLogOperation<T>::rwl;
+  using GeneralWriteLogOperation<T>::m_lock;
+  using GeneralWriteLogOperation<T>::sync_point;
+  using GeneralWriteLogOperation<T>::on_write_append;
+  using GeneralWriteLogOperation<T>::on_write_persist;
+  std::shared_ptr<DiscardLogEntry> log_entry;
+  DiscardLogOperation(T &rwl,
+		      std::shared_ptr<SyncPoint<T>> sync_point,
+		      const uint64_t image_offset_bytes,
+		      const uint64_t write_bytes,
+		      const utime_t dispatch_time);
+  ~DiscardLogOperation();
+  DiscardLogOperation(const DiscardLogOperation&) = delete;
+  DiscardLogOperation &operator=(const DiscardLogOperation&) = delete;
+  std::ostream &format(std::ostream &os) const {
+    os << "(Discard) ";
+    GeneralWriteLogOperation<T>::format(os);
+    if (log_entry) {
+      os << "log_entry=[" << *log_entry << "], ";
+    } else {
+      os << "log_entry=nullptr, ";
+    }
+    return os;
+  };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const DiscardLogOperation<T> &op) {
+    return op.format(os);
+  }
+  const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_discard_log_entry(); }
+  const std::shared_ptr<DiscardLogEntry> get_discard_log_entry() { return log_entry; }
+  bool is_discard() { return true; }
 };
 
 template <typename T>
@@ -616,17 +780,17 @@ typedef librbd::BlockGuard<GuardedRequest> WriteLogGuard;
 #define dout_prefix *_dout << "librbd::cache::rwl::WriteLogMap: " << this << " " \
 			   <<  __func__ << ": "
 /**
- * WriteLogMap: maps block extents to WriteLogEntries
+ * WriteLogMap: maps block extents to GeneralWriteLogEntries
  *
  */
-/* A WriteLogMapEntry refers to a portion of a WriteLogEntry */
+/* A WriteLogMapEntry refers to a portion of a GeneralWriteLogEntry */
 struct WriteLogMapEntry {
   BlockExtent block_extent;
-  std::shared_ptr<WriteLogEntry> log_entry;
+  std::shared_ptr<GeneralWriteLogEntry> log_entry;
 
   WriteLogMapEntry(BlockExtent block_extent,
-		   std::shared_ptr<WriteLogEntry> log_entry = nullptr);
-  WriteLogMapEntry(std::shared_ptr<WriteLogEntry> log_entry);
+		   std::shared_ptr<GeneralWriteLogEntry> log_entry = nullptr);
+  WriteLogMapEntry(std::shared_ptr<GeneralWriteLogEntry> log_entry);
   friend std::ostream &operator<<(std::ostream &os,
 				  WriteLogMapEntry &e) {
     os << "block_extent=" << e.block_extent << ", "
@@ -642,21 +806,21 @@ public:
   WriteLogMap(const WriteLogMap&) = delete;
   WriteLogMap &operator=(const WriteLogMap&) = delete;
 
-  void add_log_entry(std::shared_ptr<WriteLogEntry> log_entry);
-  void add_log_entries(WriteLogEntries &log_entries);
-  void remove_log_entry(std::shared_ptr<WriteLogEntry> log_entry);
-  void remove_log_entries(WriteLogEntries &log_entries);
-  WriteLogEntries find_log_entries(BlockExtent block_extent);
+  void add_log_entry(std::shared_ptr<GeneralWriteLogEntry> log_entry);
+  void add_log_entries(GeneralWriteLogEntries &log_entries);
+  void remove_log_entry(std::shared_ptr<GeneralWriteLogEntry> log_entry);
+  void remove_log_entries(GeneralWriteLogEntries &log_entries);
+  GeneralWriteLogEntries find_log_entries(BlockExtent block_extent);
   WriteLogMapEntries find_map_entries(BlockExtent block_extent);
 
 private:
-  void add_log_entry_locked(std::shared_ptr<WriteLogEntry> log_entry);
-  void remove_log_entry_locked(std::shared_ptr<WriteLogEntry> log_entry);
+  void add_log_entry_locked(std::shared_ptr<GeneralWriteLogEntry> log_entry);
+  void remove_log_entry_locked(std::shared_ptr<GeneralWriteLogEntry> log_entry);
   void add_map_entry_locked(WriteLogMapEntry &map_entry);
   void remove_map_entry_locked(WriteLogMapEntry &map_entry);
   void adjust_map_entry_locked(WriteLogMapEntry &map_entry, BlockExtent &new_extent);
   void split_map_entry_locked(WriteLogMapEntry &map_entry, BlockExtent &removed_extent);
-  WriteLogEntries find_log_entries_locked(BlockExtent &block_extent);
+  GeneralWriteLogEntries find_log_entries_locked(BlockExtent &block_extent);
   WriteLogMapEntries find_map_entries_locked(BlockExtent &block_extent);
 
   struct WriteLogMapEntryCompare {
@@ -693,6 +857,9 @@ struct C_WriteRequest;
 template <typename T>
 struct C_FlushRequest;
 
+template <typename T>
+struct C_DiscardRequest;
+
 /**
  * Prototype pmem-based, client-side, replicated write log
  */
@@ -708,11 +875,13 @@ public:
   using WriteLogOperationT = rwl::WriteLogOperation<This>;
   using WriteLogOperationSetT = rwl::WriteLogOperationSet<This>;
   using SyncPointLogOperationT = rwl::SyncPointLogOperation<This>;
+  using DiscardLogOperationT = rwl::DiscardLogOperation<This>;
   using GenericLogOperationsT = rwl::GenericLogOperations<This>;
   using GenericLogOperationsVectorT = rwl::GenericLogOperationsVector<This>;
   using C_BlockIORequestT = C_BlockIORequest<This>;
   using C_WriteRequestT = C_WriteRequest<This>;
   using C_FlushRequestT = C_FlushRequest<This>;
+  using C_DiscardRequestT = C_DiscardRequest<This>;
   ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<ImageCtxT> *lower);
   ~ReplicatedWriteLog();
   ReplicatedWriteLog(const ReplicatedWriteLog&) = delete;
@@ -744,13 +913,16 @@ public:
 private:
   friend class rwl::SyncPoint<This>;
   friend class rwl::GenericLogOperation<This>;
+  friend class rwl::GeneralWriteLogOperation<This>;
   friend class rwl::WriteLogOperation<This>;
   friend class rwl::WriteLogOperationSet<This>;
+  friend class rwl::DiscardLogOperation<This>;
   friend class rwl::SyncPointLogOperation<This>;
   friend class rwl::C_GuardedBlockIORequest<This>;
   friend class C_BlockIORequest<This>;
   friend class C_WriteRequest<This>;
   friend class C_FlushRequest<This>;
+  friend class C_DiscardRequest<This>;
   typedef std::function<void(uint64_t)> ReleaseBlock;
   typedef std::function<void(BlockGuard::BlockIO)> AppendDetainedBlock;
   typedef std::list<C_WriteRequest<This> *> C_WriteRequests;
@@ -899,6 +1071,9 @@ private:
   void dispatch_aio_flush(C_FlushRequestT *flush_req);
   C_FlushRequest<ReplicatedWriteLog<ImageCtxT>>* make_flush_req(Context *on_finish);
   void flush_new_sync_point(C_FlushRequestT *flush_req, DeferredContexts &later);
+
+  bool alloc_discard_resources(C_DiscardRequestT *discard_req);
+  void dispatch_discard(C_DiscardRequestT *discard_req);
 
   void invalidate(Extents&& image_extents, Context *on_finish);
 
