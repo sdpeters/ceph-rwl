@@ -260,7 +260,9 @@ struct WriteLogPoolRoot {
     uint64_t _u64;
   } header;
   TOID(struct WriteLogPmemEntry) log_entries;   /* contiguous array of log entries */
-  uint32_t pool_size;
+  uint64_t pool_size;
+  uint64_t flushed_sync_gen;     /* All writing entries with this or a lower
+				  * sync gen number are flushed. */
   uint32_t block_size;		 /* block size */
   uint32_t num_log_entries;
   uint32_t first_free_entry;     /* Entry following the newest valid entry */
@@ -307,12 +309,17 @@ public:
 
 class SyncPointLogEntry : public GenericLogEntry {
 public:
-  /* Writes using this sync gen number */
+  /* Writing entries using this sync gen number */
   std::atomic<unsigned int> m_writes = {0};
-  /* Total bytes for all writes using this sync gen number */
+  /* Total bytes for all writing entries using this sync gen number */
   std::atomic<uint64_t> m_bytes = {0};
-  /* Writes using this sync gen number that have completed to the application */
+  /* Writing entries using this sync gen number that have completed to the application */
   std::atomic<unsigned int> m_writes_completed = {0};
+  /* Writing entries using this sync gen number that have completed flushing to the writeback interface */
+  std::atomic<unsigned int> m_writes_flushed = {0};
+  /* All writing entries using all prior sync gen numbers have been flushed */
+  std::atomic<bool> m_prior_sync_point_flushed = {true};
+  std::shared_ptr<SyncPointLogEntry> m_next_sync_point_entry = nullptr;
   SyncPointLogEntry(const uint64_t sync_gen_number) {
     ram_entry.sync_gen_number = sync_gen_number;
     ram_entry.sync_point = 1;
@@ -327,7 +334,10 @@ public:
     os << ", "
        << "m_writes=" << m_writes << ", "
        << "m_bytes=" << m_bytes << ", "
-       << "m_writes_completed=" << m_writes_completed;
+       << "m_writes_completed=" << m_writes_completed << ", "
+       << "m_writes_flushed=" << m_writes_flushed << ", "
+       << "m_prior_sync_point_flushed=" << m_prior_sync_point_flushed << ", "
+       << "m_next_sync_point_entry=" << m_next_sync_point_entry;
     return os;
   };
   friend std::ostream &operator<<(std::ostream &os,
@@ -952,6 +962,8 @@ private:
   uint64_t m_bytes_cached = 0;    /* Total bytes used in write buffers */
   uint64_t m_bytes_dirty = 0;     /* Total bytes yet to flush to RBD */
   uint64_t m_bytes_allocated_cap = 0;
+  /* All writes bearing this and all prior sync gen numbers are flushed */
+  uint64_t m_flushed_sync_gen = 0;
 
   utime_t m_last_alloc_fail;      /* Entry or buffer allocation fail seen */
   std::atomic<bool> m_alloc_failed_since_retire = {false};
@@ -1061,6 +1073,9 @@ private:
 
   bool can_flush_entry(const std::shared_ptr<GenericLogEntry> log_entry);
   Context *construct_flush_entry_ctx(const std::shared_ptr<GenericLogEntry> log_entry);
+  void persist_last_flushed_sync_gen(void);
+  bool handle_flushed_sync_point(std::shared_ptr<SyncPointLogEntry> log_entry);
+  void sync_point_writer_flushed(std::shared_ptr<SyncPointLogEntry> log_entry);
   void process_writeback_dirty_entries();
   bool can_retire_entry(const std::shared_ptr<GenericLogEntry> log_entry);
   bool retire_entries(const unsigned long int frees_per_tx = MAX_FREE_PER_TRANSACTION);

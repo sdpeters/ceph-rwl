@@ -149,11 +149,13 @@ void SyncPointLogOperation<T>::complete(int result) {
 
   {
     Mutex::Locker locker(rwl.m_lock);
-    /* This flush request will be one of these contexts */
+    /* The flush request that scheduled this op will be one of these
+     * contexts */
     for (auto &ctx : sync_point->m_on_sync_point_persisted) {
       rwl.m_work_queue.queue(ctx, result);
     }
     sync_point->m_on_sync_point_persisted.clear();
+    rwl.handle_flushed_sync_point(sync_point->log_entry);
   }
 }
 
@@ -2626,6 +2628,8 @@ void ReplicatedWriteLog<I>::new_sync_point(DeferredContexts &later) {
    * nullptr, but m_current_sync_gen may not be zero. */
   if (old_sync_point) {
     new_sync_point->earlier_sync_point = old_sync_point;
+    new_sync_point->log_entry->m_prior_sync_point_flushed = false;
+    old_sync_point->log_entry->m_next_sync_point_entry = new_sync_point->log_entry;
     old_sync_point->later_sync_point = new_sync_point;
     old_sync_point->m_final_op_sequence_num = m_last_op_sequence_num;
     if (!old_sync_point->m_appending) {
@@ -2643,7 +2647,8 @@ void ReplicatedWriteLog<I>::new_sync_point(DeferredContexts &later) {
   Context *sync_point_persist_ready = new_sync_point->m_sync_point_persist->new_sub();
   new_sync_point->m_prior_log_entries_persisted->
     set_finisher(new FunctionContext([this, new_sync_point, sync_point_persist_ready](int r) {
-	  ldout(m_image_ctx.cct, 20) << "Prior log entries persisted for sync point =[" << new_sync_point << "]" << dendl;
+	  ldout(m_image_ctx.cct, 20) << "Prior log entries persisted for sync point =["
+				     << new_sync_point << "]" << dendl;
 	  new_sync_point->m_prior_log_entries_persisted_result = r;
 	  new_sync_point->m_prior_log_entries_persisted_complete = true;
 	  sync_point_persist_ready->complete(r);
@@ -2689,9 +2694,9 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
   PerfHistogramCommon::axis_config_d op_hist_y_axis_count_config{
     "Number of items",
     PerfHistogramCommon::SCALE_LINEAR, ///< Request size in linear scale
-    0,                               ///< Start at 0
-    1,                             ///< Quantization unit is 512 bytes
-    32,                              ///< Writes up to >32k
+    0,                                 ///< Start at 0
+    1,                                 ///< Quantization unit is 512 bytes
+    32,                                ///< Writes up to >32k
   };
 
   plb.add_u64_counter(l_librbd_rwl_rd_req, "rd", "Reads");
@@ -2936,18 +2941,18 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
       highest_existing_sync_point = sync_point_entry;
       m_current_sync_gen = pmem_entry->sync_gen_number;
     } else if (pmem_entry->is_write()) {
-	ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
-				   << " is a write. pmem_entry=[" << *pmem_entry << "]" << dendl;
-	auto write_entry =
-	  std::make_shared<WriteLogEntry>(nullptr, pmem_entry->image_offset_bytes, pmem_entry->write_bytes);
-	write_entry->pmem_buffer = D_RW(pmem_entry->write_data);
-	log_entry = write_entry;
+      ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
+				 << " is a write. pmem_entry=[" << *pmem_entry << "]" << dendl;
+      auto write_entry =
+	std::make_shared<WriteLogEntry>(nullptr, pmem_entry->image_offset_bytes, pmem_entry->write_bytes);
+      write_entry->pmem_buffer = D_RW(pmem_entry->write_data);
+      log_entry = write_entry;
     } else if (pmem_entry->is_discard()) {
-	ldout(m_image_ctx.cct, 04) << "Entry " << entry_index
-				   << " is a discard. pmem_entry=[" << *pmem_entry << "]" << dendl;
-	auto discard_entry =
-	  std::make_shared<DiscardLogEntry>(nullptr, pmem_entry->image_offset_bytes, pmem_entry->write_bytes);
-	log_entry = discard_entry;
+      ldout(m_image_ctx.cct, 04) << "Entry " << entry_index
+				 << " is a discard. pmem_entry=[" << *pmem_entry << "]" << dendl;
+      auto discard_entry =
+	std::make_shared<DiscardLogEntry>(nullptr, pmem_entry->image_offset_bytes, pmem_entry->write_bytes);
+      log_entry = discard_entry;
     } else {
       lderr(m_image_ctx.cct) << "Unexpected entry type in entry " << entry_index
 			     << ", pmem_entry=[" << *pmem_entry << "]" << dendl;
@@ -2985,6 +2990,11 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
    * until this function returns.  */
   for (auto &kv : missing_sync_points) {
     ldout(m_image_ctx.cct, 5) << "Adding sync point " << kv.first << dendl;
+    if (0 == m_current_sync_gen) {
+      /* The unlikely case where the log contains writing entries, but no sync
+       * points (e.g. because they were all retired) */
+      m_current_sync_gen = kv.first-1;
+    }
     assert(kv.first == m_current_sync_gen+1);
     init_flush_new_sync_point(later);
     assert(kv.first == m_current_sync_gen);
@@ -2998,6 +3008,7 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
    *
    * Add writes to the write log map.
    */
+  std::shared_ptr<SyncPointLogEntry> previous_sync_point_entry = nullptr;
   for (auto &log_entry : m_log_entries)  {
     if (log_entry->ram_entry.is_writer()) {
       /* This entry is one of the types that write */
@@ -3017,15 +3028,14 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
 	sync_point_entry->m_bytes += gen_write_entry->ram_entry.write_bytes;
 	sync_point_entry->m_writes_completed++;
 	m_blocks_to_log_entries.add_log_entry(gen_write_entry);
-	/* TODO: only dirty if sync gen number is < flushed sync gen
-	 * in root object.  For now just flush everything
-	 * (again). Does this break crash consistency?  If so, we'll
-	 * have to update the flushed sync point on the root object
-	 * before proceeding to flush anything with a later sync gen
-	 * number, so there will be no re-flushes of writes from prior
-	 * sync points on recovery. */
-	m_dirty_log_entries.push_back(log_entry);
-	m_bytes_dirty += gen_write_entry->ram_entry.write_bytes;
+	/* This entry is only dirty if its sync gen number is > the flushed
+	 * sync gen number from the root object. */
+	if (gen_write_entry->ram_entry.sync_gen_number > m_flushed_sync_gen) {
+	  m_dirty_log_entries.push_back(log_entry);
+	  m_bytes_dirty += gen_write_entry->ram_entry.write_bytes;
+	} else {
+	  sync_point_entry->m_writes_flushed++;
+	}
 	if (log_entry->ram_entry.is_write()) {
 	  /* This entry is a basic write */
 	  uint64_t bytes_allocated = MIN_WRITE_ALLOC_SIZE;
@@ -3038,11 +3048,34 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
       }
     } else if (log_entry->ram_entry.is_sync_point()) {
       auto sync_point_entry = dynamic_pointer_cast<SyncPointLogEntry>(log_entry);
+      if (previous_sync_point_entry) {
+	previous_sync_point_entry->m_next_sync_point_entry = sync_point_entry;
+	if (previous_sync_point_entry->ram_entry.sync_gen_number > m_flushed_sync_gen) {
+	  sync_point_entry->m_prior_sync_point_flushed = false;
+	  assert(!previous_sync_point_entry->m_prior_sync_point_flushed ||
+		 (0 == previous_sync_point_entry->m_writes) ||
+		 (previous_sync_point_entry->m_writes > previous_sync_point_entry->m_writes_flushed));
+	} else {
+	  sync_point_entry->m_prior_sync_point_flushed = true;
+	  assert(previous_sync_point_entry->m_prior_sync_point_flushed);
+	  assert(previous_sync_point_entry->m_writes == previous_sync_point_entry->m_writes_flushed);
+	}
+	previous_sync_point_entry = sync_point_entry;
+      } else {
+	/* There are no previous sync points, so we'll consider them flushed */
+	sync_point_entry->m_prior_sync_point_flushed = true;
+      }
       ldout(m_image_ctx.cct, 5) << "Loaded to sync point=[" << *sync_point_entry << dendl;
     } else {
       lderr(m_image_ctx.cct) << "Unexpected entry type in entry=[" << *log_entry << "]" << dendl;
       assert(false);
     }
+  }
+  if (0 == m_current_sync_gen) {
+    /* If a re-opened log was completely flushed, we'll have found no sync point entries here,
+     * and not advanced m_current_sync_gen. Here we ensure it starts past the last flushed sync
+     * point recorded in the log. */
+    m_current_sync_gen = m_flushed_sync_gen;
   }
 }
 
@@ -3105,6 +3138,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
 	TX_ZALLOC(struct WriteLogPmemEntry,
 		  sizeof(struct WriteLogPmemEntry) * num_small_writes);
       D_RW(pool_root)->pool_size = m_log_pool_actual_size;
+      D_RW(pool_root)->flushed_sync_gen = m_flushed_sync_gen;
       D_RW(pool_root)->block_size = MIN_WRITE_ALLOC_SIZE;
       D_RW(pool_root)->num_log_entries = num_small_writes;
       D_RW(pool_root)->first_free_entry = m_first_free_entry;
@@ -3143,7 +3177,8 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
       on_finish->complete(-EINVAL);
       return;
     }
-    m_log_pool_actual_size= D_RO(pool_root)->pool_size;
+    m_log_pool_actual_size = D_RO(pool_root)->pool_size;
+    m_flushed_sync_gen = D_RO(pool_root)->flushed_sync_gen;
     m_total_log_entries = D_RO(pool_root)->num_log_entries;
     m_first_free_entry = D_RO(pool_root)->first_free_entry;
     m_first_valid_entry = D_RO(pool_root)->first_valid_entry;
@@ -3154,8 +3189,8 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
        * that case there would be zero free log entries. */
       m_free_log_entries = m_total_log_entries - (m_first_valid_entry - m_first_free_entry) -1;
     } else {
-      /* first_valid is <= first_free. If they are == we have zero valid log entries, and n-1 free
-       * log entries */
+      /* first_valid is <= first_free. If they are == we have zero valid log
+       * entries, and n-1 free log entries */
       m_free_log_entries = m_total_log_entries - (m_first_free_entry - m_first_valid_entry) -1;
     }
     size_t effective_pool_size = (size_t)(m_log_pool_config_size * USABLE_SIZE);
@@ -3163,10 +3198,12 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
     load_existing_entries(later);
   }
 
-  ldout(cct,1) << "pool " << m_log_pool_name << "has " << m_total_log_entries
+  ldout(cct,1) << "pool " << m_log_pool_name << " has " << m_total_log_entries
 	       << " log entries, " << m_free_log_entries << " of which are free."
 	       << " first_valid=" << m_first_valid_entry
-	       << ", first_free=" << m_first_free_entry << dendl;
+	       << ", first_free=" << m_first_free_entry
+	       << ", flushed_sync_gen=" << m_flushed_sync_gen
+	       << ", current_sync_gen=" << m_current_sync_gen << dendl;
   if (m_first_free_entry == m_first_valid_entry) {
     ldout(cct,1) << "write log is empty" << dendl;
   }
@@ -3459,10 +3496,100 @@ bool ReplicatedWriteLog<I>::can_flush_entry(std::shared_ptr<GenericLogEntry> log
     return false;
   }
 
+  auto gen_write_entry = log_entry->get_gen_write_log_entry();
+  if (gen_write_entry &&
+      !gen_write_entry->ram_entry.sequenced &&
+      (gen_write_entry->sync_point_entry &&
+       !gen_write_entry->sync_point_entry->completed)) {
+    /* Sync point for this unsequnced writing entry is not persisted */
+    return false;
+  }
+
   //auto write_entry = dynamic_pointer_cast<WriteLogEntry>(log_entry);
   return (log_entry->completed &&
 	  (m_flush_ops_in_flight <= IN_FLIGHT_FLUSH_WRITE_LIMIT) &&
 	  (m_flush_bytes_in_flight <= IN_FLIGHT_FLUSH_BYTES_LIMIT));
+}
+
+/* Update/persist the last flushed sync point in the log */
+template <typename I>
+void ReplicatedWriteLog<I>::persist_last_flushed_sync_gen(void)
+{
+  TOID(struct WriteLogPoolRoot) pool_root;
+  pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
+  uint64_t flushed_sync_gen;
+
+  Mutex::Locker append_locker(m_log_append_lock);
+  {
+    Mutex::Locker locker(m_lock);
+    flushed_sync_gen = m_flushed_sync_gen;
+  }
+
+  if (D_RO(pool_root)->flushed_sync_gen < flushed_sync_gen) {
+    ldout(m_image_ctx.cct, 02) << "flushed_sync_gen in log updated from "
+			       << D_RO(pool_root)->flushed_sync_gen << " to "
+			       << flushed_sync_gen << dendl;
+    //tx_start = ceph_clock_now();
+    TX_BEGIN(m_log_pool) {
+      D_RW(pool_root)->flushed_sync_gen = flushed_sync_gen;
+    } TX_ONCOMMIT {
+    } TX_ONABORT {
+      lderr(m_image_ctx.cct) << "failed to commit update of flushed sync point" << dendl;
+      assert(false);
+    } TX_FINALLY {
+    } TX_END;
+    //tx_end = ceph_clock_now();
+    //assert(last_retired_entry_index == (first_valid_entry - 1) % m_total_log_entries);
+  }
+}
+
+/* Returns true if the specified SyncPointLogEntry is considered flushed, and
+ * the log will be updated to reflect this. */
+template <typename I>
+bool ReplicatedWriteLog<I>::handle_flushed_sync_point(std::shared_ptr<SyncPointLogEntry> log_entry)
+{
+  assert(m_lock.is_locked_by_me());
+  assert(log_entry);
+
+  if ((log_entry->m_writes_flushed == log_entry->m_writes) &&
+      log_entry->completed && log_entry->m_next_sync_point_entry &&
+      log_entry->m_prior_sync_point_flushed) {
+    ldout(m_image_ctx.cct, 02) << "All writes flushed up to sync point="
+			       << *log_entry << dendl;
+    log_entry->m_next_sync_point_entry->m_prior_sync_point_flushed = true;
+    assert(m_flushed_sync_gen < log_entry->ram_entry.sync_gen_number);
+    m_flushed_sync_gen = log_entry->ram_entry.sync_gen_number;
+    m_async_op_tracker.start_op();
+    m_work_queue.queue(new FunctionContext(
+      [this, log_entry](int r) {
+	bool handled_by_next;
+	{
+	  Mutex::Locker locker(m_lock);
+	  handled_by_next = handle_flushed_sync_point(log_entry->m_next_sync_point_entry);
+	}
+	if (!handled_by_next) {
+	  persist_last_flushed_sync_gen();
+	}
+	m_async_op_tracker.finish_op();
+      }));
+    return true;
+  }
+  return false;
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::sync_point_writer_flushed(std::shared_ptr<SyncPointLogEntry> log_entry)
+{
+  assert(m_lock.is_locked_by_me());
+  assert(log_entry);
+  log_entry->m_writes_flushed++;
+
+  /* If this entry might be completely flushed, look closer */
+  if ((log_entry->m_writes_flushed == log_entry->m_writes) && log_entry->completed) {
+    ldout(m_image_ctx.cct, 02) << "All writes flushed for sync point="
+			       << *log_entry << dendl;
+    handle_flushed_sync_point(log_entry);
+  }
 }
 
 template <typename I>
@@ -3525,9 +3652,11 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 				 << cpp_strerror(r) << dendl;
 	  m_dirty_log_entries.push_front(gen_write_entry);
 	} else {
+	  assert(!gen_write_entry->flushed);
 	  gen_write_entry->flushed = true;
 	  assert(m_bytes_dirty >= gen_write_entry->ram_entry.write_bytes);
 	  m_bytes_dirty -= gen_write_entry->ram_entry.write_bytes;
+	  sync_point_writer_flushed(gen_write_entry->sync_point_entry);
 	  ldout(m_image_ctx.cct, 20) << "flushed: " << gen_write_entry
 	  << " invalidating=" << invalidating << dendl;
 	}
@@ -3697,11 +3826,22 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
     utime_t tx_end;
     /* Advance first valid entry and release buffers */
     {
+      uint64_t flushed_sync_gen;
       Mutex::Locker append_locker(m_log_append_lock);
+      {
+	Mutex::Locker locker(m_lock);
+	flushed_sync_gen = m_flushed_sync_gen;
+      }
       //uint32_t last_retired_entry_index;
 
       tx_start = ceph_clock_now();
       TX_BEGIN(m_log_pool) {
+	if (D_RO(pool_root)->flushed_sync_gen < flushed_sync_gen) {
+	  ldout(m_image_ctx.cct, 02) << "flushed_sync_gen in log updated from "
+				     << D_RO(pool_root)->flushed_sync_gen << " to "
+				     << flushed_sync_gen << dendl;
+	  D_RW(pool_root)->flushed_sync_gen = flushed_sync_gen;
+	}
 	D_RW(pool_root)->first_valid_entry = first_valid_entry;
 	for (auto &entry: retiring_entries) {
 	  //last_retired_entry_index = entry->log_entry_index;
