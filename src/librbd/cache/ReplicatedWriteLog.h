@@ -964,8 +964,6 @@ private:
   uint64_t m_bytes_cached = 0;    /* Total bytes used in write buffers */
   uint64_t m_bytes_dirty = 0;     /* Total bytes yet to flush to RBD */
   uint64_t m_bytes_allocated_cap = 0;
-  /* All writes bearing this and all prior sync gen numbers are flushed */
-  uint64_t m_flushed_sync_gen = 0;
 
   utime_t m_last_alloc_fail;      /* Entry or buffer allocation fail seen */
   std::atomic<bool> m_alloc_failed_since_retire = {false};
@@ -987,6 +985,8 @@ private:
   /* Starts at 0 on each sync gen increase. Incremented before applied
      to an operation */
   uint64_t m_last_op_sequence_num = 0;
+  /* All writes bearing this and all prior sync gen numbers are flushed */
+  uint64_t m_flushed_sync_gen = 0;
 
   bool m_persist_on_write_until_flush = true;
   bool m_persist_on_flush = false; /* If false, persist each write before completion */

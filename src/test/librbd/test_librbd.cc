@@ -1947,10 +1947,9 @@ TEST_F(TestLibRBD, TestIO)
     ASSERT_PASSED(aio_read_test_data, image, test_data, TEST_IO_SIZE * i, TEST_IO_SIZE, 0);
 
   // discard 2nd, 4th sections.
-  //if (!is_rbd_rwl_enabled()) {
-    ASSERT_PASSED(discard_test_data, image, TEST_IO_SIZE, TEST_IO_SIZE);
-    ASSERT_PASSED(aio_discard_test_data, image, TEST_IO_SIZE*3, TEST_IO_SIZE);
-    //}
+  ASSERT_PASSED(discard_test_data, image, TEST_IO_SIZE, TEST_IO_SIZE);
+  ASSERT_PASSED(aio_discard_test_data, image, TEST_IO_SIZE*3, TEST_IO_SIZE);
+
   ASSERT_PASSED(read_test_data, image, test_data,  0, TEST_IO_SIZE, 0);
   ASSERT_PASSED(read_test_data, image, skip_discard ? test_data : zero_data,
 		TEST_IO_SIZE, TEST_IO_SIZE, 0);
