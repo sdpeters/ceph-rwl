@@ -133,6 +133,7 @@ enum {
 
   l_librbd_rwl_flush,
   l_librbd_rwl_invalidate_cache,
+  l_librbd_rwl_invalidate_discard_cache,
 
   l_librbd_rwl_append_tx_t,
   l_librbd_rwl_retire_tx_t,
@@ -917,7 +918,8 @@ public:
   void init(Context *on_finish) override;
   void shut_down(Context *on_finish) override;
 
-  void invalidate(Context *on_finish) override;
+  void invalidate(Context *on_finish) override { invalidate(on_finish, false); };
+  void invalidate(Context *on_finish, bool discard_unflushed_writes=false);
   void flush(Context *on_finish) override;
 
 private:

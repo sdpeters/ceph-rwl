@@ -2521,12 +2521,13 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
 	  /* There have been no writes to the current sync point. */
 	  if (m_current_sync_point->earlier_sync_point) {
 	    /* If previous sync point hasn't completed, complete this flush
-	     * with the earlier sync point.  No alloc or dispatch needed. */
+	     * with the earlier sync point. No alloc or dispatch needed. */
 	    m_current_sync_point->earlier_sync_point->m_on_sync_point_persisted.push_back(flush_req);
 	    assert(m_current_sync_point->earlier_sync_point->m_append_scheduled);
 	  } else {
 	    /* The previous sync point has already completed and been
-	     * appended. This flush completes now. */
+	     * appended. The current sync point has no writes, so this flush
+	     * has nothing to wait for. This flush completes now. */
 	    post_unlock.add(flush_req);
 	  }
 	}
@@ -2782,6 +2783,7 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
 
   plb.add_u64_counter(l_librbd_rwl_flush, "flush", "Flush (flush RWL)");
   plb.add_u64_counter(l_librbd_rwl_invalidate_cache, "invalidate", "Invalidate RWL");
+  plb.add_u64_counter(l_librbd_rwl_invalidate_discard_cache, "discard", "Discard and invalidate RWL");
 
   plb.add_time_avg(l_librbd_rwl_append_tx_t, "append_tx_lat", "Log append transaction latency");
   plb.add_u64_counter_histogram(
@@ -3897,14 +3899,24 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
   return true;
 }
 
-/* Invalidates entire RWL. All entries are removed. Unflushed writes
- * are discarded. Consider flushing first. */
+/*
+ * Flushes and then invalidates entire RWL. On completion there will be no
+ * entries in the log. Until the next write, all subsequent reads will complete
+ * from the layer below.
+ *
+ * Flushing is skipped if discard_unflushed_writes is true, in which case
+ * unflushed writes are discarded instead of flushed.
+*/
 template <typename I>
-void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
+void ReplicatedWriteLog<I>::invalidate(Context *on_finish, bool discard_unflushed_writes) {
   CephContext *cct = m_image_ctx.cct;
-  Extent invalidate_extent = whole_volume_extent();
-  m_perfcounter->inc(l_librbd_rwl_invalidate_cache, 1);
   ldout(cct, 20) << __func__ << ":" << dendl;
+  if (discard_unflushed_writes) {
+    ldout(cct, 1) << "Write back cache discarded (not flushed)" << dendl;
+    m_perfcounter->inc(l_librbd_rwl_invalidate_discard_cache, 1);
+  } else {
+    m_perfcounter->inc(l_librbd_rwl_invalidate_cache, 1);
+  }
 
   assert(m_initialized);
 
@@ -3914,25 +3926,24 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
    * results. */
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext(
-      [this, on_finish, invalidate_extent](BlockGuardCell *cell, bool detained) {
+      [this, on_finish, discard_unflushed_writes](BlockGuardCell *cell, bool detained) {
 	DeferredContexts on_exit;
-	ldout(m_image_ctx.cct, 6) << "invalidate_extent=" << invalidate_extent << " "
-				  << "cell=" << cell << dendl;
-
+	ldout(m_image_ctx.cct, 6) << "cell=" << cell << dendl;
 	assert(cell);
 
 	Context *ctx = new FunctionContext(
-	  [this, cell, on_finish](int r) {
+	  [this, cell, discard_unflushed_writes, on_finish](int r) {
 	    Mutex::Locker locker(m_lock);
 	    m_invalidating = false;
-	    ldout(m_image_ctx.cct, 5) << "Done invalidating" << dendl;
+	    ldout(m_image_ctx.cct, 5) << "Done invalidating (discard="
+				      << discard_unflushed_writes << ")" << dendl;
 	    assert(m_log_entries.size() == 0);
 	    assert(m_dirty_log_entries.size() == 0);
 	    on_finish->complete(r);
 	    release_guarded_request(cell);
 	  });
 	ctx = new FunctionContext(
-	  [this, ctx](int r) {
+	  [this, ctx, discard_unflushed_writes](int r) {
 	    Context *next_ctx = ctx;
 	    if (r < 0) {
 	      /* Override on_finish status with this error */
@@ -3940,30 +3951,59 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
 		  ctx->complete(r);
 		});
 	    }
+	    {
+	      Mutex::Locker locker(m_lock);
+	      assert(m_dirty_log_entries.size() == 0);
+	      if (discard_unflushed_writes) {
+		assert(m_invalidating);
+	      } else {
+		/* If discard_unflushed_writes was false, we should only now be
+		 * setting m_invalidating. All writes are now flushed.  with
+		 * m_invalidating set, retire_entries() will proceed without
+		 * the normal limits that keep it from interfering with
+		 * appending new writes (we hold the block guard, so that can't
+		 * be hapening). */
+		assert(!m_invalidating);
+		ldout(m_image_ctx.cct, 5) << "Invalidating" << dendl;
+		m_invalidating = true;
+	      }
+	    }
 	    /* Discards all RWL entries */
 	    while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
 	    /* Invalidate from caches below */
 	    m_image_writeback->invalidate(next_ctx);
 	  });
 	ctx = new FunctionContext(
-	  [this, ctx](int r) {
-	    /* With m_invalidating set, flush discards everything in
-	     * the dirty entries list without writing them to OSDs. It
-	     * also waits for in-flihgt flushes to complete, and keeps
-	     * the flushing stats consistent. */
+	  [this, ctx, discard_unflushed_writes](int r) {
+	    /* If discard_unflushed_writes was true, m_invalidating should be
+	     * set now.
+	     *
+	     * With m_invalidating set, flush discards everything in the dirty
+	     * entries list without writing them to OSDs. It also waits for
+	     * in-flight flushes to complete, and keeps the flushing stats
+	     * consistent.
+	     *
+	     * If discard_unflushed_writes was false, this is a normal
+	     * flush. */
+	    {
+		Mutex::Locker locker(m_lock);
+		assert(m_invalidating == discard_unflushed_writes);
+	    }
 	    flush(ctx);
 	  });
-	ldout(m_image_ctx.cct, 5) << "Invalidating" << dendl;
 	Mutex::Locker locker(m_lock);
-	m_invalidating = true;
+	if (discard_unflushed_writes) {
+	  ldout(m_image_ctx.cct, 5) << "Invalidating" << dendl;
+	  m_invalidating = true;
+	}
 	/* We're throwing everything away, but we want the last entry
 	 * to be a sync point so we can cleanly resume. */
 	auto flush_req = make_flush_req(ctx);
 	flush_new_sync_point(flush_req, on_exit);
       });
-  BlockExtent invalidate_block_extent(block_extent(invalidate_extent));
+  BlockExtent invalidate_block_extent(block_extent(whole_volume_extent()));
   detain_guarded_request(GuardedRequest(invalidate_block_extent,
-					guarded_ctx));
+					guarded_ctx, true));
 }
 
 /*
