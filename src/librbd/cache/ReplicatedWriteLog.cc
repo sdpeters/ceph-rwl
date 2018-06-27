@@ -11,6 +11,7 @@
 #include "common/io_priority.h"
 #include "common/WorkQueue.h"
 #include "librbd/ImageCtx.h"
+#include "rwl/SharedPtrContext.h"
 #include <map>
 #include <vector>
 
@@ -540,7 +541,7 @@ WriteLogMapEntry WriteLogMap::block_extent_to_map_key(const BlockExtent &block_e
  * overlapping operations.
  */
 template <typename T>
-struct C_GuardedBlockIORequest : public Context {
+struct C_GuardedBlockIORequest : public SharedPtrContext {
 private:
   BlockGuardCell* m_cell = nullptr;
 public:
@@ -554,6 +555,9 @@ public:
   }
   C_GuardedBlockIORequest(const C_GuardedBlockIORequest&) = delete;
   C_GuardedBlockIORequest &operator=(const C_GuardedBlockIORequest&) = delete;
+  auto shared_from_this() {
+    return shared_from(this);
+  }
 
   virtual const char *get_name() const = 0;
   void set_cell(BlockGuardCell *cell) {
@@ -1072,6 +1076,10 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
     ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
+  auto shared_from_this() {
+    return shared_from(this);
+  }
+
   void complete_user_request(int r) {
     bool initial = false;
     if (m_user_req_completed.compare_exchange_strong(initial, true)) {
@@ -1097,7 +1105,7 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
     }
   }
 
-  virtual bool alloc_resources() =0;
+  virtual bool alloc_resources() = 0;
 
   void deferred() {
     bool initial = false;
@@ -1147,6 +1155,16 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
     ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
   }
 
+  template <typename... U>
+  static inline std::shared_ptr<C_WriteRequest<T>> create(U&&... arg)
+  {
+    return SharedPtrContext::create<C_WriteRequest<T>>(std::forward<U>(arg)...);
+  }
+
+  auto shared_from_this() {
+    return shared_from(this);
+  }
+
   virtual bool alloc_resources() override {
     return rwl.alloc_write_resources(this);
   }
@@ -1190,6 +1208,16 @@ struct C_FlushRequest : public C_BlockIORequest<T> {
   }
 
   ~C_FlushRequest() {
+  }
+
+  template <typename... U>
+  static inline std::shared_ptr<C_FlushRequest<T>> create(U&&... arg)
+  {
+    return SharedPtrContext::create<C_FlushRequest<T>>(std::forward<U>(arg)...);
+  }
+
+  auto shared_from_this() {
+    return shared_from(this);
   }
 
   virtual bool alloc_resources() override {
@@ -1241,6 +1269,16 @@ struct C_DiscardRequest : public C_BlockIORequest<T> {
 
   ~C_DiscardRequest() {
     //ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
+  }
+
+  template <typename... U>
+  static inline std::shared_ptr<C_DiscardRequest<T>> create(U&&... arg)
+  {
+    return SharedPtrContext::create<C_DiscardRequest<T>>(std::forward<U>(arg)...);
+  }
+
+  auto shared_from_this() {
+    return shared_from(this);
   }
 
   virtual bool alloc_resources() override {
@@ -2019,6 +2057,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
   GeneralWriteLogEntries log_entries;
   DeferredContexts on_exit;
   utime_t now = ceph_clock_now();
+  auto write_req_sp = write_req->shared_from_this();
   write_req->m_dispatched_time = now;
 
   TOID(struct WriteLogPoolRoot) pool_root;
@@ -2090,8 +2129,8 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
   m_async_write_req_finish++;
   m_async_op_tracker.start_op();
   write_req->_on_finish =
-    new FunctionContext([this, write_req](int r) {
-	complete_write_req(write_req, r);
+    new FunctionContext([this, write_req_sp](int r) {
+	complete_write_req(write_req_sp.get(), r);
 	m_async_write_req_finish--;
 	m_async_op_tracker.finish_op();
       });
@@ -2135,16 +2174,16 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
 
   /* We may schedule append here, or when the prior sync point persists. */
   Context *schedule_append_ctx = new FunctionContext(
-     [this, write_req](int r) {
-       if (write_req->m_do_early_flush) {
+     [this, write_req_sp](int r) {
+       if (write_req_sp->m_do_early_flush) {
 	 /* This caller is waiting for persist, so we'll use their thread to
 	  * expedite it */
-	 flush_pmem_buffer(write_req->m_op_set->operations);
-	 schedule_append(write_req->m_op_set->operations);
+	 flush_pmem_buffer(write_req_sp->m_op_set->operations);
+	 schedule_append(write_req_sp->m_op_set->operations);
        } else {
 	 /* This is probably not still the caller's thread, so do the
 	  * payload flushing/replicating later. */
-	 schedule_flush_and_append(write_req->m_op_set->operations);
+	 schedule_flush_and_append(write_req_sp->m_op_set->operations);
        }
      });
   Mutex::Locker locker(m_lock);
@@ -2191,7 +2230,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
   }
 
   auto *write_req =
-    new C_WriteRequestT(*this, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish);
+    C_WriteRequestT::create(*this, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish).get();
   m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
 
   /* The lambda below will be called when the block guard for all
@@ -2251,7 +2290,7 @@ template <typename I>
 void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 					bool skip_partial_discard, Context *on_finish) {
   utime_t now = ceph_clock_now();
-  Extent discard_extent = {offset, length};
+  Extents discard_extents = {{offset, length}};
   m_perfcounter->inc(l_librbd_rwl_discard, 1);
 
   CephContext *cct = m_image_ctx.cct;
@@ -2268,8 +2307,9 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
     }
   }
 
-  auto *discard_req =
-    new C_DiscardRequestT(*this, now, {discard_extent}, skip_partial_discard, on_finish);
+  auto discard_req_sp =
+    C_DiscardRequestT::create(*this, now, std::move(discard_extents), skip_partial_discard, on_finish);
+  auto *discard_req = discard_req_sp.get();
   //m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
   {
     Mutex::Locker locker(m_lock);
@@ -2287,17 +2327,17 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
     }
   }
   discard_req->op->on_write_persist = new FunctionContext(
-    [this, discard_req](int r) {
-      ldout(m_image_ctx.cct, 20) << "discard_req=" << discard_req
-				 << " cell=" << discard_req->get_cell() << dendl;
-      assert(discard_req->get_cell());
-      discard_req->complete_user_request(r);
+    [this, discard_req_sp](int r) {
+      ldout(m_image_ctx.cct, 20) << "discard_req=" << discard_req_sp
+				 << " cell=" << discard_req_sp->get_cell() << dendl;
+      assert(discard_req_sp->get_cell());
+      discard_req_sp->complete_user_request(r);
 
       /* Completed to caller by here */
       //utime_t now = ceph_clock_now();
       //m_perfcounter->tinc(l_librbd_rwl_aio_flush_latency, now - flush_req->m_arrived_time);
 
-      release_guarded_request(discard_req->get_cell());
+      release_guarded_request(discard_req_sp->get_cell());
     });
 
   /* The lambda below will be called when the block guard for all
@@ -2355,8 +2395,8 @@ C_FlushRequest<ReplicatedWriteLog<I>>* ReplicatedWriteLog<I>::make_flush_req(Con
   bufferlist bl;
 
   auto *flush_req =
-    new C_FlushRequestT(*this, flush_begins, Extents({whole_volume_extent()}),
-			std::move(bl), 0, on_finish);
+    C_FlushRequestT::create(*this, flush_begins, Extents({whole_volume_extent()}),
+			    std::move(bl), 0, on_finish).get();
 
   flush_req->_on_finish = new FunctionContext(
     [this, flush_req](int r) {
