@@ -12,7 +12,6 @@
 #include "common/WorkQueue.h"
 #include "librbd/cache/ImageCache.h"
 #include "librbd/Utils.h"
-#include "librbd/cache/BlockGuard.h"
 #include "librbd/BlockGuard.h"
 #include <functional>
 #include <list>
@@ -935,8 +934,6 @@ private:
   friend class C_WriteRequest<This>;
   friend class C_FlushRequest<This>;
   friend class C_DiscardRequest<This>;
-  typedef std::function<void(uint64_t)> ReleaseBlock;
-  typedef std::function<void(BlockGuard::BlockIO)> AppendDetainedBlock;
   typedef std::list<C_WriteRequest<This> *> C_WriteRequests;
   typedef std::list<C_BlockIORequest<This> *> C_BlockIORequests;
 
