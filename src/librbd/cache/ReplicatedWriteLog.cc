@@ -998,13 +998,13 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cel
       /* Move waiting requests into the blockguard. Stop if there's another barrier */
       while (!m_barrier_in_progress && !m_awaiting_barrier.empty()) {
 	auto &req = m_awaiting_barrier.front();
-	m_awaiting_barrier.pop_front();
 	ldout(cct, 20) << "submitting queued request to blockguard: " << req << dendl;
 	BlockGuardCell *detained_cell = detain_guarded_request_barrier_helper(req);
 	if (detained_cell) {
 	  req.on_guard_acquire->acquired(detained_cell, req.detained);
 	  m_work_queue.queue(req.on_guard_acquire);
 	}
+	m_awaiting_barrier.pop_front();
       }
     }
   }
