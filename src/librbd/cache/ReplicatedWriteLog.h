@@ -170,7 +170,7 @@ static const double LOG_STATS_INTERVAL_SECONDS = 5;
 
 /**** Write log entries ****/
 
-static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 16;
+static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 32;
 static const unsigned long int MAX_FREE_PER_TRANSACTION = 1;
 static const unsigned int MAX_CONCURRENT_WRITES = 256;
 static const uint64_t DEFAULT_POOL_SIZE = 1u<<30;
@@ -1096,12 +1096,15 @@ private:
   void alloc_and_dispatch_io_req(C_BlockIORequestT *write_req);
   void dispatch_aio_write(C_WriteRequestT *write_req);
   void append_scheduled_ops(void);
+  void enlist_op_appender();
   void schedule_append(GenericLogOperationsVectorT &ops);
   void schedule_append(GenericLogOperationsT &ops);
   void schedule_append(GenericLogOperationSharedPtrT op);
   void flush_then_append_scheduled_ops(void);
+  void enlist_op_flusher();
   void schedule_flush_and_append(GenericLogOperationsVectorT &ops);
-  void flush_pmem_buffer(GenericLogOperationsVectorT &ops);
+  template <typename V>
+  void flush_pmem_buffer(V& ops);
   void alloc_op_log_entries(GenericLogOperationsT &ops);
   void flush_op_log_entries(GenericLogOperationsVectorT &ops);
   int append_op_log_entries(GenericLogOperationsT &ops);

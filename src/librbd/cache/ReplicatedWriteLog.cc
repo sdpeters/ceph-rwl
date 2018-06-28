@@ -84,9 +84,8 @@ SyncPoint<T>::SyncPoint(T &rwl, uint64_t sync_gen_num)
   : rwl(rwl), log_entry(std::make_shared<SyncPointLogEntry>(sync_gen_num)) {
   m_prior_log_entries_persisted = new C_Gather(rwl.m_image_ctx.cct, nullptr);
   m_sync_point_persist = new C_Gather(rwl.m_image_ctx.cct, nullptr);
-  /* It's unclear these actually helped */
-  //m_on_sync_point_appending.reserve(MAX_WRITES_PER_SYNC_POINT + 2);
-  //m_on_sync_point_persisted.reserve(MAX_WRITES_PER_SYNC_POINT + 2);
+  m_on_sync_point_appending.reserve(MAX_WRITES_PER_SYNC_POINT + 2);
+  m_on_sync_point_persisted.reserve(MAX_WRITES_PER_SYNC_POINT + 2);
   ldout(rwl.m_image_ctx.cct, 20) << "sync point " << sync_gen_num << dendl;
 }
 
@@ -114,6 +113,8 @@ SyncPointLogOperation<T>::~SyncPointLogOperation() { }
 
 template <typename T>
 void SyncPointLogOperation<T>::appending() {
+  std::vector<Context*> appending_contexts;
+
   assert(sync_point);
   {
     Mutex::Locker locker(rwl.m_lock);
@@ -122,15 +123,18 @@ void SyncPointLogOperation<T>::appending() {
 				     << "] appending" << dendl;
       sync_point->m_appending = true;
     }
-    for (auto &ctx : sync_point->m_on_sync_point_appending) {
-      rwl.m_work_queue.queue(ctx);
-    }
-    sync_point->m_on_sync_point_appending.clear();
+    appending_contexts.swap(sync_point->m_on_sync_point_appending);
+  }
+  for (auto &ctx : appending_contexts) {
+    //rwl.m_work_queue.queue(ctx);
+    ctx->complete(0);
   }
 }
 
 template <typename T>
 void SyncPointLogOperation<T>::complete(int result) {
+  std::vector<Context*> persisted_contexts;
+
   assert(sync_point);
   ldout(rwl.m_image_ctx.cct, 20) << "Sync point op =[" << *this
 				 << "] completed" << dendl;
@@ -153,11 +157,12 @@ void SyncPointLogOperation<T>::complete(int result) {
     Mutex::Locker locker(rwl.m_lock);
     /* The flush request that scheduled this op will be one of these
      * contexts */
-    for (auto &ctx : sync_point->m_on_sync_point_persisted) {
-      rwl.m_work_queue.queue(ctx, result);
-    }
-    sync_point->m_on_sync_point_persisted.clear();
+    persisted_contexts.swap(sync_point->m_on_sync_point_persisted);
     rwl.handle_flushed_sync_point(sync_point->log_entry);
+  }
+  for (auto &ctx : persisted_contexts) {
+    //rwl.m_work_queue.queue(ctx, result);
+    ctx->complete(result);
   }
 }
 
@@ -213,7 +218,8 @@ void GeneralWriteLogOperation<T>::appending() {
     on_write_append = nullptr;
   }
   if (on_append) {
-    rwl.m_work_queue.queue(on_append);
+    //rwl.m_work_queue.queue(on_append);
+    on_append->complete(0);
   }
 }
 
@@ -597,7 +603,7 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
 	   false, true, true, image_ctx.cct),
     m_timer(image_ctx.cct, m_timer_lock, false),
     m_thread_pool(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::thread_pool", "tp_rwl",
-		  /*image_ctx.cct->_conf->get_val<int64_t>("rbd_op_threads")*/ 6, // TODO: Add config value
+		  /*image_ctx.cct->_conf->get_val<int64_t>("rbd_op_threads")*/ 4, // TODO: Add config value
 		  /*"rbd_op_threads"*/""), //TODO: match above
     m_work_queue("librbd::cache::ReplicatedWriteLog::work_queue",
 		 image_ctx.cct->_conf->get_val<int64_t>("rbd_op_thread_timeout"),
@@ -1310,43 +1316,41 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
   bool appending = false; /* true if we set m_appending */
   //ldout(m_image_ctx.cct, 20) << dendl;
   do {
+    ops.clear();
+
     {
-      ops.clear();
-
-      {
-	Mutex::Locker locker(m_lock);
-	if (!appending && m_appending) {
-	  /* Another thread is appending */
-	  ldout(m_image_ctx.cct, 15) << "Another thread is appending" << dendl;
-	  return;
+      Mutex::Locker locker(m_lock);
+      if (!appending && m_appending) {
+	/* Another thread is appending */
+	ldout(m_image_ctx.cct, 15) << "Another thread is appending" << dendl;
+	return;
+      }
+      if (m_ops_to_append.size()) {
+	appending = true;
+	m_appending = true;
+	auto last_in_batch = m_ops_to_append.begin();
+	unsigned int ops_to_append = m_ops_to_append.size();
+	if (ops_to_append > ops_appended_together) {
+	  ops_to_append = ops_appended_together;
 	}
-	if (m_ops_to_append.size()) {
-	  appending = true;
-	  m_appending = true;
-	  auto last_in_batch = m_ops_to_append.begin();
-	  unsigned int ops_to_append = m_ops_to_append.size();
-	  if (ops_to_append > ops_appended_together) {
-	    ops_to_append = ops_appended_together;
-	  }
-	  std::advance(last_in_batch, ops_to_append);
-	  ops.splice(ops.end(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
-	  ops_remain = true; /* Always check again before leaving */
-	  //ops_remain = !m_ops_to_append.empty();
-	  //ldout(m_image_ctx.cct, 20) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
-	} else {
-	  ops_remain = false;
-	  if (appending) {
-	    appending = false;
-	    m_appending = false;
-	  }
+	std::advance(last_in_batch, ops_to_append);
+	ops.splice(ops.end(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
+	ops_remain = true; /* Always check again before leaving */
+	//ops_remain = !m_ops_to_append.empty();
+	//ldout(m_image_ctx.cct, 20) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
+      } else {
+	ops_remain = false;
+	if (appending) {
+	  appending = false;
+	  m_appending = false;
 	}
       }
+    }
 
-      if (ops.size()) {
-	Mutex::Locker locker(m_log_append_lock);
-	alloc_op_log_entries(ops);
-	append_result = append_op_log_entries(ops);
-      }
+    if (ops.size()) {
+      Mutex::Locker locker(m_log_append_lock);
+      alloc_op_log_entries(ops);
+      append_result = append_op_log_entries(ops);
     }
 
     int num_ops = ops.size();
@@ -1357,55 +1361,65 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
   } while (ops_remain);
 }
 
+template <typename I>
+void ReplicatedWriteLog<I>::enlist_op_appender()
+{
+  m_async_append_ops++;
+  m_async_op_tracker.start_op();
+  Context *append_ctx = new FunctionContext([this](int r) {
+      append_scheduled_ops();
+      m_async_append_ops--;
+      m_async_op_tracker.finish_op();
+    });
+  if (use_finishers) {
+    m_log_append_finisher.queue(append_ctx);
+  } else {
+    m_work_queue.queue(append_ctx);
+  }
+}
+
 /*
  * Takes custody of ops. They'll all get their log entries appended,
  * and have their on_write_persist contexts completed once they and
  * all prior log entries are persisted everywhere.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationSharedPtrT op)
+void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsT &ops)
 {
   bool need_finisher;
+  GenericLogOperationsVectorT appending;
 
+  std::copy(std::begin(ops), std::end(ops), std::back_inserter(appending));
   {
     Mutex::Locker locker(m_lock);
 
     need_finisher = m_ops_to_append.empty() && !m_appending;
-    m_ops_to_append.push_back(op);
+    m_ops_to_append.splice(m_ops_to_append.end(), ops);
   }
 
   if (need_finisher) {
-    m_async_append_ops++;
-    m_async_op_tracker.start_op();
-    Context *append_ctx = new FunctionContext([this](int r) {
-	append_scheduled_ops();
-	m_async_append_ops--;
-	m_async_op_tracker.finish_op();
-      });
-    if (use_finishers) {
-      m_log_append_finisher.queue(append_ctx);
-    } else {
-      m_work_queue.queue(append_ctx);
-    }
+    enlist_op_appender();
   }
 
-  op->appending();
+  for (auto &op : appending) {
+    op->appending();
+  }
 }
 
 template <typename I>
 void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsVectorT &ops)
 {
-  for (auto &op : ops) {
-    schedule_append(op);
-  }
+  GenericLogOperationsT to_append(ops.begin(), ops.end());
+
+  schedule_append(to_append);
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsT &ops)
+void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationSharedPtrT op)
 {
-  for (auto &op : ops) {
-    schedule_append(op);
-  }
+  GenericLogOperationsT to_append { op };
+
+  schedule_append(to_append);
 }
 
 const unsigned long int ops_flushed_together = 4;
@@ -1439,17 +1453,36 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
       }
     }
 
+    if (ops_remain) {
+      enlist_op_flusher();
+    }
+
     /* Ops subsequently scheduled for flush may finish before these,
      * which is fine. We're unconcerned with completion order until we
      * get to the log message append step. */
     if (ops.size()) {
-      GenericLogOperationsVectorT ops_vec;
-      std::move(std::begin(ops), std::end(ops), std::back_inserter(ops_vec));
-      flush_pmem_buffer(ops_vec);
-      schedule_append(ops_vec);
+      flush_pmem_buffer<GenericLogOperationsT>(ops);
+      schedule_append(ops);
     }
   } while (ops_remain);
   append_scheduled_ops();
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::enlist_op_flusher()
+{
+  m_async_flush_ops++;
+  m_async_op_tracker.start_op();
+  Context *flush_ctx = new FunctionContext([this](int r) {
+      flush_then_append_scheduled_ops();
+      m_async_flush_ops--;
+      m_async_op_tracker.finish_op();
+    });
+  if (use_finishers) {
+    m_persist_finisher.queue(flush_ctx);
+  } else {
+    m_work_queue.queue(flush_ctx);
+  }
 }
 
 /*
@@ -1470,18 +1503,7 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsVector
   }
 
   if (need_finisher) {
-    m_async_flush_ops++;
-    m_async_op_tracker.start_op();
-    Context *flush_ctx = new FunctionContext([this](int r) {
-	flush_then_append_scheduled_ops();
-	m_async_flush_ops--;
-	m_async_op_tracker.finish_op();
-      });
-    if (use_finishers) {
-      m_persist_finisher.queue(flush_ctx);
-    } else {
-      m_work_queue.queue(flush_ctx);
-    }
+    enlist_op_flusher();
   }
 }
 
@@ -1489,7 +1511,8 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsVector
  * Flush the pmem regions for the data blocks of a set of operations
  */
 template <typename I>
-void ReplicatedWriteLog<I>::flush_pmem_buffer(GenericLogOperationsVectorT &ops)
+template <typename V>
+void ReplicatedWriteLog<I>::flush_pmem_buffer(V& ops)
 {
   for (auto &operation : ops) {
     if (operation->is_write()) {
@@ -1675,7 +1698,7 @@ void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperationsT&& ops,
   //ldout(m_image_ctx.cct, 20) << dendl;
   m_async_complete_ops++;
   m_async_op_tracker.start_op();
-  Context *complete_ctx = new FunctionContext([this, ops, result](int r) {
+  Context *complete_ctx = new FunctionContext([this, ops=move(ops), result](int r) {
       GenericLogEntries dirty_entries;
       int published_reserves = 0;
       //ldout(m_image_ctx.cct, 20) << __func__ << ": completing" << dendl;
@@ -2178,7 +2201,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
        if (write_req_sp->m_do_early_flush) {
 	 /* This caller is waiting for persist, so we'll use their thread to
 	  * expedite it */
-	 flush_pmem_buffer(write_req_sp->m_op_set->operations);
+	 flush_pmem_buffer<GenericLogOperationsVectorT>(write_req_sp->m_op_set->operations);
 	 schedule_append(write_req_sp->m_op_set->operations);
        } else {
 	 /* This is probably not still the caller's thread, so do the
