@@ -273,28 +273,8 @@ GuardedRequestFunctionContext::GuardedRequestFunctionContext(boost::function<voi
 GuardedRequestFunctionContext::~GuardedRequestFunctionContext(void) { }
 
 void GuardedRequestFunctionContext::finish(int r) {
-  assert(true == m_acquired);
+  assert(m_cell);
   m_callback(m_cell, m_state.detained);
-}
-
-/* Must be followed by complete() */
-void GuardedRequestFunctionContext::acquired(BlockGuardCell *cell, BlockGuardReqState &state) {
-  bool initial = false;
-  if (m_acquired.compare_exchange_strong(initial, true)) {
-    m_cell = cell;
-    m_state = state;
-  }
-}
-
-/* acquired must have already been called */
-void GuardedRequestFunctionContext::complete(int r) {
-  Context::complete(r);
-}
-
-/* One-step acquire + complete */
-void GuardedRequestFunctionContext::complete(BlockGuardCell *cell, BlockGuardReqState &state, int r) {
-  acquired(cell, state);
-  complete(r);
 }
 
 WriteLogMapEntry::WriteLogMapEntry(const BlockExtent block_extent,
@@ -937,13 +917,13 @@ BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_barrier_helper(Gua
   //ldout(m_image_ctx.cct, 20) << dendl;
 
   if (m_barrier_in_progress) {
-    req.state.queued = true;
+    req.guard_ctx->m_state.queued = true;
     m_awaiting_barrier.push_back(req);
   } else {
-    bool barrier = req.state.barrier;
+    bool barrier = req.guard_ctx->m_state.barrier;
     if (barrier) {
       m_barrier_in_progress = true;
-      req.state.current_barrier = true;
+      req.guard_ctx->m_state.current_barrier = true;
     }
     cell = detain_guarded_request_helper(req);
     if (barrier) {
@@ -966,7 +946,8 @@ void ReplicatedWriteLog<I>::detain_guarded_request(GuardedRequest &&req)
     cell = detain_guarded_request_barrier_helper(req);
   }
   if (cell) {
-    req.on_guard_acquire->complete(cell, req.state, 0);
+    req.guard_ctx->m_cell = cell;
+    req.guard_ctx->complete(0);
   }
 }
 
@@ -982,17 +963,17 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cel
     m_write_log_guard.release(released_cell, &block_reqs);
 
     for (auto &req : block_reqs) {
-      req.state.detained = true;
+      req.guard_ctx->m_state.detained = true;
       BlockGuardCell *detained_cell = detain_guarded_request_helper(req);
       if (detained_cell) {
-	if (req.state.current_barrier) {
+	if (req.guard_ctx->m_state.current_barrier) {
 	  /* The current barrier is acquiring the block guard, so now we know its cell */
 	  m_barrier_cell = detained_cell;
 	  assert(detained_cell != released_cell);
 	  ldout(cct, 20) << "current barrier cell=" << detained_cell << " req=" << req << dendl;
 	}
-	req.on_guard_acquire->acquired(detained_cell, req.state);
-	m_work_queue.queue(req.on_guard_acquire);
+	req.guard_ctx->m_cell = detained_cell;
+	m_work_queue.queue(req.guard_ctx);
       }
     }
 
@@ -1007,8 +988,8 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cel
 	ldout(cct, 20) << "submitting queued request to blockguard: " << req << dendl;
 	BlockGuardCell *detained_cell = detain_guarded_request_barrier_helper(req);
 	if (detained_cell) {
-	  req.on_guard_acquire->acquired(detained_cell, req.state);
-	  m_work_queue.queue(req.on_guard_acquire);
+	  req.guard_ctx->m_cell = detained_cell;
+	  m_work_queue.queue(req.guard_ctx);
 	}
 	m_awaiting_barrier.pop_front();
       }

@@ -757,36 +757,29 @@ struct BlockGuardReqState {
 
 class GuardedRequestFunctionContext : public Context {
 private:
-  std::atomic<bool> m_acquired = {false};
   boost::function<void(BlockGuardCell*,bool)> m_callback;
-  BlockGuardCell *m_cell = nullptr;
-  BlockGuardReqState m_state;
   void finish(int r) override;
 public:
+  BlockGuardCell *m_cell = nullptr;
+  BlockGuardReqState m_state;
   GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*,bool)> &&callback);
   ~GuardedRequestFunctionContext(void);
   GuardedRequestFunctionContext(const GuardedRequestFunctionContext&) = delete;
   GuardedRequestFunctionContext &operator=(const GuardedRequestFunctionContext&) = delete;
-  /* Complete with acquired(cell, detained) then complete(int), or
-   * directly with complete(cell, detained); */
-  void acquired(BlockGuardCell *cell, BlockGuardReqState &state);
-  void complete(int r) override;
-  void complete(BlockGuardCell *cell, BlockGuardReqState &state, int r);
 };
 
 struct GuardedRequest {
   const BlockExtent block_extent;
-  GuardedRequestFunctionContext *on_guard_acquire; /* Work to do when guard on range obtained */
-  BlockGuardReqState state;
+  GuardedRequestFunctionContext *guard_ctx; /* Work to do when guard on range obtained */
 
   GuardedRequest(const BlockExtent block_extent,
 		 GuardedRequestFunctionContext *on_guard_acquire, bool barrier = false)
-    : block_extent(block_extent), on_guard_acquire(on_guard_acquire) {
-    state.barrier = barrier;
+    : block_extent(block_extent), guard_ctx(on_guard_acquire) {
+    guard_ctx->m_state.barrier = barrier;
   }
   friend std::ostream &operator<<(std::ostream &os,
 				  const GuardedRequest &r) {
-    os << "state=[" << r.state << "], "
+    os << "guard_ctx->m_state=[" << r.guard_ctx->m_state << "], "
        << "block_extent.block_start=" << r.block_extent.block_start << ", "
        << "block_extent.block_start=" << r.block_extent.block_end;
     return os;
