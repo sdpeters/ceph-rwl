@@ -267,14 +267,14 @@ WriteLogOperationSet<T>::WriteLogOperationSet(T &rwl, utime_t dispatched, std::s
 template <typename T>
 WriteLogOperationSet<T>::~WriteLogOperationSet() { }
 
-GuardedRequestFunctionContext::GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*,bool)> &&callback)
+GuardedRequestFunctionContext::GuardedRequestFunctionContext(boost::function<void(GuardedRequestFunctionContext&)> &&callback)
   : m_callback(std::move(callback)){ }
 
 GuardedRequestFunctionContext::~GuardedRequestFunctionContext(void) { }
 
 void GuardedRequestFunctionContext::finish(int r) {
   assert(m_cell);
-  m_callback(m_cell, m_state.detained);
+  m_callback(*this);
 }
 
 WriteLogMapEntry::WriteLogMapEntry(const BlockExtent block_extent,
@@ -2262,14 +2262,14 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
   /* The lambda below will be called when the block guard for all
    * blocks affected by this write is obtained */
   GuardedRequestFunctionContext *guarded_ctx =
-    new GuardedRequestFunctionContext([this, write_req](BlockGuardCell *cell, bool detained) {
+    new GuardedRequestFunctionContext([this, write_req](GuardedRequestFunctionContext &guard_ctx) {
       CephContext *cct = m_image_ctx.cct;
-      ldout(cct, 20) << __func__ << " write_req=" << write_req << " cell=" << cell << dendl;
+      ldout(cct, 20) << __func__ << " write_req=" << write_req << " cell=" << guard_ctx.m_cell << dendl;
 
-      assert(cell);
-      write_req->m_detained = detained;
-      write_req->set_cell(cell);
-      if (detained) {
+      assert(guard_ctx.m_cell);
+      write_req->m_detained = guard_ctx.m_state.detained;
+      write_req->set_cell(guard_ctx.m_cell);
+      if (write_req->m_detained) {
 	m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
       }
       alloc_and_dispatch_io_req(write_req);
@@ -2369,14 +2369,14 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
   /* The lambda below will be called when the block guard for all
    * blocks affected by this write is obtained */
   GuardedRequestFunctionContext *guarded_ctx =
-    new GuardedRequestFunctionContext([this, discard_req](BlockGuardCell *cell, bool detained) {
+    new GuardedRequestFunctionContext([this, discard_req](GuardedRequestFunctionContext &guard_ctx) {
       CephContext *cct = m_image_ctx.cct;
-      ldout(cct, 20) << __func__ << " discard_req=" << discard_req << " cell=" << cell << dendl;
+      ldout(cct, 20) << __func__ << " discard_req=" << discard_req << " cell=" << guard_ctx.m_cell << dendl;
 
-      assert(cell);
-      discard_req->m_detained = detained;
-      discard_req->set_cell(cell);
-      if (detained) {
+      assert(guard_ctx.m_cell);
+      discard_req->m_detained = guard_ctx.m_state.detained;
+      discard_req->set_cell(guard_ctx.m_cell);
+      if (discard_req->m_detained) {
 	//m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
       }
       alloc_and_dispatch_io_req(discard_req);
@@ -2534,12 +2534,12 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
   auto flush_req = make_flush_req(on_finish);
 
   GuardedRequestFunctionContext *guarded_ctx =
-    new GuardedRequestFunctionContext([this, flush_req](BlockGuardCell *cell, bool detained) {
-      ldout(m_image_ctx.cct, 20) << "flush_req=" << flush_req << " cell=" << cell << dendl;
-      assert(cell);
-      flush_req->m_detained = detained;
+    new GuardedRequestFunctionContext([this, flush_req](GuardedRequestFunctionContext &guard_ctx) {
+      ldout(m_image_ctx.cct, 20) << "flush_req=" << flush_req << " cell=" << guard_ctx.m_cell << dendl;
+      assert(guard_ctx.m_cell);
+      flush_req->m_detained = guard_ctx.m_state.detained;
       /* We don't call flush_req->set_cell(), because the block guard will be released here */
-      if (detained) {
+      if (flush_req->m_detained) {
 	//m_perfcounter->inc(l_librbd_rwl_aio_flush_overlap, 1);
       }
       {
@@ -2580,7 +2580,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
 	}
       }
 
-      release_guarded_request(cell);
+      release_guarded_request(guard_ctx.m_cell);
     });
 
   detain_guarded_request(GuardedRequest(flush_req->m_image_extents_summary.block_extent(),
@@ -3978,13 +3978,13 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish, bool discard_unflushe
    * results. */
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext(
-      [this, on_finish, discard_unflushed_writes](BlockGuardCell *cell, bool detained) {
+      [this, on_finish, discard_unflushed_writes](GuardedRequestFunctionContext &guard_ctx) {
 	DeferredContexts on_exit;
-	ldout(m_image_ctx.cct, 20) << "cell=" << cell << dendl;
-	assert(cell);
+	ldout(m_image_ctx.cct, 20) << "cell=" << guard_ctx.m_cell << dendl;
+	assert(guard_ctx.m_cell);
 
 	Context *ctx = new FunctionContext(
-	  [this, cell, discard_unflushed_writes, on_finish](int r) {
+	  [this, cell=guard_ctx.m_cell, discard_unflushed_writes, on_finish](int r) {
 	    Mutex::Locker locker(m_lock);
 	    m_invalidating = false;
 	    ldout(m_image_ctx.cct, 6) << "Done invalidating (discard="

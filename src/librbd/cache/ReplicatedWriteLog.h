@@ -757,12 +757,12 @@ struct BlockGuardReqState {
 
 class GuardedRequestFunctionContext : public Context {
 private:
-  boost::function<void(BlockGuardCell*,bool)> m_callback;
+  boost::function<void(GuardedRequestFunctionContext&)> m_callback;
   void finish(int r) override;
 public:
   BlockGuardCell *m_cell = nullptr;
   BlockGuardReqState m_state;
-  GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*,bool)> &&callback);
+  GuardedRequestFunctionContext(boost::function<void(GuardedRequestFunctionContext&)> &&callback);
   ~GuardedRequestFunctionContext(void);
   GuardedRequestFunctionContext(const GuardedRequestFunctionContext&) = delete;
   GuardedRequestFunctionContext &operator=(const GuardedRequestFunctionContext&) = delete;
