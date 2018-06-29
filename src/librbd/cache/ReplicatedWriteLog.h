@@ -1116,7 +1116,8 @@ private:
   void alloc_op_log_entries(GenericLogOperationsT &ops);
   void flush_op_log_entries(GenericLogOperationsVectorT &ops);
   int append_op_log_entries(GenericLogOperationsT &ops);
-  void complete_op_log_entries(GenericLogOperationsT&& ops, const int r);
+  void complete_op_log_entries(GenericLogOperationsT &&ops, const int r);
+  void schedule_complete_op_log_entries(GenericLogOperationsT &&ops, const int r);
 };
 
 } // namespace cache
