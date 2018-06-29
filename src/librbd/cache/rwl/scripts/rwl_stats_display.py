@@ -109,7 +109,8 @@ def print_histograms(j, combine_sizes):
                 continue
             #print ('histograms.{}.{} is a histogram'.format(rbd_vol_name, histogram_name))
             print ('--- {} (RBD volume \"{}\" ({})) ---'.format(histogram_name, j['image'], rbd_vol_name))
-            if combine_sizes:
+            #  Axis 1 is not always IO size. Don't combine when it's a count.
+            if combine_sizes and (histogram['axes'][1]['name'] != 'Number of items'):
                 print_1D_histogram(histogram)
             else:
                 print_histogram(histogram)
