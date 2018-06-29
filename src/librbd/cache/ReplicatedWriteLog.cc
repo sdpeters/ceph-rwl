@@ -1142,6 +1142,7 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
   WriteRequestResources m_resources;
   unique_ptr<WriteLogOperationSet<T>> m_op_set = nullptr;
   bool m_do_early_flush = false;
+  std::atomic<int> m_appended = {0};
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_WriteRequest<T> &req) {
     os << (C_BlockIORequest<T>&)req
@@ -1172,18 +1173,32 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
     return shared_from(this);
   }
 
-  virtual void finish_req(int r) {
+  void finish_req(int r) {
     rwl.complete_write_req(this, r);
   }
 
-  virtual bool alloc_resources() override {
+  bool alloc_resources() override {
     return rwl.alloc_write_resources(this);
   }
 
-  virtual void deferred_handler() override { }
+  void deferred_handler() override { }
 
-  virtual void dispatch() override {
+  void dispatch() override {
     rwl.dispatch_aio_write(this);
+  }
+
+  void schedule_append() {
+    assert(++m_appended == 1);
+    if (m_do_early_flush) {
+      /* This caller is waiting for persist, so we'll use their thread to
+       * expedite it */
+      rwl.flush_pmem_buffer(this->m_op_set->operations);
+      rwl.schedule_append(this->m_op_set->operations);
+    } else {
+      /* This is probably not still the caller's thread, so do the payload
+       * flushing/replicating later. */
+      rwl.schedule_flush_and_append(this->m_op_set->operations);
+    }
   }
 
   const char *get_name() const override {
@@ -1231,7 +1246,7 @@ struct C_FlushRequest : public C_BlockIORequest<T> {
     return shared_from(this);
   }
 
-  virtual void finish_req(int r) {
+  void finish_req(int r) {
     ldout(rwl.m_image_ctx.cct, 20) << "flush_req=" << this
 				   << " cell=" << this->get_cell() << dendl;
     /* Block guard already released */
@@ -1242,15 +1257,15 @@ struct C_FlushRequest : public C_BlockIORequest<T> {
     rwl.m_perfcounter->tinc(l_librbd_rwl_aio_flush_latency, now - this->m_arrived_time);
   }
 
-  virtual bool alloc_resources() override {
+  bool alloc_resources() override {
     return rwl.alloc_flush_resources(this);
   }
 
-  virtual void deferred_handler() override {
+  void deferred_handler() override {
     rwl.m_perfcounter->inc(l_librbd_rwl_aio_flush_def, 1);
   }
 
-  virtual void dispatch() override {
+  void dispatch() override {
     rwl.dispatch_aio_flush(this);
   }
 
@@ -1303,15 +1318,15 @@ struct C_DiscardRequest : public C_BlockIORequest<T> {
     return shared_from(this);
   }
 
-  virtual void finish_req(int r) {}
+  void finish_req(int r) {}
 
-  virtual bool alloc_resources() override {
+  bool alloc_resources() override {
     return rwl.alloc_discard_resources(this);
   }
 
-  virtual void deferred_handler() override { }
+  void deferred_handler() override { }
 
-  virtual void dispatch() override {
+  void dispatch() override {
     rwl.dispatch_discard(this);
   }
 
@@ -1479,7 +1494,7 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
      * which is fine. We're unconcerned with completion order until we
      * get to the log message append step. */
     if (ops.size()) {
-      flush_pmem_buffer<GenericLogOperationsT>(ops);
+      flush_pmem_buffer(ops);
       schedule_append(ops);
     }
   } while (ops_remain);
@@ -1527,6 +1542,8 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsVector
 
 /*
  * Flush the pmem regions for the data blocks of a set of operations
+ *
+ * V is expected to be GenericLogOperations<I>, or GenericLogOperationsVector<I>
  */
 template <typename I>
 template <typename V>
@@ -2205,43 +2222,38 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
     write_req->complete_user_request(0);
   }
 
-  /* We may schedule append here, or when the prior sync point persists. */
-  Context *schedule_append_ctx = new FunctionContext(
-     [this, write_req_sp](int r) {
-       if (write_req_sp->m_do_early_flush) {
-	 /* This caller is waiting for persist, so we'll use their thread to
-	  * expedite it */
-	 flush_pmem_buffer<GenericLogOperationsVectorT>(write_req_sp->m_op_set->operations);
-	 schedule_append(write_req_sp->m_op_set->operations);
-       } else {
-	 /* This is probably not still the caller's thread, so do the
-	  * payload flushing/replicating later. */
-	 schedule_flush_and_append(write_req_sp->m_op_set->operations);
-       }
-     });
-  Mutex::Locker locker(m_lock);
-  if (!write_req->m_op_set->m_persist_on_flush &&
-      write_req->m_op_set->sync_point->earlier_sync_point) {
-    /* In persist-on-write mode, we defer the append of this write until the
-     * previous sync point is appending (meaning all the writes before it are
-     * persisted and that previous sync point can now appear in the log). Since
-     * we insert sync points in persist-on-write mode when writes have already
-     * completed to the current sync point, this limits us to one inserted sync
-     * point in flight at a time,and gives the next inserted sync point some
-     * time to accumulate a few writes if they arrive soon. Without this we can
-     * insert an absurd number of sync points, each with one or two
-     * writes. That uses a lot of log entries, and limits flushing to very few
-     * writes at a time. */
-    write_req->m_do_early_flush = false;
-    write_req->m_op_set->sync_point->earlier_sync_point->m_on_sync_point_appending.push_back(schedule_append_ctx);
-  } else {
-    /* The prior sync point is done, so we'll schedule append here. If this is
-     * persist-on-write, and probably still the caller's thread, we'll use this
-     * caller's thread to perform the persist & replication of the payload
-     * buffer. */
-    write_req->m_do_early_flush =
-      !(write_req->m_detained || write_req->m_deferred || write_req->m_op_set->m_persist_on_flush);
-    on_exit.add(schedule_append_ctx);
+  bool append_deferred = false;
+  {
+    Mutex::Locker locker(m_lock);
+    if (!write_req->m_op_set->m_persist_on_flush &&
+	write_req->m_op_set->sync_point->earlier_sync_point) {
+      /* In persist-on-write mode, we defer the append of this write until the
+       * previous sync point is appending (meaning all the writes before it are
+       * persisted and that previous sync point can now appear in the log). Since
+       * we insert sync points in persist-on-write mode when writes have already
+       * completed to the current sync point, this limits us to one inserted sync
+       * point in flight at a time,and gives the next inserted sync point some
+       * time to accumulate a few writes if they arrive soon. Without this we can
+       * insert an absurd number of sync points, each with one or two
+       * writes. That uses a lot of log entries, and limits flushing to very few
+       * writes at a time. */
+      write_req->m_do_early_flush = false;
+      Context *schedule_append_ctx = new FunctionContext([this, write_req_sp](int r) {
+	  write_req_sp->schedule_append();
+	});
+      write_req->m_op_set->sync_point->earlier_sync_point->m_on_sync_point_appending.push_back(schedule_append_ctx);
+      append_deferred = true;
+    } else {
+      /* The prior sync point is done, so we'll schedule append here. If this is
+       * persist-on-write, and probably still the caller's thread, we'll use this
+       * caller's thread to perform the persist & replication of the payload
+       * buffer. */
+      write_req->m_do_early_flush =
+	!(write_req->m_detained || write_req->m_deferred || write_req->m_op_set->m_persist_on_flush);
+    }
+  }
+  if (!append_deferred) {
+    write_req->schedule_append();
   }
 }
 
