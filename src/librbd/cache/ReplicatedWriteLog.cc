@@ -1043,9 +1043,8 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
   bufferlist bl;
   int fadvise_flags;
   Context *user_req; /* User write request */
-  Context *_on_finish = nullptr; /* Block guard release */
   std::atomic<bool> m_user_req_completed = {false};
-  std::atomic<bool> m_on_finish_completed = {false};
+  std::atomic<bool> m_finish_called = {false};
   ExtentsSummary<Extents> m_image_extents_summary;
   utime_t m_arrived_time;
   utime_t m_allocated_time;               /* When allocation began */
@@ -1089,27 +1088,29 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
   void complete_user_request(int r) {
     bool initial = false;
     if (m_user_req_completed.compare_exchange_strong(initial, true)) {
-      ldout(rwl.m_image_ctx.cct, 15) << this << " completing user req" << dendl;
+      //ldout(rwl.m_image_ctx.cct, 15) << this << " completing user req" << dendl;
       m_user_req_completed_time = ceph_clock_now();
       user_req->complete(r);
     } else {
-      ldout(rwl.m_image_ctx.cct, 20) << this << " user req already completed" << dendl;
+      //ldout(rwl.m_image_ctx.cct, 20) << this << " user req already completed" << dendl;
     }
   }
 
-  virtual void finish(int r) {
+  void finish(int r) {
     ldout(rwl.m_image_ctx.cct, 20) << this << dendl;
 
     complete_user_request(r);
     bool initial = false;
-    if (m_on_finish_completed.compare_exchange_strong(initial, true)) {
-      ldout(rwl.m_image_ctx.cct, 15) << this << " completing _on_finish" << dendl;
-      _on_finish->complete(0);
+    if (m_finish_called.compare_exchange_strong(initial, true)) {
+      //ldout(rwl.m_image_ctx.cct, 15) << this << " finishing" << dendl;
+      finish_req(0);
     } else {
-      ldout(rwl.m_image_ctx.cct, 20) << this << " _on_finish already completed" << dendl;
+      //ldout(rwl.m_image_ctx.cct, 20) << this << " already finished" << dendl;
       assert(0);
     }
   }
+
+  virtual void finish_req(int r) = 0;
 
   virtual bool alloc_resources() = 0;
 
@@ -1171,6 +1172,10 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
     return shared_from(this);
   }
 
+  virtual void finish_req(int r) {
+    rwl.complete_write_req(this, r);
+  }
+
   virtual bool alloc_resources() override {
     return rwl.alloc_write_resources(this);
   }
@@ -1224,6 +1229,17 @@ struct C_FlushRequest : public C_BlockIORequest<T> {
 
   auto shared_from_this() {
     return shared_from(this);
+  }
+
+  virtual void finish_req(int r) {
+    ldout(rwl.m_image_ctx.cct, 20) << "flush_req=" << this
+				   << " cell=" << this->get_cell() << dendl;
+    /* Block guard already released */
+    assert(!this->get_cell());
+
+    /* Completed to caller by here */
+    utime_t now = ceph_clock_now();
+    rwl.m_perfcounter->tinc(l_librbd_rwl_aio_flush_latency, now - this->m_arrived_time);
   }
 
   virtual bool alloc_resources() override {
@@ -1286,6 +1302,8 @@ struct C_DiscardRequest : public C_BlockIORequest<T> {
   auto shared_from_this() {
     return shared_from(this);
   }
+
+  virtual void finish_req(int r) {}
 
   virtual bool alloc_resources() override {
     return rwl.alloc_discard_resources(this);
@@ -2149,15 +2167,6 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
     }
   }
 
-  m_async_write_req_finish++;
-  m_async_op_tracker.start_op();
-  write_req->_on_finish =
-    new FunctionContext([this, write_req_sp](int r) {
-	complete_write_req(write_req_sp.get(), r);
-	m_async_write_req_finish--;
-	m_async_op_tracker.finish_op();
-      });
-
   /* All extent ops subs created */
   write_req->m_op_set->m_extent_ops_appending->activate();
   write_req->m_op_set->m_extent_ops_persist->activate();
@@ -2185,7 +2194,8 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
    * write of that data persists doesn't seem justified.
    */
 
-  if (write_req->m_op_set->m_persist_on_flush) {
+  if (m_persist_on_flush_early_user_comp &&
+      write_req->m_op_set->m_persist_on_flush) {
     /*
      * We're done with the caller's buffer, and not guaranteeing
      * persistence until the next flush. The block guard for this
@@ -2420,20 +2430,6 @@ C_FlushRequest<ReplicatedWriteLog<I>>* ReplicatedWriteLog<I>::make_flush_req(Con
   auto *flush_req =
     C_FlushRequestT::create(*this, flush_begins, Extents({whole_volume_extent()}),
 			    std::move(bl), 0, on_finish).get();
-
-  flush_req->_on_finish = new FunctionContext(
-    [this, flush_req](int r) {
-      ldout(m_image_ctx.cct, 20) << "flush_req=" << flush_req
-				 << " cell=" << flush_req->get_cell() << dendl;
-      assert(!flush_req->get_cell());
-      flush_req->complete_user_request(r);
-
-      /* Completed to caller by here */
-      utime_t now = ceph_clock_now();
-      m_perfcounter->tinc(l_librbd_rwl_aio_flush_latency, now - flush_req->m_arrived_time);
-
-      /* Block guard already released */
-    });
 
   return flush_req;
 }
@@ -2740,7 +2736,7 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
     16,                              ///< Ranges into the mS
   };
 
-  // Op size axis configuration for op histograms, values are in bytes
+  // Op size axis configuration for op histogram y axis, values are in bytes
   PerfHistogramCommon::axis_config_d op_hist_y_axis_config{
     "Request size (bytes)",
     PerfHistogramCommon::SCALE_LOG2, ///< Request size in logarithmic scale
@@ -2749,7 +2745,7 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
     16,                              ///< Writes up to >32k
   };
 
-  // Op size axis configuration for op histograms, values are in bytes
+  // Num items configuration for op histogram y axis, values are in items
   PerfHistogramCommon::axis_config_d op_hist_y_axis_count_config{
     "Number of items",
     PerfHistogramCommon::SCALE_LINEAR, ///< Request size in linear scale
@@ -2909,7 +2905,6 @@ void ReplicatedWriteLog<I>::periodic_stats() {
 			    << "m_async_flush_ops=" << m_async_flush_ops << ", "
 			    << "m_async_append_ops=" << m_async_append_ops << ", "
 			    << "m_async_complete_ops=" << m_async_complete_ops << ", "
-			    << "m_async_write_req_finish=" << m_async_write_req_finish << ", "
 			    << "m_async_null_flush_finish=" << m_async_null_flush_finish << ", "
 			    << "m_async_process_work=" << m_async_process_work << ", "
 			    << "m_async_op_tracker=[" << m_async_op_tracker << "]"

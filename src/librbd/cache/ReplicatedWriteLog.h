@@ -170,7 +170,7 @@ static const double LOG_STATS_INTERVAL_SECONDS = 5;
 
 /**** Write log entries ****/
 
-static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 32;
+static const unsigned long int MAX_ALLOC_PER_TRANSACTION = 8;
 static const unsigned long int MAX_FREE_PER_TRANSACTION = 1;
 static const unsigned int MAX_CONCURRENT_WRITES = 256;
 static const uint64_t DEFAULT_POOL_SIZE = 1u<<30;
@@ -986,6 +986,11 @@ private:
   uint64_t m_flushed_sync_gen = 0;
 
   bool m_persist_on_write_until_flush = true;
+  /* True if it's safe to complete a user request in persist-on-flush
+   * mode before the write is persisted. This is only true if there is
+   * a local copy of the write data, or if local write failure always
+   * causes local node failure. */
+  bool m_persist_on_flush_early_user_comp = true; /* Assume local write failure causes node failure */
   bool m_persist_on_flush = false; /* If false, persist each write before completion */
   bool m_flush_seen = false;
 
@@ -994,7 +999,6 @@ private:
   std::atomic<int> m_async_flush_ops = {0};
   std::atomic<int> m_async_append_ops = {0};
   std::atomic<int> m_async_complete_ops = {0};
-  std::atomic<int> m_async_write_req_finish = {0};
   std::atomic<int> m_async_null_flush_finish = {0};
   std::atomic<int> m_async_process_work = {0};
 
