@@ -1124,6 +1124,7 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
   unique_ptr<WriteLogOperationSet<T>> m_op_set = nullptr;
   bool m_do_early_flush = false;
   std::atomic<int> m_appended = {0};
+  bool m_queued = false;
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_WriteRequest<T> &req) {
     os << (C_BlockIORequest<T>&)req
@@ -2230,7 +2231,8 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
        * caller's thread to perform the persist & replication of the payload
        * buffer. */
       write_req->m_do_early_flush =
-	!(write_req->m_detained || write_req->m_deferred || write_req->m_op_set->m_persist_on_flush);
+	!(write_req->m_detained || write_req->m_queued ||
+	  write_req->m_deferred || write_req->m_op_set->m_persist_on_flush);
     }
   }
   if (!append_deferred) {
@@ -2267,10 +2269,14 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
       ldout(cct, 20) << __func__ << " write_req=" << write_req << " cell=" << guard_ctx.m_cell << dendl;
 
       assert(guard_ctx.m_cell);
-      write_req->m_detained = guard_ctx.m_state.detained;
+      write_req->m_detained = guard_ctx.m_state.detained; /* overlapped */
+      write_req->m_queued = guard_ctx.m_state.queued; /* queued behind at least one barrier */
       write_req->set_cell(guard_ctx.m_cell);
       if (write_req->m_detained) {
 	m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
+      }
+      if (write_req->m_queued) {
+	m_perfcounter->inc(l_librbd_rwl_wr_req_queued, 1);
       }
       alloc_and_dispatch_io_req(write_req);
     });
@@ -2763,6 +2769,7 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
   plb.add_u64_counter(l_librbd_rwl_wr_req_def_log, "wr_def_log", "Writes deferred for log entries");
   plb.add_u64_counter(l_librbd_rwl_wr_req_def_buf, "wr_def_buf", "Writes deferred for buffers");
   plb.add_u64_counter(l_librbd_rwl_wr_req_overlap, "wr_overlap", "Writes overlapping with prior in-progress writes");
+  plb.add_u64_counter(l_librbd_rwl_wr_req_queued, "wr_q_barrier", "Writes queued for prior barriers (aio_flush)");
   plb.add_u64_counter(l_librbd_rwl_wr_bytes, "wr_bytes", "Data size in writes");
 
   plb.add_u64_counter(l_librbd_rwl_log_ops, "log_ops", "Log appends");

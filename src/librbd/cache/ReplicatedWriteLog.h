@@ -41,6 +41,7 @@ enum {
   l_librbd_rwl_wr_req_def_log,     // write requests deferred for log entries
   l_librbd_rwl_wr_req_def_buf,     // write requests deferred for buffer space
   l_librbd_rwl_wr_req_overlap,     // write requests detained for overlap
+  l_librbd_rwl_wr_req_queued,      // write requests queued for prior barrier
   l_librbd_rwl_wr_bytes,           // bytes written
 
   // Write log operations (1 .. n per request that appends to the log)
