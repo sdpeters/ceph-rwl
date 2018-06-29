@@ -740,12 +740,27 @@ public:
   };
 };
 
+struct BlockGuardReqState {
+  bool barrier = false; /* This is a barrier request */
+  bool current_barrier = false; /* This is the currently active barrier */
+  bool detained = false;
+  bool queued = false; /* Queued for barrier */
+  friend std::ostream &operator<<(std::ostream &os,
+				  const BlockGuardReqState &r) {
+    os << "barrier=" << r.barrier << ", "
+       << "current_barrier=" << r.current_barrier << ", "
+       << "detained=" << r.detained << ", "
+       << "queued=" << r.queued;
+    return os;
+  };
+};
+
 class GuardedRequestFunctionContext : public Context {
 private:
   std::atomic<bool> m_acquired = {false};
   boost::function<void(BlockGuardCell*,bool)> m_callback;
   BlockGuardCell *m_cell = nullptr;
-  bool m_detained = false;
+  BlockGuardReqState m_state;
   void finish(int r) override;
 public:
   GuardedRequestFunctionContext(boost::function<void(BlockGuardCell*,bool)> &&callback);
@@ -754,29 +769,24 @@ public:
   GuardedRequestFunctionContext &operator=(const GuardedRequestFunctionContext&) = delete;
   /* Complete with acquired(cell, detained) then complete(int), or
    * directly with complete(cell, detained); */
-  void acquired(BlockGuardCell *cell, bool detained);
+  void acquired(BlockGuardCell *cell, BlockGuardReqState &state);
   void complete(int r) override;
-  void complete(BlockGuardCell *cell, bool detained, int r);
+  void complete(BlockGuardCell *cell, BlockGuardReqState &state, int r);
 };
 
 struct GuardedRequest {
   const BlockExtent block_extent;
   GuardedRequestFunctionContext *on_guard_acquire; /* Work to do when guard on range obtained */
-  const bool barrier = false; /* This is a barrier request */
-  bool current_barrier = false; /* This is the currently active barrier */
-  bool detained = false;
-  bool queued = false; /* Queued for barrier */
+  BlockGuardReqState state;
 
   GuardedRequest(const BlockExtent block_extent,
 		 GuardedRequestFunctionContext *on_guard_acquire, bool barrier = false)
-    : block_extent(block_extent), on_guard_acquire(on_guard_acquire), barrier(barrier) {
+    : block_extent(block_extent), on_guard_acquire(on_guard_acquire) {
+    state.barrier = barrier;
   }
   friend std::ostream &operator<<(std::ostream &os,
 				  const GuardedRequest &r) {
-    os << "barrier=" << r.barrier << ", "
-       << "current_barrier=" << r.current_barrier << ", "
-       << "detained=" << r.detained << ", "
-       << "queued=" << r.queued << ", "
+    os << "state=[" << r.state << "], "
        << "block_extent.block_start=" << r.block_extent.block_start << ", "
        << "block_extent.block_start=" << r.block_extent.block_end;
     return os;
