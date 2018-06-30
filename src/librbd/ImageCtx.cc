@@ -32,7 +32,6 @@
 #include "librbd/io/ImageRequestWQ.h"
 #include "librbd/io/ObjectDispatcher.h"
 #include "librbd/journal/StandardPolicy.h"
-#include "librbd/cache/FileImageCache.h"
 
 #include "osdc/Striper.h"
 #include <boost/bind.hpp>
@@ -119,7 +118,7 @@ public:
       order(0), size(0), features(0),
       format_string(NULL),
       id(image_id), parent(NULL),
-      stripe_unit(0), stripe_count(0), flags(0), ssd_cache_size(0),
+      stripe_unit(0), stripe_count(0), flags(0),
       readahead(),
       total_bytes_read(0),
       state(new ImageState<>(this)),
@@ -195,10 +194,6 @@ public:
 
     assert(image_watcher == NULL);
     image_watcher = new ImageWatcher<>(*this);
-
-    if (persistent_cache_enabled) {
-      ssd_cache_size = cct->_conf->get_val<uint64_t>("rbd_persistent_cache_size");
-    }
 
     readahead.set_trigger_requests(readahead_trigger_requests);
     readahead.set_max_readahead_size(readahead_max_bytes);
@@ -781,7 +776,6 @@ public:
         "rbd_mirroring_replay_delay", false)(
         "rbd_skip_partial_discard", false)(
 	"rbd_qos_iops_limit", false)(
-        "rbd_persistent_cache_enabled", false)(
         "rbd_rwl_enabled", false)(
         "rbd_rwl_size", false)(
         "rbd_rwl_path", false);
@@ -857,7 +851,6 @@ public:
     }
 
     io_work_queue->apply_qos_iops_limit(qos_iops_limit);
-    ASSIGN_OPTION(persistent_cache_enabled, bool);
     ASSIGN_OPTION(rwl_enabled, bool);
     ASSIGN_OPTION(rwl_size, uint64_t);
     ASSIGN_OPTION(rwl_path, std::string);

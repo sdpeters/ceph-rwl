@@ -10,7 +10,6 @@
 #include "librbd/cache/ObjectCacherObjectDispatch.h"
 #include "librbd/cache/ImageCache.h"
 #include "librbd/cache/ImageWriteback.h"
-#include "librbd/cache/FileImageCache.h"
 #include "librbd/cache/ReplicatedWriteLog.h"
 #include "librbd/image/CloseRequest.h"
 #include "librbd/image/RefreshRequest.h"
@@ -549,8 +548,7 @@ Context *OpenRequest<I>::handle_set_snap(int *result) {
 template <typename I>
 Context *OpenRequest<I>::send_init_image_cache(int *result) {
   if (m_image_ctx->old_format || m_image_ctx->read_only ||
-      (!m_image_ctx->persistent_cache_enabled &&
-       !m_image_ctx->rwl_enabled)) {
+      (!m_image_ctx->rwl_enabled)) {
     *result = 0;
     return m_on_finish;
   }
@@ -562,11 +560,7 @@ Context *OpenRequest<I>::send_init_image_cache(int *result) {
   cache::ImageCache<I> *layer =
     new cache::ImageWriteback<I>(*m_image_ctx);
   m_image_ctx->image_cache = layer;
-  if (m_image_ctx->persistent_cache_enabled) {
-    layer = new cache::FileImageCache<I>(*m_image_ctx,
-					 (cache::ImageWriteback<I>*)layer);
-    m_image_ctx->image_cache = layer;
-  }
+  /* An ImageCache below RWL would be created here */
   if (m_image_ctx->rwl_enabled) {
     ldout(cct, 4) << this << " " << __func__ << "RWL enabled" << dendl;
     layer = new cache::ReplicatedWriteLog<I>(*m_image_ctx, layer);

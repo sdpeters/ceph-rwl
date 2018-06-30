@@ -128,7 +128,6 @@ namespace librbd {
     uint64_t op_features = 0;
     bool operations_disabled = false;
     utime_t create_timestamp;
-    uint64_t ssd_cache_size;
 
     file_layout_t layout;
 
@@ -200,7 +199,6 @@ namespace librbd {
     bool blkin_trace_all;
     uint64_t qos_iops_limit;
 
-    bool persistent_cache_enabled;
     bool rwl_enabled;
     uint64_t rwl_size;
     std::string rwl_path;
