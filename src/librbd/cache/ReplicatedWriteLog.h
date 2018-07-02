@@ -874,6 +874,9 @@ struct C_FlushRequest;
 template <typename T>
 struct C_DiscardRequest;
 
+template <typename T>
+struct C_CompAndWriteRequest;
+
 /**
  * Prototype pmem-based, client-side, replicated write log
  */
@@ -896,6 +899,7 @@ public:
   using C_WriteRequestT = C_WriteRequest<This>;
   using C_FlushRequestT = C_FlushRequest<This>;
   using C_DiscardRequestT = C_DiscardRequest<This>;
+  using C_CompAndWriteRequestT = C_CompAndWriteRequest<This>;
   ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<ImageCtxT> *lower);
   ~ReplicatedWriteLog();
   ReplicatedWriteLog(const ReplicatedWriteLog&) = delete;
@@ -938,6 +942,7 @@ private:
   friend class C_WriteRequest<This>;
   friend class C_FlushRequest<This>;
   friend class C_DiscardRequest<This>;
+  friend class C_CompAndWriteRequest<This>;
   typedef std::list<C_WriteRequest<This> *> C_WriteRequests;
   typedef std::list<C_BlockIORequest<This> *> C_BlockIORequests;
 

@@ -27,7 +27,7 @@ using namespace librbd::cache::rwl;
 
 namespace rwl {
 
-static const bool RWL_VERBOSE_LOGGING = false;
+static const bool RWL_VERBOSE_LOGGING = true;
 
 typedef ReplicatedWriteLog<ImageCtx>::Extent Extent;
 typedef ReplicatedWriteLog<ImageCtx>::Extents Extents;
@@ -809,7 +809,7 @@ struct C_ReadRequest : public Context {
 
 template <typename I>
 void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
-				 int fadvise_flags, Context *on_finish) {
+				     int fadvise_flags, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   utime_t now = ceph_clock_now();
   C_ReadRequest *read_ctx = new C_ReadRequest(cct, now, m_perfcounter, bl, on_finish);
@@ -1423,6 +1423,74 @@ struct C_DiscardRequest : public C_BlockIORequest<T> {
   }
 };
 
+/**
+ * This is the custodian of the BlockGuard cell for this compare and write. The
+ * block guard is acquired before the read begins to guaratee atomicity of this
+ * operation.  If this results in a write, the block guard will be released
+ * when the write completes to all replicas.
+ */
+template <typename T>
+struct C_CompAndWriteRequest : public C_BlockIORequest<T> {
+  using C_BlockIORequest<T>::rwl;
+  bool m_compare_succeeded = false;
+  uint64_t *m_mismatch_offset;
+  bufferlist m_cmp_bl;
+  bufferlist m_read_bl;
+  friend std::ostream &operator<<(std::ostream &os,
+				  const C_CompAndWriteRequest<T> &req) {
+    os << (C_BlockIORequest<T>&)req
+       << "m_cmp_bl=" << req.m_cmp_bl << ", "
+       << "m_read_bl=" << req.m_read_bl << ", "
+       << "m_compare_succeeded=" << req.m_compare_succeeded << ", "
+       << "m_mismatch_offset=" << req.m_mismatch_offset;
+    return os;
+  };
+
+  C_CompAndWriteRequest(T &rwl, const utime_t arrived, Extents &&image_extents,
+			bufferlist&& cmp_bl, bufferlist&& bl, uint64_t *mismatch_offset,
+			int fadvise_flags, Context *user_req)
+    : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req),
+    m_mismatch_offset(mismatch_offset), m_cmp_bl(std::move(cmp_bl)) {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
+    }
+  }
+
+  ~C_CompAndWriteRequest() {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
+    }
+  }
+
+  template <typename... U>
+  static inline std::shared_ptr<C_CompAndWriteRequest<T>> create(U&&... arg)
+  {
+    return SharedPtrContext::create<C_CompAndWriteRequest<T>>(std::forward<U>(arg)...);
+  }
+
+  auto shared_from_this() {
+    return shared_from(this);
+  }
+
+  void finish_req(int r) {}
+
+  bool alloc_resources() override {
+    assert(0);
+    return false; //rwl.alloc_discard_resources(this);
+  }
+
+  void deferred_handler() override { }
+
+  void dispatch() override {
+    assert(0);
+    //rwl.dispatch_discard(this);
+  }
+
+  const char *get_name() const override {
+    return "C_CompAndWriteRequest";
+  }
+};
+
 const unsigned long int ops_appended_together = MAX_ALLOC_PER_TRANSACTION;
 /*
  * Performs the log event append operation for all of the scheduled
@@ -1462,7 +1530,6 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 	ops.splice(ops.end(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
 	ops_remain = true; /* Always check again before leaving */
 	if (RWL_VERBOSE_LOGGING) {
-	  ops_remain = !m_ops_to_append.empty();
 	  ldout(m_image_ctx.cct, 20) << "appending " << ops.size() << ", " << m_ops_to_append.size() << " remain" << dendl;
 	}
       } else {
@@ -2822,24 +2889,86 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 						  int fadvise_flags,
 						  Context *on_finish) {
 
+  utime_t now = ceph_clock_now();
   assert(m_initialized);
+  {
+    RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+    if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
+      on_finish->complete(-EROFS);
+      return;
+    }
+  }
+
+  auto *cw_req =
+    C_CompAndWriteRequestT::create(*this, now, std::move(image_extents), std::move(cmp_bl), std::move(bl),
+				   mismatch_offset, fadvise_flags, on_finish).get();
+  // TODO: Add comp_and_write stats
+  //m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
   m_perfcounter->inc(l_librbd_rwl_cmp, 1);
 
-  // TBD: Must pass through block guard. Dispatch read through RWL. In completion
-  // compare to cmp_bl. On match dispatch write.
+  /* The lambda below will be called when the block guard for all
+   * blocks affected by this write is obtained */
+  GuardedRequestFunctionContext *guarded_ctx =
+    new GuardedRequestFunctionContext([this, cw_req](GuardedRequestFunctionContext &guard_ctx) {
+      if (RWL_VERBOSE_LOGGING) {
+	ldout(m_image_ctx.cct, 20) << __func__ << " cw_req=" << cw_req << " cell=" << guard_ctx.m_cell << dendl;
+      }
 
-  // TODO:
-  // Compare source may be RWL, image cache, or image.
-  // Write will be to RWL
+      assert(guard_ctx.m_cell);
+      cw_req->m_detained = guard_ctx.m_state.detained;
+      cw_req->set_cell(guard_ctx.m_cell);
+      // TODO: more missing write_same stats
+      if (cw_req->m_detained) {
+	//m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
+      }
 
-  //CephContext *cct = m_image_ctx.cct;
+      auto read_complete_ctx = new FunctionContext(
+	[this, cw_req](int r) {
+	  if (RWL_VERBOSE_LOGGING) {
+	    ldout(m_image_ctx.cct, 20) << "cw_req=" << cw_req << dendl;
+	  }
 
-  //ldout(cct, 06) << "image_extents=" << image_extents << ", "
-  //               << "on_finish=" << on_finish << dendl;
+	  /* Compare read_bl to cmp_bl to determine if this will produce a write */
+	  if (cw_req->m_cmp_bl.contents_equal(cw_req->m_read_bl)) {
+	    /* Compare phase succeeds. Begin write */
+	    if (RWL_VERBOSE_LOGGING) {
+	      ldout(m_image_ctx.cct, 05) << __func__ << " cw_req=" << cw_req << " compare matched" << dendl;
+	    }
+	    cw_req->m_compare_succeeded = true;
+	    *cw_req->m_mismatch_offset = 0;
+	    cw_req->complete_user_request(0);
+	    release_guarded_request(cw_req->get_cell());
+	    cw_req->complete(0);
+	  } else {
+	    /* Compare phase fails. Comp-and write ends now. */
+	    if (RWL_VERBOSE_LOGGING) {
+	      ldout(m_image_ctx.cct, 15) << __func__ << " cw_req=" << cw_req << " compare failed" << dendl;
+	    }
+	    /* Bufferlist doesn't tell us where they differed, so we'll have to determine that here */
+	    assert(cw_req->m_read_bl.length() == cw_req->m_cmp_bl.length());
+	    uint64_t bl_index;
+	    for (bl_index = 0; bl_index < cw_req->m_cmp_bl.length(); bl_index++) {
+	      if (cw_req->m_cmp_bl[bl_index] != cw_req->m_read_bl[bl_index]) {
+		if (RWL_VERBOSE_LOGGING) {
+		  ldout(m_image_ctx.cct, 15) << __func__ << " cw_req=" << cw_req << " mismatch at " << bl_index << dendl;
+		}
+		break;
+	      }
+	    }
+	    *cw_req->m_mismatch_offset = bl_index;
+	    cw_req->complete_user_request(-EILSEQ);
+	    release_guarded_request(cw_req->get_cell());
+	    cw_req->complete(0);
+	  }
+	});
 
-  m_image_writeback->aio_compare_and_write(
-    std::move(image_extents), std::move(cmp_bl), std::move(bl), mismatch_offset,
-    fadvise_flags, on_finish);
+      /* Read phase of comp-and-write must read through RWL */
+      Extents image_extents_copy = cw_req->m_image_extents;
+      aio_read(std::move(image_extents_copy), &cw_req->m_read_bl, cw_req->fadvise_flags, read_complete_ctx);
+    });
+
+  detain_guarded_request(GuardedRequest(cw_req->m_image_extents_summary.block_extent(),
+					guarded_ctx));
 }
 
 /**
