@@ -1923,11 +1923,7 @@ void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequestT *write_req, int r
   if (RWL_VERBOSE_LOGGING) {
     ldout(cct, 15) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
   }
-  assert(write_req->get_cell());
-  if (!write_req->m_op_set->m_persist_on_flush) {
-    write_req->complete_user_request(result);
-  }
-  /* Completed to caller by here */
+  /* Completed to caller by here (in finish(), which calls this) */
   utime_t now = ceph_clock_now();
   release_write_lanes(write_req);
   release_guarded_request(write_req->get_cell()); /* TODO: Consider doing this in appending state */
