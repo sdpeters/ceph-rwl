@@ -994,7 +994,7 @@ private:
    * mode before the write is persisted. This is only true if there is
    * a local copy of the write data, or if local write failure always
    * causes local node failure. */
-  bool m_persist_on_flush_early_user_comp = true; /* Assume local write failure causes node failure */
+  bool m_persist_on_flush_early_user_comp = false; /* Assume local write failure does not cause node failure */
   bool m_persist_on_flush = false; /* If false, persist each write before completion */
   bool m_flush_seen = false;
 
