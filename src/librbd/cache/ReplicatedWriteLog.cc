@@ -871,12 +871,12 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
       uint64_t entry_hit_length = min(entry_image_extent.second - entry_offset,
 				      extent.second - extent_offset);
       Extent hit_extent(entry_image_extent.first, entry_hit_length);
-      /* Offset of the map entry into the log entry's buffer */
-      uint64_t map_entry_buffer_offset = entry_image_extent.first - map_entry.log_entry->ram_entry.image_offset_bytes;
-      /* Offset into the log entry buffer of this read hit */
-      uint64_t read_buffer_offset = map_entry_buffer_offset + entry_offset;
       assert(map_entry.log_entry->is_writer());
       if (map_entry.log_entry->is_write()) {
+	/* Offset of the map entry into the log entry's buffer */
+	uint64_t map_entry_buffer_offset = entry_image_extent.first - map_entry.log_entry->ram_entry.image_offset_bytes;
+	/* Offset into the log entry buffer of this read hit */
+	uint64_t read_buffer_offset = map_entry_buffer_offset + entry_offset;
 	/* Create buffer object referring to pmem pool for this read hit */
 	auto write_entry = dynamic_pointer_cast<WriteLogEntry>(map_entry.log_entry);
 	if (RWL_VERBOSE_LOGGING) {
@@ -900,6 +900,15 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 	/* Add hit extent to read extents */
 	ImageExtentBuf hit_extent_buf(hit_extent, hit_buf);
 	read_ctx->m_read_extents.push_back(hit_extent_buf);
+      } else if (map_entry.log_entry->is_writesame()) {
+	assert(0);
+	// bufferlist total_bl;
+
+	// uint64_t left = length;
+	// while(left) {
+	//   total_bl.append(bl);
+	//   left -= bl.length();
+	// }
       } else if (map_entry.log_entry->is_discard()) {
 	auto discard_entry = dynamic_pointer_cast<DiscardLogEntry>(map_entry.log_entry);
 	if (RWL_VERBOSE_LOGGING) {
@@ -1087,6 +1096,7 @@ struct WriteBufferAllocation {
   unsigned int allocation_size = 0;
   pobj_action buffer_alloc_action;
   TOID(uint8_t) buffer_oid = OID_NULL;
+  bool allocated = false;
   utime_t allocation_lat;
 };
 
@@ -1322,8 +1332,20 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
     rwl.m_perfcounter->tinc(l_librbd_rwl_wr_caller_latency, this->m_user_req_completed_time - this->m_arrived_time);
   }
 
-  bool alloc_resources() override {
-    return rwl.alloc_write_resources(this);
+  virtual bool alloc_resources() override;
+
+  /* Plain writes will allocate one buffer per request extent */
+  virtual void setup_buffer_resources(uint64_t &bytes_cached) {
+    for (auto &extent : this->m_image_extents) {
+      m_resources.buffers.emplace_back();
+      struct WriteBufferAllocation &buffer = m_resources.buffers.back();
+      buffer.allocation_size = MIN_WRITE_ALLOC_SIZE;
+      buffer.allocated = false;
+      bytes_cached += extent.second;
+      if (extent.second > buffer.allocation_size) {
+	buffer.allocation_size = extent.second;
+      }
+    }
   }
 
   void deferred_handler() override { }
@@ -1565,6 +1587,79 @@ struct C_CompAndWriteRequest : public C_WriteRequest<T> {
 
   const char *get_name() const override {
     return "C_CompAndWriteRequest";
+  }
+};
+
+/**
+ * This is the custodian of the BlockGuard cell for this write same.
+ *
+ * A writesame allocates and persists a data buffer like a write, but the
+ * data buffer is usually much shorter than the write same.
+ */
+template <typename T>
+struct C_WriteSameRequest : public C_WriteRequest<T> {
+  using C_BlockIORequest<T>::rwl;
+  friend std::ostream &operator<<(std::ostream &os,
+				  const C_WriteSameRequest<T> &req) {
+    os << (C_WriteRequest<T>&)req;
+    return os;
+  };
+
+  C_WriteSameRequest(T &rwl, const utime_t arrived, Extents &&image_extents,
+		     bufferlist&& bl, const int fadvise_flags, Context *user_req)
+    : C_WriteRequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req) {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
+    }
+  }
+
+  ~C_WriteSameRequest() {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
+    }
+  }
+
+  template <typename... U>
+  static inline std::shared_ptr<C_WriteSameRequest<T>> create(U&&... arg)
+  {
+    return SharedPtrContext::create<C_WriteSameRequest<T>>(std::forward<U>(arg)...);
+  }
+
+  auto shared_from_this() {
+    return shared_from(this);
+  }
+
+  /* Inherit finish_req() from C_WriteRequest */
+
+  void update_req_stats(utime_t &now) override {
+    /* Write same stats. Compare-and-write excluded from most write
+     * stats because the read phase will make them look like slow writes in
+     * those histograms. */
+    utime_t comp_latency = now - this->m_arrived_time;
+    rwl.m_perfcounter->tinc(l_librbd_rwl_ws_latency, comp_latency);
+  }
+
+  /* Write sames will allocate one buffer, the size of the repeating pattern */
+  void setup_buffer_resources(uint64_t &bytes_cached) override {
+    assert(this->m_image_extents.size() == 1);
+    auto pattern_length = this->bl.length();
+    this->m_resources.buffers.emplace_back();
+    struct WriteBufferAllocation &buffer = this->m_resources.buffers.back();
+    buffer.allocation_size = MIN_WRITE_ALLOC_SIZE;
+    buffer.allocated = false;
+    bytes_cached += pattern_length;
+    if (pattern_length > buffer.allocation_size) {
+      buffer.allocation_size = pattern_length;
+    }
+  }
+
+  /*
+   * Write same doesn't implement alloc_resources(), deferred_handler(), or
+   * dispatch(). We use the implementation in C_WriteRequest().
+   */
+
+  const char *get_name() const override {
+    return "C_WriteSameRequest";
   }
 };
 
@@ -2067,8 +2162,8 @@ void ReplicatedWriteLog<I>::schedule_complete_op_log_entries(GenericLogOperation
  *
  * Lanes are released after the write persists via release_write_lanes()
  */
-template <typename I>
-bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequestT *write_req)
+template <typename T>
+bool C_WriteRequest<T>::alloc_resources()
 {
   bool alloc_succeeds = true;
   bool no_space = false;
@@ -2076,103 +2171,98 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequestT *write_req)
   uint64_t bytes_allocated = 0;
   uint64_t bytes_cached = 0;
 
-  assert(!m_lock.is_locked_by_me());
-  assert(!write_req->m_resources.allocated);
-  write_req->m_resources.buffers.reserve(write_req->m_image_extents.size());
+  assert(!rwl.m_lock.is_locked_by_me());
+  assert(!m_resources.allocated);
+  m_resources.buffers.reserve(this->m_image_extents.size());
   {
-    Mutex::Locker locker(m_lock);
-    if (m_free_lanes < write_req->m_image_extents.size()) {
-      if (!write_req->m_waited_lanes) {
-	write_req->m_waited_lanes = true;
-      }
+    Mutex::Locker locker(rwl.m_lock);
+    if (rwl.m_free_lanes < this->m_image_extents.size()) {
+      this->m_waited_lanes = true;
       if (RWL_VERBOSE_LOGGING) {
-	ldout(m_image_ctx.cct, 20) << "not enough free lanes (need "
-				   <<  write_req->m_image_extents.size()
-				   << ", have " << m_free_lanes << ") "
-				   << *write_req << dendl;
+	ldout(rwl.m_image_ctx.cct, 20) << "not enough free lanes (need "
+				       <<  this->m_image_extents.size()
+				       << ", have " << rwl.m_free_lanes << ") "
+				       << *this << dendl;
       }
       alloc_succeeds = false;
       /* This isn't considered a "no space" alloc fail. Lanes are a throttling mechanism. */
     }
-    if (m_free_log_entries < write_req->m_image_extents.size()) {
-      if (!write_req->m_waited_entries) {
-	write_req->m_waited_entries = true;
-      }
+    if (rwl.m_free_log_entries < this->m_image_extents.size()) {
+      this->m_waited_entries = true;
       if (RWL_VERBOSE_LOGGING) {
-	ldout(m_image_ctx.cct, 20) << "not enough free entries (need "
-				   <<  write_req->m_image_extents.size()
-				   << ", have " << m_free_log_entries << ") "
-				   << *write_req << dendl;
+	ldout(rwl.m_image_ctx.cct, 20) << "not enough free entries (need "
+				       <<  this->m_image_extents.size()
+				       << ", have " << rwl.m_free_log_entries << ") "
+				       << *this << dendl;
       }
       alloc_succeeds = false;
       no_space = true; /* Entries must be retired */
     }
     /* Don't attempt buffer allocate if we've exceeded the "full" threshold */
-    if (m_bytes_allocated > m_bytes_allocated_cap) {
-      if (!write_req->m_waited_buffers) {
-	write_req->m_waited_buffers = true;
+    if (rwl.m_bytes_allocated > rwl.m_bytes_allocated_cap) {
+      if (!this->m_waited_buffers) {
+	this->m_waited_buffers = true;
 	if (RWL_VERBOSE_LOGGING) {
-	  ldout(m_image_ctx.cct, 1) << "Waiting for allocation cap (cap=" << m_bytes_allocated_cap
-				    << ", allocated=" << m_bytes_allocated
-				    << ") in write [" << *write_req << "]" << dendl;
+	  ldout(rwl.m_image_ctx.cct, 1) << "Waiting for allocation cap (cap=" << rwl.m_bytes_allocated_cap
+					<< ", allocated=" << rwl.m_bytes_allocated
+					<< ") in write [" << *this << "]" << dendl;
 	}
       }
       alloc_succeeds = false;
       no_space = true; /* Entries must be retired */
     }
   }
+
   if (alloc_succeeds) {
-    for (auto &extent : write_req->m_image_extents) {
-      write_req->m_resources.buffers.emplace_back();
-      struct WriteBufferAllocation &buffer = write_req->m_resources.buffers.back();
-      buffer.allocation_size = MIN_WRITE_ALLOC_SIZE;
-      bytes_cached += extent.second;
-      if (extent.second > buffer.allocation_size) {
-	buffer.allocation_size = extent.second;
-      }
+    setup_buffer_resources(bytes_cached);
+  }
+
+  if (alloc_succeeds) {
+    for (auto &buffer : m_resources.buffers) {
       bytes_allocated += buffer.allocation_size;
       utime_t before_reserve = ceph_clock_now();
-      buffer.buffer_oid = pmemobj_reserve(m_log_pool,
+      buffer.buffer_oid = pmemobj_reserve(rwl.m_log_pool,
 					  &buffer.buffer_alloc_action,
 					  buffer.allocation_size,
 					  0 /* Object type */);
       buffer.allocation_lat = ceph_clock_now() - before_reserve;
       if (TOID_IS_NULL(buffer.buffer_oid)) {
-	if (!write_req->m_waited_buffers) {
-	  write_req->m_waited_buffers = true;
+	if (!this->m_waited_buffers) {
+	  this->m_waited_buffers = true;
 	}
 	if (RWL_VERBOSE_LOGGING) {
-	  ldout(m_image_ctx.cct, 5) << "can't allocate all data buffers: "
-				    << pmemobj_errormsg() << ". "
-				    << *write_req << dendl;
+	  ldout(rwl.m_image_ctx.cct, 5) << "can't allocate all data buffers: "
+					<< pmemobj_errormsg() << ". "
+					<< *this << dendl;
 	}
 	alloc_succeeds = false;
 	no_space = true; /* Entries need to be retired */
-	write_req->m_resources.buffers.pop_back();
 	break;
+      } else {
+	buffer.allocated = true;
       }
       if (RWL_VERBOSE_LOGGING) {
-	ldout(m_image_ctx.cct, 20) << "Allocated " << buffer.buffer_oid.oid.pool_uuid_lo
-				   << "." << buffer.buffer_oid.oid.off
-				   << ", size=" << buffer.allocation_size << dendl;
+	ldout(rwl.m_image_ctx.cct, 20) << "Allocated " << buffer.buffer_oid.oid.pool_uuid_lo
+				       << "." << buffer.buffer_oid.oid.off
+				       << ", size=" << buffer.allocation_size << dendl;
       }
     }
   }
 
   if (alloc_succeeds) {
-    unsigned int num_extents = write_req->m_image_extents.size();
-    Mutex::Locker locker(m_lock);
+    unsigned int num_extents = this->m_image_extents.size();
+    Mutex::Locker locker(rwl.m_lock);
     /* We need one free log entry per extent (each is a separate entry), and
      * one free "lane" for remote replication. */
-    if ((m_free_lanes >= num_extents) &&
-	(m_free_log_entries >= num_extents)) {
-      m_free_lanes -= num_extents;
-      m_free_log_entries -= num_extents;
-      m_unpublished_reserves += num_extents;
-      m_bytes_allocated += bytes_allocated;
-      m_bytes_cached += bytes_cached;
-      m_bytes_dirty += bytes_cached;
-      write_req->m_resources.allocated = true;
+    if ((rwl.m_free_lanes >= num_extents) &&
+	(rwl.m_free_log_entries >= num_extents)) {
+      rwl.m_free_lanes -= num_extents;
+      rwl.m_free_log_entries -= num_extents;
+      rwl.m_unpublished_reserves += num_extents;
+      rwl.m_bytes_allocated += bytes_allocated;
+      rwl.m_bytes_cached += bytes_cached;
+      rwl.m_bytes_dirty += bytes_cached;
+      m_resources.allocated = true;
     } else {
       alloc_succeeds = false;
     }
@@ -2180,19 +2270,21 @@ bool ReplicatedWriteLog<I>::alloc_write_resources(C_WriteRequestT *write_req)
 
   if (!alloc_succeeds) {
     /* On alloc failure, free any buffers we did allocate */
-    for (auto &buffer : write_req->m_resources.buffers) {
-      pmemobj_cancel(m_log_pool, &buffer.buffer_alloc_action, 1);
+    for (auto &buffer : m_resources.buffers) {
+      if (buffer.allocated) {
+	pmemobj_cancel(rwl.m_log_pool, &buffer.buffer_alloc_action, 1);
+      }
     }
-    write_req->m_resources.buffers.clear();
+    m_resources.buffers.clear();
     if (no_space) {
       /* Expedite flushing and/or retiring */
-      Mutex::Locker locker(m_lock);
-      m_alloc_failed_since_retire = true;
-      m_last_alloc_fail = ceph_clock_now();
+      Mutex::Locker locker(rwl.m_lock);
+      rwl.m_alloc_failed_since_retire = true;
+      rwl.m_last_alloc_fail = ceph_clock_now();
     }
   }
 
-  write_req->m_allocated_time = alloc_start;
+ this->m_allocated_time = alloc_start;
   return alloc_succeeds;
 }
 
@@ -2866,15 +2958,11 @@ template <typename I>
 void ReplicatedWriteLog<I>::aio_writesame(uint64_t offset, uint64_t length,
 					  bufferlist&& bl, int fadvise_flags,
 					  Context *on_finish) {
-  CephContext *cct = m_image_ctx.cct;
+  utime_t now = ceph_clock_now();
+  Extents ws_extents = {{offset, length}};
   m_perfcounter->inc(l_librbd_rwl_ws, 1);
-  ldout(cct, 06) << "offset=" << offset << ", "
-		 << "length=" << length << ", "
-		 << "data_len=" << bl.length() << ", "
-		 << "on_finish=" << on_finish << dendl;
   assert(m_initialized);
   {
-
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       on_finish->complete(-EROFS);
@@ -2882,19 +2970,32 @@ void ReplicatedWriteLog<I>::aio_writesame(uint64_t offset, uint64_t length,
     }
   }
 
-  // TBD: Must pass through block guard.
+  ldout(m_image_ctx.cct, 06) << "offset=" << offset << ", "
+			     << "length=" << length << ", "
+			     << "data_len=" << bl.length() << ", "
+			     << "on_finish=" << on_finish << dendl;
 
-  m_image_writeback->aio_writesame(offset, length, std::move(bl), fadvise_flags, on_finish);
+  /* A write same request is also a write request. The key difference is the
+   * write same data buffer is shorter than the extent of the request. The full
+   * extent will be used in the block guard, and appear in
+   * m_blocks_to_log_entries_map. The data buffer allocated for the WS is only
+   * as long as the length of the bl here, which is the pattern that's repeated
+   * in the image for the entire length of this WS. Read hits and flushing of
+   * write sames are different than normal writes. */
+  auto *ws_req =
+    C_WriteSameRequestT::create(*this, now, std::move(ws_extents), std::move(bl), fadvise_flags, on_finish).get();
+  m_perfcounter->inc(l_librbd_rwl_ws_bytes, ws_req->m_image_extents_summary.total_bytes);
 
-  bufferlist total_bl;
+  /* The lambda below will be called when the block guard for all
+   * blocks affected by this write is obtained */
+  GuardedRequestFunctionContext *guarded_ctx =
+    new GuardedRequestFunctionContext([this, ws_req](GuardedRequestFunctionContext &guard_ctx) {
+      ws_req->blockguard_acquired(guard_ctx);
+      alloc_and_dispatch_io_req(ws_req);
+    });
 
-  uint64_t left = length;
-  while(left) {
-    total_bl.append(bl);
-    left -= bl.length();
-  }
-  assert(length == total_bl.length());
-  aio_write({{offset, length}}, std::move(total_bl), fadvise_flags, on_finish);
+  detain_guarded_request(GuardedRequest(ws_req->m_image_extents_summary.block_extent(),
+					guarded_ctx));
 }
 
 template <typename I>

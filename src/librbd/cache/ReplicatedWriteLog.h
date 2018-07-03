@@ -124,7 +124,7 @@ enum {
   l_librbd_rwl_aio_flush_def,
   l_librbd_rwl_aio_flush_latency,
   l_librbd_rwl_ws,
-  l_librbd_rwl_ws_bytes,
+  l_librbd_rwl_ws_bytes, // Bytes modified by write same, probably much larger than WS payload bytes
   l_librbd_rwl_ws_latency,
 
   l_librbd_rwl_cmp,
@@ -274,6 +274,7 @@ struct WriteLogPoolRoot {
 class SyncPointLogEntry;
 class GeneralWriteLogEntry;
 class WriteLogEntry;
+class WriteSameLogEntry;
 class DiscardLogEntry;
 class GenericLogEntry {
 public:
@@ -315,7 +316,7 @@ public:
   std::atomic<unsigned int> m_writes = {0};
   /* Total bytes for all writing entries using this sync gen number */
   std::atomic<uint64_t> m_bytes = {0};
-  /* Writing entries using this sync gen number that have completed to the application */
+  /* Writing entries using this sync gen number that have completed */
   std::atomic<unsigned int> m_writes_completed = {0};
   /* Writing entries using this sync gen number that have completed flushing to the writeback interface */
   std::atomic<unsigned int> m_writes_flushed = {0};
@@ -416,6 +417,40 @@ public:
   }
 };
 
+class WriteSameLogEntry : public WriteLogEntry {
+public:
+  WriteSameLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
+		    const uint64_t image_offset_bytes, const uint64_t write_bytes,
+		    const uint32_t data_length)
+    : WriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) {
+    ram_entry.writesame = 1;
+    ram_entry.ws_datalen = data_length;
+  }
+  WriteSameLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes,
+		    const uint32_t data_length)
+    : WriteLogEntry(nullptr, image_offset_bytes, write_bytes) {
+    ram_entry.writesame = 1;
+    ram_entry.ws_datalen = data_length;
+  }
+  WriteSameLogEntry(const WriteSameLogEntry&) = delete;
+  WriteSameLogEntry &operator=(const WriteSameLogEntry&) = delete;
+  const BlockExtent block_extent();
+  void add_reader();
+  void remove_reader();
+  const GenericLogEntry* get_log_entry() { return get_write_log_entry(); }
+  const WriteLogEntry* get_write_log_entry() = 0;
+  const WriteSameLogEntry* get_write_same_log_entry() { return this; }
+  std::ostream &format(std::ostream &os) const {
+    os << "(WriteSame) ";
+    WriteLogEntry::format(os);
+    return os;
+  };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const WriteSameLogEntry &entry) {
+    return entry.format(os);
+  }
+};
+
 class DiscardLogEntry : public GeneralWriteLogEntry {
 public:
   DiscardLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
@@ -430,8 +465,6 @@ public:
   DiscardLogEntry(const DiscardLogEntry&) = delete;
   DiscardLogEntry &operator=(const DiscardLogEntry&) = delete;
   const BlockExtent block_extent();
-  void add_reader();
-  void remove_reader();
   const GenericLogEntry* get_log_entry() { return get_discard_log_entry(); }
   const DiscardLogEntry* get_discard_log_entry() { return this; }
   std::ostream &format(std::ostream &os) const {
@@ -548,6 +581,7 @@ public:
   virtual const std::shared_ptr<SyncPointLogEntry> get_sync_point_log_entry() { return nullptr; }
   virtual const std::shared_ptr<GeneralWriteLogEntry> get_gen_write_log_entry() { return nullptr; }
   virtual const std::shared_ptr<WriteLogEntry> get_write_log_entry() { return nullptr; }
+  virtual const std::shared_ptr<WriteSameLogEntry> get_write_same_log_entry() { return nullptr; }
   virtual const std::shared_ptr<DiscardLogEntry> get_discard_log_entry() { return nullptr; }
   virtual void appending() = 0;
   virtual void complete(int r) = 0;
@@ -661,6 +695,37 @@ public:
 };
 
 template <typename T>
+class WriteSameLogOperation : public WriteLogOperation<T> {
+public:
+  using GenericLogOperation<T>::rwl;
+  using GeneralWriteLogOperation<T>::m_lock;
+  using GeneralWriteLogOperation<T>::sync_point;
+  using GeneralWriteLogOperation<T>::on_write_append;
+  using GeneralWriteLogOperation<T>::on_write_persist;
+  using WriteLogOperation<T>::log_entry;
+  using WriteLogOperation<T>::bl;
+  using WriteLogOperation<T>::buffer_alloc_action;
+  WriteSameLogOperation(WriteLogOperationSet<T> &set, const uint64_t image_offset_bytes, const uint64_t write_bytes);
+  ~WriteSameLogOperation();
+  WriteSameLogOperation(const WriteSameLogOperation&) = delete;
+  WriteSameLogOperation &operator=(const WriteSameLogOperation&) = delete;
+  std::ostream &format(std::ostream &os) const {
+    os << "(Write Same) ";
+    WriteLogOperation<T>::format(os);
+    return os;
+  };
+  friend std::ostream &operator<<(std::ostream &os,
+				  const WriteSameLogOperation<T> &op) {
+    return op.format(os);
+  }
+  const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_write_log_entry(); }
+  const std::shared_ptr<WriteLogEntry> get_write_log_entry() = 0;
+  const std::shared_ptr<WriteLogEntry> get_write_same_log_entry() { return log_entry; }
+  bool is_write() { return false; }
+  bool is_writesame() { return true; }
+};
+
+template <typename T>
 class DiscardLogOperation : public GeneralWriteLogOperation<T> {
 public:
   using GenericLogOperation<T>::rwl;
@@ -710,6 +775,9 @@ using WriteLogOperationSharedPtr = std::shared_ptr<WriteLogOperation<T>>;
 
 template <typename T>
 using WriteLogOperations = std::list<WriteLogOperationSharedPtr<T>>;
+
+template <typename T>
+using WriteSameLogOperationSharedPtr = std::shared_ptr<WriteSameLogOperation<T>>;
 
 template <typename T>
 class WriteLogOperationSet {
@@ -876,6 +944,9 @@ template <typename T>
 struct C_DiscardRequest;
 
 template <typename T>
+struct C_WriteSameRequest;
+
+template <typename T>
 struct C_CompAndWriteRequest;
 
 /**
@@ -893,6 +964,7 @@ public:
   using WriteLogOperationT = rwl::WriteLogOperation<This>;
   using WriteLogOperationSetT = rwl::WriteLogOperationSet<This>;
   using SyncPointLogOperationT = rwl::SyncPointLogOperation<This>;
+  using WriteSameLogOperationT = rwl::WriteSameLogOperation<This>;
   using DiscardLogOperationT = rwl::DiscardLogOperation<This>;
   using GenericLogOperationsT = rwl::GenericLogOperations<This>;
   using GenericLogOperationsVectorT = rwl::GenericLogOperationsVector<This>;
@@ -900,6 +972,7 @@ public:
   using C_WriteRequestT = C_WriteRequest<This>;
   using C_FlushRequestT = C_FlushRequest<This>;
   using C_DiscardRequestT = C_DiscardRequest<This>;
+  using C_WriteSameRequestT = C_WriteSameRequest<This>;
   using C_CompAndWriteRequestT = C_CompAndWriteRequest<This>;
   ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<ImageCtxT> *lower);
   ~ReplicatedWriteLog();
@@ -943,6 +1016,7 @@ private:
   friend class C_WriteRequest<This>;
   friend class C_FlushRequest<This>;
   friend class C_DiscardRequest<This>;
+  friend class C_WriteSameRequest<This>;
   friend class C_CompAndWriteRequest<This>;
   typedef std::list<C_WriteRequest<This> *> C_WriteRequests;
   typedef std::list<C_BlockIORequest<This> *> C_BlockIORequests;
@@ -1104,7 +1178,6 @@ private:
   void dispatch_discard(C_DiscardRequestT *discard_req);
 
   void dispatch_deferred_writes(void);
-  bool alloc_write_resources(C_WriteRequestT *write_req);
   void release_write_lanes(C_WriteRequestT *write_req);
   void alloc_and_dispatch_io_req(C_BlockIORequestT *write_req);
   void dispatch_aio_write(C_WriteRequestT *write_req);
