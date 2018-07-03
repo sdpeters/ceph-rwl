@@ -777,7 +777,7 @@ struct C_ReadRequest : public Context {
 	  miss_bytes += extent.second;
 	  bufferlist miss_extent_bl;
 	  miss_extent_bl.substr_of(m_miss_bl, miss_bl_offset, extent.second);
-	  /* Add this read miss bullerlist to the output bufferlist */
+	  /* Add this read miss bufferlist to the output bufferlist */
 	  m_out_bl->claim_append(miss_extent_bl);
 	  /* Consume these bytes in the read miss bufferlist */
 	  miss_bl_offset += extent.second;
@@ -1253,8 +1253,73 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
     return shared_from(this);
   }
 
-  void finish_req(int r) {
-    rwl.complete_write_req(this, r);
+  void blockguard_acquired(GuardedRequestFunctionContext &guard_ctx) {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 20) << __func__ << " write_req=" << this << " cell=" << guard_ctx.m_cell << dendl;
+    }
+
+    assert(guard_ctx.m_cell);
+    this->m_detained = guard_ctx.m_state.detained; /* overlapped */
+    this->m_queued = guard_ctx.m_state.queued; /* queued behind at least one barrier */
+    this->set_cell(guard_ctx.m_cell);
+  }
+
+  /* Common finish to plain write and compare-and-write (if it writes) */
+  virtual void finish_req(int r) {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 15) << "write_req=" << this << " cell=" << this->get_cell() << dendl;
+    }
+
+    /* Completed to caller by here (in finish(), which calls this) */
+    utime_t now = ceph_clock_now();
+    rwl.release_write_lanes(this);
+    rwl.release_guarded_request(this->get_cell()); /* TODO: Consider doing this in appending state */
+    update_req_stats(now);
+  }
+
+  /* Compare and write will override this */
+  virtual void update_req_stats(utime_t &now) {
+    for (auto &allocation : this->m_resources.buffers) {
+      rwl.m_perfcounter->tinc(l_librbd_rwl_log_op_alloc_t, allocation.allocation_lat);
+      rwl.m_perfcounter->hinc(l_librbd_rwl_log_op_alloc_t_hist,
+			      allocation.allocation_lat.to_nsec(), allocation.allocation_size);
+    }
+    if (this->m_detained) {
+      rwl.m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
+    }
+    if (this->m_queued) {
+      rwl.m_perfcounter->inc(l_librbd_rwl_wr_req_queued, 1);
+    }
+    if (this->m_deferred) {
+      rwl.m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
+    }
+    if (this->m_waited_lanes) {
+      rwl.m_perfcounter->inc(l_librbd_rwl_wr_req_def_lanes, 1);
+    }
+    if (this->m_waited_entries) {
+      rwl.m_perfcounter->inc(l_librbd_rwl_wr_req_def_log, 1);
+    }
+    if (this->m_waited_buffers) {
+      rwl.m_perfcounter->inc(l_librbd_rwl_wr_req_def_buf, 1);
+    }
+    rwl.m_perfcounter->tinc(l_librbd_rwl_req_arr_to_all_t, this->m_allocated_time - this->m_arrived_time);
+    rwl.m_perfcounter->tinc(l_librbd_rwl_req_all_to_dis_t, this->m_dispatched_time - this->m_allocated_time);
+    rwl.m_perfcounter->tinc(l_librbd_rwl_req_arr_to_dis_t, this->m_dispatched_time - this->m_arrived_time);
+    utime_t comp_latency = now - this->m_arrived_time;
+    if (!(this->m_waited_entries || this->m_waited_buffers || this->m_deferred)) {
+      rwl.m_perfcounter->tinc(l_librbd_rwl_nowait_req_arr_to_all_t, this->m_allocated_time - this->m_arrived_time);
+      rwl.m_perfcounter->tinc(l_librbd_rwl_nowait_req_all_to_dis_t, this->m_dispatched_time - this->m_allocated_time);
+      rwl.m_perfcounter->tinc(l_librbd_rwl_nowait_req_arr_to_dis_t, this->m_dispatched_time - this->m_arrived_time);
+      rwl.m_perfcounter->tinc(l_librbd_rwl_nowait_wr_latency, comp_latency);
+      rwl.m_perfcounter->hinc(l_librbd_rwl_nowait_wr_latency_hist, comp_latency.to_nsec(),
+			      this->m_image_extents_summary.total_bytes);
+      rwl.m_perfcounter->tinc(l_librbd_rwl_nowait_wr_caller_latency,
+			      this->m_user_req_completed_time - this->m_arrived_time);
+    }
+    rwl.m_perfcounter->tinc(l_librbd_rwl_wr_latency, comp_latency);
+    rwl.m_perfcounter->hinc(l_librbd_rwl_wr_latency_hist, comp_latency.to_nsec(),
+			    this->m_image_extents_summary.total_bytes);
+    rwl.m_perfcounter->tinc(l_librbd_rwl_wr_caller_latency, this->m_user_req_completed_time - this->m_arrived_time);
   }
 
   bool alloc_resources() override {
@@ -1372,7 +1437,7 @@ struct C_DiscardRequest : public C_BlockIORequest<T> {
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_DiscardRequest<T> &req) {
     os << (C_BlockIORequest<T>&)req
-       << "m_skip_parial_discard=" << req.m_skip_partial_discard;
+       << "m_skip_partial_discard=" << req.m_skip_partial_discard;
     if (req.op) {
       os << "op=[" << *req.op << "]";
     } else {
@@ -1425,12 +1490,12 @@ struct C_DiscardRequest : public C_BlockIORequest<T> {
 
 /**
  * This is the custodian of the BlockGuard cell for this compare and write. The
- * block guard is acquired before the read begins to guaratee atomicity of this
+ * block guard is acquired before the read begins to guarantee atomicity of this
  * operation.  If this results in a write, the block guard will be released
  * when the write completes to all replicas.
  */
 template <typename T>
-struct C_CompAndWriteRequest : public C_BlockIORequest<T> {
+struct C_CompAndWriteRequest : public C_WriteRequest<T> {
   using C_BlockIORequest<T>::rwl;
   bool m_compare_succeeded = false;
   uint64_t *m_mismatch_offset;
@@ -1438,7 +1503,7 @@ struct C_CompAndWriteRequest : public C_BlockIORequest<T> {
   bufferlist m_read_bl;
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_CompAndWriteRequest<T> &req) {
-    os << (C_BlockIORequest<T>&)req
+    os << (C_WriteRequest<T>&)req
        << "m_cmp_bl=" << req.m_cmp_bl << ", "
        << "m_read_bl=" << req.m_read_bl << ", "
        << "m_compare_succeeded=" << req.m_compare_succeeded << ", "
@@ -1449,7 +1514,7 @@ struct C_CompAndWriteRequest : public C_BlockIORequest<T> {
   C_CompAndWriteRequest(T &rwl, const utime_t arrived, Extents &&image_extents,
 			bufferlist&& cmp_bl, bufferlist&& bl, uint64_t *mismatch_offset,
 			int fadvise_flags, Context *user_req)
-    : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req),
+    : C_WriteRequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req),
     m_mismatch_offset(mismatch_offset), m_cmp_bl(std::move(cmp_bl)) {
     if (RWL_VERBOSE_LOGGING) {
       ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
@@ -1472,19 +1537,31 @@ struct C_CompAndWriteRequest : public C_BlockIORequest<T> {
     return shared_from(this);
   }
 
-  void finish_req(int r) {}
-
-  bool alloc_resources() override {
-    assert(0);
-    return false; //rwl.alloc_discard_resources(this);
+  void finish_req(int r) override {
+    if (m_compare_succeeded) {
+      C_WriteRequest<T>::finish_req(r);
+    } else {
+      utime_t now = ceph_clock_now();
+      update_req_stats(now);
+    }
   }
 
-  void deferred_handler() override { }
-
-  void dispatch() override {
-    assert(0);
-    //rwl.dispatch_discard(this);
+  void update_req_stats(utime_t &now) override {
+    /* Compare-and-write stats. Compare-and-write excluded from most write
+     * stats because the read phase will make them look like slow writes in
+     * those histograms. */
+    if (!m_compare_succeeded) {
+      rwl.m_perfcounter->inc(l_librbd_rwl_cmp_fails, 1);
+    }
+    utime_t comp_latency = now - this->m_arrived_time;
+    rwl.m_perfcounter->tinc(l_librbd_rwl_cmp_latency, comp_latency);
   }
+
+  /*
+   * Compare and write doesn't implement alloc_resources(), deferred_handler(),
+   * or dispatch(). We use the implementation in C_WriteRequest(), and only if the
+   * compare phase succeeds and a write is actually performed.
+   */
 
   const char *get_name() const override {
     return "C_CompAndWriteRequest";
@@ -1982,53 +2059,6 @@ void ReplicatedWriteLog<I>::schedule_complete_op_log_entries(GenericLogOperation
   }
 }
 
-template <typename I>
-void ReplicatedWriteLog<I>::complete_write_req(C_WriteRequestT *write_req, int result)
-{
-  CephContext *cct = m_image_ctx.cct;
-
-  if (RWL_VERBOSE_LOGGING) {
-    ldout(cct, 15) << "write_req=" << write_req << " cell=" << write_req->get_cell() << dendl;
-  }
-  /* Completed to caller by here (in finish(), which calls this) */
-  utime_t now = ceph_clock_now();
-  release_write_lanes(write_req);
-  release_guarded_request(write_req->get_cell()); /* TODO: Consider doing this in appending state */
-  for (auto &allocation : write_req->m_resources.buffers) {
-    m_perfcounter->tinc(l_librbd_rwl_log_op_alloc_t, allocation.allocation_lat);
-    m_perfcounter->hinc(l_librbd_rwl_log_op_alloc_t_hist, allocation.allocation_lat.to_nsec(), allocation.allocation_size);
-  }
-  if (write_req->m_deferred) {
-    m_perfcounter->inc(l_librbd_rwl_wr_req_def, 1);
-  }
-  if (write_req->m_waited_lanes) {
-    m_perfcounter->inc(l_librbd_rwl_wr_req_def_lanes, 1);
-  }
-  if (write_req->m_waited_entries) {
-    m_perfcounter->inc(l_librbd_rwl_wr_req_def_log, 1);
-  }
-  if (write_req->m_waited_buffers) {
-    m_perfcounter->inc(l_librbd_rwl_wr_req_def_buf, 1);
-  }
-  m_perfcounter->tinc(l_librbd_rwl_req_arr_to_all_t, write_req->m_allocated_time - write_req->m_arrived_time);
-  m_perfcounter->tinc(l_librbd_rwl_req_all_to_dis_t, write_req->m_dispatched_time - write_req->m_allocated_time);
-  m_perfcounter->tinc(l_librbd_rwl_req_arr_to_dis_t, write_req->m_dispatched_time - write_req->m_arrived_time);
-  utime_t comp_latency = now - write_req->m_arrived_time;
-  if (!(write_req->m_waited_entries || write_req->m_waited_buffers || write_req->m_deferred)) {
-    m_perfcounter->tinc(l_librbd_rwl_nowait_req_arr_to_all_t, write_req->m_allocated_time - write_req->m_arrived_time);
-    m_perfcounter->tinc(l_librbd_rwl_nowait_req_all_to_dis_t, write_req->m_dispatched_time - write_req->m_allocated_time);
-    m_perfcounter->tinc(l_librbd_rwl_nowait_req_arr_to_dis_t, write_req->m_dispatched_time - write_req->m_arrived_time);
-    m_perfcounter->tinc(l_librbd_rwl_nowait_wr_latency, comp_latency);
-    m_perfcounter->hinc(l_librbd_rwl_nowait_wr_latency_hist, comp_latency.to_nsec(),
-			write_req->m_image_extents_summary.total_bytes);
-    m_perfcounter->tinc(l_librbd_rwl_nowait_wr_caller_latency, write_req->m_user_req_completed_time - write_req->m_arrived_time);
-  }
-  m_perfcounter->tinc(l_librbd_rwl_wr_latency, comp_latency);
-  m_perfcounter->hinc(l_librbd_rwl_wr_latency_hist, comp_latency.to_nsec(),
-		      write_req->m_image_extents_summary.total_bytes);
-  m_perfcounter->tinc(l_librbd_rwl_wr_caller_latency, write_req->m_user_req_completed_time - write_req->m_arrived_time);
-}
-
 /**
  * Attempts to allocate log resources for a write. Returns true if successful.
  *
@@ -2344,7 +2374,7 @@ void ReplicatedWriteLog<I>::dispatch_aio_write(C_WriteRequestT *write_req)
        * if they all arrived before any of them completed. We'll insert one on
        * an aio_flush() from the application. Here we're inserting one to cap
        * the number of bytes and writes per sync point. When the application is
-       * not issuing flushes, we insert sync points to record some ovserved
+       * not issuing flushes, we insert sync points to record some observed
        * write concurrency information that enables us to safely issue >1 flush
        * write (for writes observed here to have been in flight simultaneously)
        * at a time in persist-on-write mode.
@@ -2492,21 +2522,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
    * blocks affected by this write is obtained */
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext([this, write_req](GuardedRequestFunctionContext &guard_ctx) {
-      CephContext *cct = m_image_ctx.cct;
-      if (RWL_VERBOSE_LOGGING) {
-	ldout(cct, 20) << __func__ << " write_req=" << write_req << " cell=" << guard_ctx.m_cell << dendl;
-      }
-
-      assert(guard_ctx.m_cell);
-      write_req->m_detained = guard_ctx.m_state.detained; /* overlapped */
-      write_req->m_queued = guard_ctx.m_state.queued; /* queued behind at least one barrier */
-      write_req->set_cell(guard_ctx.m_cell);
-      if (write_req->m_detained) {
-	m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
-      }
-      if (write_req->m_queued) {
-	m_perfcounter->inc(l_librbd_rwl_wr_req_queued, 1);
-      }
+      write_req->blockguard_acquired(guard_ctx);
       alloc_and_dispatch_io_req(write_req);
     });
 
@@ -2772,7 +2788,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
   }
   m_perfcounter->inc(l_librbd_rwl_aio_flush, 1);
 
-  /* May be called even if initilizatin fails */
+  /* May be called even if initialization fails */
   if (!m_initialized) {
     ldout(cct, 05) << "never initialized" << dendl;
     /* Deadlock if completed here */
@@ -2888,8 +2904,8 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 						  uint64_t *mismatch_offset,
 						  int fadvise_flags,
 						  Context *on_finish) {
-
   utime_t now = ceph_clock_now();
+  m_perfcounter->inc(l_librbd_rwl_cmp, 1);
   assert(m_initialized);
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
@@ -2899,28 +2915,19 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
     }
   }
 
+  /* A compare and write request is also a write request. We only allocate
+   * resources and dispatch this write request if the compare phase
+   * succeeds. */
   auto *cw_req =
     C_CompAndWriteRequestT::create(*this, now, std::move(image_extents), std::move(cmp_bl), std::move(bl),
 				   mismatch_offset, fadvise_flags, on_finish).get();
-  // TODO: Add comp_and_write stats
-  //m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
-  m_perfcounter->inc(l_librbd_rwl_cmp, 1);
+  m_perfcounter->inc(l_librbd_rwl_cmp_bytes, cw_req->m_image_extents_summary.total_bytes);
 
   /* The lambda below will be called when the block guard for all
    * blocks affected by this write is obtained */
   GuardedRequestFunctionContext *guarded_ctx =
     new GuardedRequestFunctionContext([this, cw_req](GuardedRequestFunctionContext &guard_ctx) {
-      if (RWL_VERBOSE_LOGGING) {
-	ldout(m_image_ctx.cct, 20) << __func__ << " cw_req=" << cw_req << " cell=" << guard_ctx.m_cell << dendl;
-      }
-
-      assert(guard_ctx.m_cell);
-      cw_req->m_detained = guard_ctx.m_state.detained;
-      cw_req->set_cell(guard_ctx.m_cell);
-      // TODO: more missing write_same stats
-      if (cw_req->m_detained) {
-	//m_perfcounter->inc(l_librbd_rwl_wr_req_overlap, 1);
-      }
+      cw_req->blockguard_acquired(guard_ctx);
 
       auto read_complete_ctx = new FunctionContext(
 	[this, cw_req](int r) {
@@ -2936,9 +2943,10 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 	    }
 	    cw_req->m_compare_succeeded = true;
 	    *cw_req->m_mismatch_offset = 0;
-	    cw_req->complete_user_request(0);
-	    release_guarded_request(cw_req->get_cell());
-	    cw_req->complete(0);
+	    /* Continue with this request as a write. Blockguard release and
+	     * user request completion handled as if this were a plain
+	     * write. */
+	    alloc_and_dispatch_io_req(cw_req);
 	  } else {
 	    /* Compare phase fails. Comp-and write ends now. */
 	    if (RWL_VERBOSE_LOGGING) {
@@ -2955,6 +2963,7 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 		break;
 	      }
 	    }
+	    cw_req->m_compare_succeeded = false;
 	    *cw_req->m_mismatch_offset = bl_index;
 	    cw_req->complete_user_request(-EILSEQ);
 	    release_guarded_request(cw_req->get_cell());
@@ -3152,9 +3161,10 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
   plb.add_u64_counter(l_librbd_rwl_ws_bytes, "ws_bytes", "Write Same bytes to image");
   plb.add_time_avg(l_librbd_rwl_ws_latency, "ws_lat", "Write Same latency");
 
-  plb.add_u64_counter(l_librbd_rwl_cmp, "cmp", "Compare and Write");
-  plb.add_u64_counter(l_librbd_rwl_cmp_bytes, "cmp_bytes", "Compare and Write bytes written");
+  plb.add_u64_counter(l_librbd_rwl_cmp, "cmp", "Compare and Write requests");
+  plb.add_u64_counter(l_librbd_rwl_cmp_bytes, "cmp_bytes", "Compare and Write bytes compared/written");
   plb.add_time_avg(l_librbd_rwl_cmp_latency, "cmp_lat", "Compare and Write latecy");
+  plb.add_u64_counter(l_librbd_rwl_cmp_fails, "cmp_fails", "Compare and Write compare fails");
 
   plb.add_u64_counter(l_librbd_rwl_flush, "flush", "Flush (flush RWL)");
   plb.add_u64_counter(l_librbd_rwl_invalidate_cache, "invalidate", "Invalidate RWL");
@@ -3281,7 +3291,7 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
   uint64_t entry_index = m_first_valid_entry;
   /* The map below allows us to find sync point log entries by sync
    * gen number, which is necessary so write entries can be linked to
-   * thir sync points. */
+   * their sync points. */
   std::map<uint64_t, std::shared_ptr<SyncPointLogEntry>> sync_point_entries;
   std::shared_ptr<SyncPointLogEntry> highest_existing_sync_point = nullptr;
   /* The map below tracks sync points referred to in writes but not
@@ -3297,7 +3307,7 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
    *
    * Write entries will not link to their sync points yet. We'll do
    * that in the next pass. Here we'll accumulate a map of sync point
-   * gen numbers tha are referred to in writes but do not appearing in
+   * gen numbers that are referred to in writes but do not appearing in
    * the log.
    */
   while (entry_index != m_first_free_entry) {
@@ -3342,7 +3352,7 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
       ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
 				 << " writes. pmem_entry=[" << *pmem_entry << "]" << dendl;
       if (highest_existing_sync_point) {
-	/* Writes must preceed the sync points they bear */
+	/* Writes must precede the sync points they bear */
 	assert(highest_existing_sync_point->ram_entry.sync_gen_number ==
 	       highest_existing_sync_point->pmem_entry->sync_gen_number);
 	assert(pmem_entry->sync_gen_number > highest_existing_sync_point->ram_entry.sync_gen_number);
@@ -3885,7 +3895,7 @@ bool ReplicatedWriteLog<I>::can_flush_entry(std::shared_ptr<GenericLogEntry> log
       !gen_write_entry->ram_entry.sequenced &&
       (gen_write_entry->sync_point_entry &&
        !gen_write_entry->sync_point_entry->completed)) {
-    /* Sync point for this unsequnced writing entry is not persisted */
+    /* Sync point for this unsequenced writing entry is not persisted */
     return false;
   }
 
@@ -4051,7 +4061,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
     });
 
   if (invalidating) {
-    /* When invalidating we just do the flush bookeeping */
+    /* When invalidating we just do the flush bookkeeping */
     return(ctx);
   } else {
     if (log_entry->is_write()) {
@@ -4354,7 +4364,7 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish, bool discard_unflushe
 		 * m_invalidating set, retire_entries() will proceed without
 		 * the normal limits that keep it from interfering with
 		 * appending new writes (we hold the block guard, so that can't
-		 * be hapening). */
+		 * be happening). */
 		assert(!m_invalidating);
 		ldout(m_image_ctx.cct, 6) << "Invalidating" << dendl;
 		m_invalidating = true;
@@ -4392,7 +4402,7 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish, bool discard_unflushe
 	 * to be a sync point so we can cleanly resume.
 	 *
 	 * Also, the blockguard only guarantees the replication of this op
-	 * can't overlap with prior ops. It dosn't guarantee those are all
+	 * can't overlap with prior ops. It doesn't guarantee those are all
 	 * completed and eligible for flush & retire, which we require here.
 	 */
 	auto flush_req = make_flush_req(ctx);

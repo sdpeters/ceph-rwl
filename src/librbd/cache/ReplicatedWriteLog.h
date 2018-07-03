@@ -78,7 +78,7 @@ enum {
    | Append complete              | appc |appc - app is just the time    |
    |                              |      |spent in the append operation  |
    +------------------------------+------+-------------------------------+
-   | Complete                     | cmp  |write persisted, replciated,   |
+   | Complete                     | cmp  |write persisted, replicated,   |
    |                              |      |and globally visible           |
    +------------------------------+------+-------------------------------+
 
@@ -105,13 +105,13 @@ enum {
   l_librbd_rwl_log_op_alloc_t_hist, // Histogram of elapsed time of pmemobj_reserve()
 
   l_librbd_rwl_log_op_dis_to_buf_t, // dispatch to buffer persist elapsed time
-  l_librbd_rwl_log_op_dis_to_app_t, // diapatch to log append elapsed time
+  l_librbd_rwl_log_op_dis_to_app_t, // dispatch to log append elapsed time
   l_librbd_rwl_log_op_dis_to_cmp_t, // dispatch to persist completion elapsed time
   l_librbd_rwl_log_op_dis_to_cmp_t_hist, // Histogram of dispatch to persist completion elapsed time
 
   l_librbd_rwl_log_op_buf_to_app_t, // data buf persist + append wait time
   l_librbd_rwl_log_op_buf_to_bufc_t,// data buf persist / replicate elapsed time
-  l_librbd_rwl_log_op_buf_to_bufc_t_hist,// data buf persist time vs bytes hisogram
+  l_librbd_rwl_log_op_buf_to_bufc_t_hist,// data buf persist time vs bytes histogram
   l_librbd_rwl_log_op_app_to_cmp_t, // log entry append + completion wait time
   l_librbd_rwl_log_op_app_to_appc_t, // log entry append / replicate elapsed time
   l_librbd_rwl_log_op_app_to_appc_t_hist, // log entry append time (vs. op bytes) histogram
@@ -130,6 +130,7 @@ enum {
   l_librbd_rwl_cmp,
   l_librbd_rwl_cmp_bytes,
   l_librbd_rwl_cmp_latency,
+  l_librbd_rwl_cmp_fails,
 
   l_librbd_rwl_flush,
   l_librbd_rwl_invalidate_cache,
@@ -210,7 +211,7 @@ struct WriteLogPmemEntry {
   };
   uint32_t ws_datalen = 0;  /* Length of data buffer (writesame only) */
   uint32_t entry_index = 0; /* For debug consistency check. Can be removed if
-			     * we need teh space */
+			     * we need the space */
   WriteLogPmemEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes),
       entry_valid(0), sync_point(0), sequenced(0), has_data(0), discard(0), writesame(0) {
@@ -1102,7 +1103,6 @@ private:
   bool alloc_discard_resources(C_DiscardRequestT *discard_req);
   void dispatch_discard(C_DiscardRequestT *discard_req);
 
-  void complete_write_req(C_WriteRequestT *write_req, const int result);
   void dispatch_deferred_writes(void);
   bool alloc_write_resources(C_WriteRequestT *write_req);
   void release_write_lanes(C_WriteRequestT *write_req);
