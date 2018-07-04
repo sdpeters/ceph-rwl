@@ -366,6 +366,10 @@ public:
     : GenericLogEntry(image_offset_bytes, write_bytes), sync_point_entry(nullptr) { }
   GeneralWriteLogEntry(const GeneralWriteLogEntry&) = delete;
   GeneralWriteLogEntry &operator=(const GeneralWriteLogEntry&) = delete;
+  virtual inline unsigned int write_bytes() {
+    /* The valid bytes in this ops data buffer. Discard and WS override. */
+    return ram_entry.write_bytes;
+  };
   const BlockExtent block_extent();
   const GenericLogEntry* get_log_entry() override { return get_gen_write_log_entry(); }
   const GeneralWriteLogEntry* get_gen_write_log_entry() override { return this; }
@@ -435,6 +439,7 @@ public:
   }
   WriteSameLogEntry(const WriteSameLogEntry&) = delete;
   WriteSameLogEntry &operator=(const WriteSameLogEntry&) = delete;
+  virtual inline unsigned int write_bytes() override { return ram_entry.ws_datalen; };
   const BlockExtent block_extent();
   void add_reader();
   void remove_reader();
@@ -464,6 +469,7 @@ public:
   }
   DiscardLogEntry(const DiscardLogEntry&) = delete;
   DiscardLogEntry &operator=(const DiscardLogEntry&) = delete;
+  virtual inline unsigned int write_bytes() { return 0; };
   const BlockExtent block_extent();
   const GenericLogEntry* get_log_entry() { return get_discard_log_entry(); }
   const DiscardLogEntry* get_discard_log_entry() { return this; }
@@ -721,9 +727,10 @@ public:
 				  const WriteSameLogOperation<T> &op) {
     return op.format(os);
   }
-  const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_write_log_entry(); }
-  const std::shared_ptr<WriteLogEntry> get_write_log_entry() = 0;
-  const std::shared_ptr<WriteLogEntry> get_write_same_log_entry() { return log_entry; }
+  const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_write_same_log_entry(); }
+  const std::shared_ptr<WriteSameLogEntry> get_write_same_log_entry() {
+    return static_pointer_cast<WriteSameLogEntry>(log_entry);
+  }
   bool is_write() { return false; }
   bool is_writesame() { return true; }
 };
