@@ -296,6 +296,7 @@ public:
   virtual const SyncPointLogEntry* get_sync_point_log_entry() { return nullptr; }
   virtual const GeneralWriteLogEntry* get_gen_write_log_entry() { return nullptr; }
   virtual const WriteLogEntry* get_write_log_entry() { return nullptr; }
+  virtual const WriteSameLogEntry* get_write_same_log_entry() { return nullptr; }
   virtual const DiscardLogEntry* get_discard_log_entry() { return nullptr; }
   virtual std::ostream &format(std::ostream &os) const {
     os << "ram_entry=[" << ram_entry << "], "
@@ -329,8 +330,8 @@ public:
   }
   SyncPointLogEntry(const SyncPointLogEntry&) = delete;
   SyncPointLogEntry &operator=(const SyncPointLogEntry&) = delete;
-  const GenericLogEntry* get_log_entry() { return get_sync_point_log_entry(); }
-  const SyncPointLogEntry* get_sync_point_log_entry() { return this; }
+  const GenericLogEntry* get_log_entry() override { return get_sync_point_log_entry(); }
+  const SyncPointLogEntry* get_sync_point_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {
     os << "(Sync Point) ";
     GenericLogEntry::format(os);
@@ -366,8 +367,8 @@ public:
   GeneralWriteLogEntry(const GeneralWriteLogEntry&) = delete;
   GeneralWriteLogEntry &operator=(const GeneralWriteLogEntry&) = delete;
   const BlockExtent block_extent();
-  const GenericLogEntry* get_log_entry() { return get_gen_write_log_entry(); }
-  const GeneralWriteLogEntry* get_gen_write_log_entry() { return this; }
+  const GenericLogEntry* get_log_entry() override { return get_gen_write_log_entry(); }
+  const GeneralWriteLogEntry* get_gen_write_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {
     GenericLogEntry::format(os);
     os << ", "
@@ -403,8 +404,8 @@ public:
   const BlockExtent block_extent();
   void add_reader();
   void remove_reader();
-  const GenericLogEntry* get_log_entry() { return get_write_log_entry(); }
-  const WriteLogEntry* get_write_log_entry() { return this; }
+  virtual const GenericLogEntry* get_log_entry() override { return get_write_log_entry(); }
+  const WriteLogEntry* get_write_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {
     os << "(Write) ";
     GeneralWriteLogEntry::format(os);
@@ -437,9 +438,8 @@ public:
   const BlockExtent block_extent();
   void add_reader();
   void remove_reader();
-  const GenericLogEntry* get_log_entry() { return get_write_log_entry(); }
-  const WriteLogEntry* get_write_log_entry() = 0;
-  const WriteSameLogEntry* get_write_same_log_entry() { return this; }
+  const GenericLogEntry* get_log_entry() override { return get_write_same_log_entry(); }
+  const WriteSameLogEntry* get_write_same_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {
     os << "(WriteSame) ";
     WriteLogEntry::format(os);
@@ -591,6 +591,7 @@ public:
   virtual bool is_writesame() { return false; }
   virtual bool is_writing_op() { return false; }
   virtual GeneralWriteLogOperation<T> *get_gen_write_op() { return nullptr; };
+  virtual WriteLogOperation<T> *get_write_op() { return nullptr; };
 };
 
 template <typename T>
@@ -691,6 +692,7 @@ public:
   }
   const std::shared_ptr<GenericLogEntry> get_log_entry() { return get_write_log_entry(); }
   const std::shared_ptr<WriteLogEntry> get_write_log_entry() { return log_entry; }
+  WriteLogOperation<T> *get_write_op() override { return this; }
   bool is_write() { return true; }
 };
 
@@ -705,7 +707,8 @@ public:
   using WriteLogOperation<T>::log_entry;
   using WriteLogOperation<T>::bl;
   using WriteLogOperation<T>::buffer_alloc_action;
-  WriteSameLogOperation(WriteLogOperationSet<T> &set, const uint64_t image_offset_bytes, const uint64_t write_bytes);
+  WriteSameLogOperation(WriteLogOperationSet<T> &set, const uint64_t image_offset_bytes,
+			const uint64_t write_bytes, const uint32_t data_len);
   ~WriteSameLogOperation();
   WriteSameLogOperation(const WriteSameLogOperation&) = delete;
   WriteSameLogOperation &operator=(const WriteSameLogOperation&) = delete;
@@ -1169,18 +1172,12 @@ private:
 
   void init_flush_new_sync_point(DeferredContexts &later);
   void new_sync_point(DeferredContexts &later);
-  bool alloc_flush_resources(C_FlushRequestT *flush_req);
-  void dispatch_aio_flush(C_FlushRequestT *flush_req);
   C_FlushRequest<ReplicatedWriteLog<ImageCtxT>>* make_flush_req(Context *on_finish);
   void flush_new_sync_point(C_FlushRequestT *flush_req, DeferredContexts &later);
-
-  bool alloc_discard_resources(C_DiscardRequestT *discard_req);
-  void dispatch_discard(C_DiscardRequestT *discard_req);
 
   void dispatch_deferred_writes(void);
   void release_write_lanes(C_WriteRequestT *write_req);
   void alloc_and_dispatch_io_req(C_BlockIORequestT *write_req);
-  void dispatch_aio_write(C_WriteRequestT *write_req);
   void append_scheduled_ops(void);
   void enlist_op_appender();
   void schedule_append(GenericLogOperationsVectorT &ops);
