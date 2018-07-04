@@ -287,6 +287,7 @@ public:
   virtual ~GenericLogEntry() { };
   GenericLogEntry(const GenericLogEntry&) = delete;
   GenericLogEntry &operator=(const GenericLogEntry&) = delete;
+  virtual unsigned int write_bytes() = 0;
   bool is_sync_point() { return ram_entry.is_sync_point(); }
   bool is_discard() { return ram_entry.is_discard(); }
   bool is_writesame() { return ram_entry.is_writesame(); }
@@ -330,6 +331,7 @@ public:
   }
   SyncPointLogEntry(const SyncPointLogEntry&) = delete;
   SyncPointLogEntry &operator=(const SyncPointLogEntry&) = delete;
+  virtual inline unsigned int write_bytes() { return 0; }
   const GenericLogEntry* get_log_entry() override { return get_sync_point_log_entry(); }
   const SyncPointLogEntry* get_sync_point_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {

@@ -1919,11 +1919,11 @@ template <typename V>
 void ReplicatedWriteLog<I>::flush_pmem_buffer(V& ops)
 {
   for (auto &operation : ops) {
-    if (operation->is_write()) {
+    if (operation->is_write() || operation->is_writesame()) {
       operation->m_buf_persist_time = ceph_clock_now();
       auto write_entry = operation->get_write_log_entry();
 
-      pmemobj_flush(m_log_pool, write_entry->pmem_buffer, write_entry->ram_entry.write_bytes);
+      pmemobj_flush(m_log_pool, write_entry->pmem_buffer, write_entry->write_bytes());
     }
   }
 
@@ -1932,7 +1932,7 @@ void ReplicatedWriteLog<I>::flush_pmem_buffer(V& ops)
 
   utime_t now = ceph_clock_now();
   for (auto &operation : ops) {
-    if (operation->is_write()) {
+    if (operation->is_write() || operation->is_writesame()) {
       operation->m_buf_persist_comp_time = now;
     } else {
       if (RWL_VERBOSE_LOGGING) {
@@ -2072,7 +2072,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperationsT &ops)
   TX_BEGIN(m_log_pool) {
     D_RW(pool_root)->first_free_entry = m_first_free_entry;
     for (auto &operation : ops) {
-      if (operation->is_write()) {
+      if (operation->is_write() || operation->is_writesame()) {
 	auto write_op = (std::shared_ptr<WriteLogOperationT>&) operation;
 	pmemobj_tx_publish(write_op->buffer_alloc_action, 1);
       } else {
@@ -2118,7 +2118,7 @@ void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperationsT &&ops,
       op->get_gen_write_op()->sync_point->log_entry->m_writes_completed++;
       dirty_entries.push_back(log_entry);
     }
-    if (op->is_write()) {
+    if (op->is_write() || op->is_writesame()) {
       published_reserves++;
     }
     if (op->is_discard()) {
@@ -2532,7 +2532,7 @@ void C_WriteRequest<T>::dispatch()
       operation->log_entry->ram_entry.sync_point = 0;
       operation->log_entry->ram_entry.discard = 0;
       operation->bl.substr_of(this->bl, buffer_offset,
-			      operation->log_entry->ram_entry.write_bytes);
+			      operation->log_entry->write_bytes());
       buffer_offset += operation->log_entry->write_bytes();
       if (RWL_VERBOSE_LOGGING) {
 	ldout(cct, 20) << "operation=[" << *operation << "]" << dendl;
@@ -2997,6 +2997,18 @@ void ReplicatedWriteLog<I>::aio_writesame(uint64_t offset, uint64_t length,
       on_finish->complete(-EROFS);
       return;
     }
+  }
+
+  if ((0 == length) || bl.length() == 0) {
+    /* Zero length write or pattern */
+    on_finish->complete(0);
+    return;
+  }
+
+  if (length % bl.length()) {
+    /* Length must be integer multiple of pattern length */
+    on_finish->complete(-EINVAL);
+    return;
   }
 
   ldout(m_image_ctx.cct, 06) << "offset=" << offset << ", "
@@ -4124,11 +4136,11 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 
   ldout(cct, 20) << "" << dendl;
   assert(log_entry->is_writer());
-  if (!(log_entry->is_write() || log_entry->is_discard())) {
+  if (!(log_entry->is_write() || log_entry->is_discard() || log_entry->is_writesame())) {
     ldout(cct, 02) << "Flushing from log entry=" << *log_entry
 		   << " unimplemented" << dendl;
   }
-  assert(log_entry->is_write() || log_entry->is_discard());
+  assert(log_entry->is_write() || log_entry->is_discard() || log_entry->is_writesame());
   assert(m_entry_reader_lock.is_locked());
   assert(m_lock.is_locked_by_me());
   if (!m_flush_ops_in_flight ||
@@ -4137,6 +4149,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
   }
   auto gen_write_entry = static_pointer_cast<GeneralWriteLogEntry>(log_entry);
   m_flush_ops_in_flight += 1;
+  /* For write same this is the bytes affected bt the flush op, not the bytes transferred */
   m_flush_bytes_in_flight += gen_write_entry->ram_entry.write_bytes;
 
   gen_write_entry->flushing = true;
@@ -4148,21 +4161,21 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
      * the buffer.  If we're flushing a discard, we also don't need the
      * buffer. */
   } else {
-    assert(log_entry->is_write());
+    assert(log_entry->is_write() || log_entry->is_writesame());
     auto write_entry = static_pointer_cast<WriteLogEntry>(log_entry);
     write_entry->add_reader();
     m_async_op_tracker.start_op();
     entry_buf =
-    buffer::claim_buffer(write_entry->ram_entry.write_bytes,
-			 (char*)write_entry->pmem_buffer,
-			 make_deleter([this, write_entry]
-				      {
-					CephContext *cct = m_image_ctx.cct;
-					ldout(cct, 20) << "removing (flush) reader: log_entry="
-						       << *write_entry << dendl;
-					write_entry->remove_reader();
-					m_async_op_tracker.finish_op();
-				      }));
+      buffer::claim_buffer(write_entry->write_bytes(),
+			   (char*)write_entry->pmem_buffer,
+			   make_deleter([this, write_entry]
+					{
+					  CephContext *cct = m_image_ctx.cct;
+					  ldout(cct, 20) << "removing (flush) reader: log_entry="
+							 << *write_entry << dendl;
+					  write_entry->remove_reader();
+					  m_async_op_tracker.finish_op();
+					}));
   }
 
   /* Flush write completion action */
@@ -4180,8 +4193,8 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 	} else {
 	  assert(!gen_write_entry->flushed);
 	  gen_write_entry->flushed = true;
-	  assert(m_bytes_dirty >= gen_write_entry->ram_entry.write_bytes);
-	  m_bytes_dirty -= gen_write_entry->ram_entry.write_bytes;
+	  assert(m_bytes_dirty >= gen_write_entry->write_bytes());
+	  m_bytes_dirty -= gen_write_entry->write_bytes();
 	  sync_point_writer_flushed(gen_write_entry->sync_point_entry);
 	  ldout(m_image_ctx.cct, 20) << "flushed: " << gen_write_entry
 	  << " invalidating=" << invalidating << dendl;
@@ -4206,6 +4219,21 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 	      m_image_writeback->aio_write({{gen_write_entry->ram_entry.image_offset_bytes,
 					   gen_write_entry->ram_entry.write_bytes}},
 					   std::move(entry_bl), 0, ctx);
+	    }));
+	});
+    } else if (log_entry->is_writesame()) {
+      auto ws_entry = static_pointer_cast<WriteSameLogEntry>(log_entry);
+      return new FunctionContext(
+	[this, ws_entry, entry_buf, ctx](int r) {
+	  m_image_ctx.op_work_queue->queue(new FunctionContext(
+	    [this, ws_entry, entry_buf, ctx](int r) {
+	      bufferlist entry_bl;
+	      entry_bl.push_back(entry_buf);
+	      ldout(m_image_ctx.cct, 02) << "flushing:" << ws_entry
+					 << " " << *ws_entry << dendl;
+	      m_image_writeback->aio_writesame(ws_entry->ram_entry.image_offset_bytes,
+					       ws_entry->ram_entry.write_bytes,
+					       std::move(entry_bl), 0, ctx);
 	    }));
 	});
     } else if (log_entry->is_discard()) {
@@ -4287,7 +4315,7 @@ bool ReplicatedWriteLog<I>::can_retire_entry(std::shared_ptr<GenericLogEntry> lo
   if (!log_entry->completed) {
     return false;
   }
-  if (log_entry->ram_entry.is_write()) {
+  if (log_entry->is_write() || log_entry->is_writesame()) {
     auto write_entry = static_pointer_cast<WriteLogEntry>(log_entry);
     return (write_entry->flushed &&
 	    0 == write_entry->reader_count);
@@ -4331,7 +4359,7 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
       m_log_entries.pop_front();
       retiring_entries.push_back(entry);
       /* Remove entry from map so there will be no more readers */
-      if (entry->ram_entry.is_write()) {
+      if (entry->is_write() || entry->is_writesame()) {
 	auto write_entry = static_pointer_cast<WriteLogEntry>(entry);
 	m_blocks_to_log_entries.remove_log_entry(write_entry);
 	assert(!write_entry->flushing);
@@ -4371,7 +4399,7 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
 	D_RW(pool_root)->first_valid_entry = first_valid_entry;
 	for (auto &entry: retiring_entries) {
 	  //last_retired_entry_index = entry->log_entry_index;
-	  if (entry->ram_entry.is_write()) {
+	  if (entry->is_write() || entry->is_writesame()) {
 	    if (RWL_VERBOSE_LOGGING) {
 	      ldout(cct, 20) << "Freeing " << entry->ram_entry.write_data.oid.pool_uuid_lo
 			     <<	"." << entry->ram_entry.write_data.oid.off << dendl;
@@ -4403,10 +4431,10 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
       m_first_valid_entry = first_valid_entry;
       m_free_log_entries += retiring_entries.size();
       for (auto &entry: retiring_entries) {
-	if (entry->ram_entry.is_write()) {
-	  assert(m_bytes_cached >= entry->ram_entry.write_bytes);
-	  m_bytes_cached -= entry->ram_entry.write_bytes;
-	  uint64_t entry_allocation_size = entry->ram_entry.write_bytes;
+	if (entry->is_write() || entry->is_writesame()) {
+	  assert(m_bytes_cached >= entry->write_bytes());
+	  m_bytes_cached -= entry->write_bytes();
+	  uint64_t entry_allocation_size = entry->write_bytes();
 	  if (entry_allocation_size < MIN_WRITE_ALLOC_SIZE) {
 	    entry_allocation_size = MIN_WRITE_ALLOC_SIZE;
 	  }
