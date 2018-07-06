@@ -32,8 +32,8 @@ template <typename I>
 void ImageWriteback<I>::aio_read(Extents &&image_extents, bufferlist *bl,
                                  int fadvise_flags, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  //ldout(cct, 20) << "image_extents=" << image_extents << ", "
-  //               << "on_finish=" << on_finish << dendl;
+  ldout(cct, 20) << "image_extents=" << image_extents << ", "
+                 << "on_finish=" << on_finish << dendl;
 
   auto aio_comp = io::AioCompletion::create_and_start(on_finish, &m_image_ctx,
                                                       io::AIO_TYPE_READ);
@@ -48,8 +48,8 @@ void ImageWriteback<I>::aio_write(Extents &&image_extents,
                                   ceph::bufferlist&& bl,
                                   int fadvise_flags, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  //ldout(cct, 20) << "image_extents=" << image_extents << ", "
-  //               << "on_finish=" << on_finish << dendl;
+  ldout(cct, 20) << "image_extents=" << image_extents << ", "
+                 << "on_finish=" << on_finish << dendl;
 
   auto aio_comp = io::AioCompletion::create_and_start(on_finish, &m_image_ctx,
                                                       io::AIO_TYPE_WRITE);
