@@ -372,6 +372,10 @@ public:
     /* The valid bytes in this ops data buffer. Discard and WS override. */
     return ram_entry.write_bytes;
   };
+  virtual inline unsigned int bytes_dirty() {
+    /* The bytes in the image this op makes dirty. Discard and WS override. */
+    return write_bytes();
+  };
   const BlockExtent block_extent();
   const GenericLogEntry* get_log_entry() override { return get_gen_write_log_entry(); }
   const GeneralWriteLogEntry* get_gen_write_log_entry() override { return this; }
@@ -441,7 +445,14 @@ public:
   }
   WriteSameLogEntry(const WriteSameLogEntry&) = delete;
   WriteSameLogEntry &operator=(const WriteSameLogEntry&) = delete;
-  virtual inline unsigned int write_bytes() override { return ram_entry.ws_datalen; };
+  virtual inline unsigned int write_bytes() override {
+    /* The valid bytes in this ops data buffer. */
+    return ram_entry.ws_datalen;
+  };
+  virtual inline unsigned int bytes_dirty() {
+    /* The bytes in the image this op makes dirty. */
+    return ram_entry.write_bytes;
+  };
   const BlockExtent block_extent();
   void add_reader();
   void remove_reader();
@@ -471,7 +482,14 @@ public:
   }
   DiscardLogEntry(const DiscardLogEntry&) = delete;
   DiscardLogEntry &operator=(const DiscardLogEntry&) = delete;
-  virtual inline unsigned int write_bytes() { return 0; };
+  virtual inline unsigned int write_bytes() {
+    /* The valid bytes in this ops data buffer. */
+    return 0;
+  };
+  virtual inline unsigned int bytes_dirty() {
+    /* The bytes in the image this op makes dirty. */
+    return ram_entry.write_bytes;
+  };
   const BlockExtent block_extent();
   const GenericLogEntry* get_log_entry() { return get_discard_log_entry(); }
   const DiscardLogEntry* get_discard_log_entry() { return this; }

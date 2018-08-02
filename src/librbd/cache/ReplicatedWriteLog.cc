@@ -1351,7 +1351,7 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
   virtual bool alloc_resources() override;
 
   /* Plain writes will allocate one buffer per request extent */
-  virtual void setup_buffer_resources(uint64_t &bytes_cached) {
+  virtual void setup_buffer_resources(uint64_t &bytes_cached, uint64_t &bytes_dirtied) {
     for (auto &extent : this->m_image_extents) {
       m_resources.buffers.emplace_back();
       struct WriteBufferAllocation &buffer = m_resources.buffers.back();
@@ -1362,6 +1362,7 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
 	buffer.allocation_size = extent.second;
       }
     }
+    bytes_dirtied = bytes_cached;
   }
 
   void deferred_handler() override { }
@@ -1656,9 +1657,10 @@ struct C_WriteSameRequest : public C_WriteRequest<T> {
   }
 
   /* Write sames will allocate one buffer, the size of the repeating pattern */
-  void setup_buffer_resources(uint64_t &bytes_cached) override {
+  void setup_buffer_resources(uint64_t &bytes_cached, uint64_t &bytes_dirtied) override {
     ldout(rwl.m_image_ctx.cct, 01) << __func__ << this->get_name() << this << dendl;
     assert(this->m_image_extents.size() == 1);
+    bytes_dirtied += this->m_image_extents[0].second;
     auto pattern_length = this->bl.length();
     this->m_resources.buffers.emplace_back();
     struct WriteBufferAllocation &buffer = this->m_resources.buffers.back();
@@ -2198,6 +2200,7 @@ bool C_WriteRequest<T>::alloc_resources()
   utime_t alloc_start = ceph_clock_now();
   uint64_t bytes_allocated = 0;
   uint64_t bytes_cached = 0;
+  uint64_t bytes_dirtied = 0;
 
   assert(!rwl.m_lock.is_locked_by_me());
   assert(!m_resources.allocated);
@@ -2242,7 +2245,7 @@ bool C_WriteRequest<T>::alloc_resources()
   }
 
   if (alloc_succeeds) {
-    setup_buffer_resources(bytes_cached);
+    setup_buffer_resources(bytes_cached, bytes_dirtied);
   }
 
   if (alloc_succeeds) {
@@ -2289,7 +2292,7 @@ bool C_WriteRequest<T>::alloc_resources()
       rwl.m_unpublished_reserves += num_extents;
       rwl.m_bytes_allocated += bytes_allocated;
       rwl.m_bytes_cached += bytes_cached;
-      rwl.m_bytes_dirty += bytes_cached;
+      rwl.m_bytes_dirty += bytes_dirtied;
       m_resources.allocated = true;
     } else {
       alloc_succeeds = false;
@@ -2665,7 +2668,7 @@ bool C_DiscardRequest<T>::alloc_resources() {
     /* No bytes are allocated for a discard, but we count the discarded bytes
      * as dirty.  This means it's possible to have more bytes dirty than
      * there are bytes cached or allocated. */
-    rwl.m_bytes_dirty += op->log_entry->ram_entry.write_bytes;
+    rwl.m_bytes_dirty += op->log_entry->bytes_dirty();
     m_log_entry_allocated = true;
     allocated_here = true;
   }
@@ -3563,7 +3566,7 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
 	 * sync gen number from the root object. */
 	if (gen_write_entry->ram_entry.sync_gen_number > m_flushed_sync_gen) {
 	  m_dirty_log_entries.push_back(log_entry);
-	  m_bytes_dirty += gen_write_entry->ram_entry.write_bytes;
+	  m_bytes_dirty += gen_write_entry->bytes_dirty();
 	} else {
 	  gen_write_entry->flushed = true;
 	  sync_point_entry->m_writes_flushed++;
@@ -4193,8 +4196,9 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 	} else {
 	  assert(!gen_write_entry->flushed);
 	  gen_write_entry->flushed = true;
-	  assert(m_bytes_dirty >= gen_write_entry->write_bytes());
-	  m_bytes_dirty -= gen_write_entry->write_bytes();
+	  assert(gen_write_entry->bytes_dirty());
+	  assert(m_bytes_dirty >= gen_write_entry->bytes_dirty());
+	  m_bytes_dirty -= gen_write_entry->bytes_dirty();
 	  sync_point_writer_flushed(gen_write_entry->sync_point_entry);
 	  ldout(m_image_ctx.cct, 20) << "flushed: " << gen_write_entry
 	  << " invalidating=" << invalidating << dendl;
