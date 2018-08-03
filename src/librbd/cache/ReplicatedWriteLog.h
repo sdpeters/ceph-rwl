@@ -403,9 +403,9 @@ public:
 class WriteLogEntry : public GeneralWriteLogEntry {
 public:
   uint8_t *pmem_buffer = nullptr;
-  std::atomic<int> reader_count = {0};
   buffer::ptr pmem_bp;
   buffer::list pmem_bl;
+  int bl_refs = 0; /* The refs held on pmem_bp by pmem_bl */
   WriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
 		const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : GeneralWriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) { }
@@ -414,15 +414,17 @@ public:
   WriteLogEntry(const WriteLogEntry&) = delete;
   WriteLogEntry &operator=(const WriteLogEntry&) = delete;
   const BlockExtent block_extent();
-  void add_reader();
-  void remove_reader();
+  unsigned int reader_count();
   virtual void init_pmem_bl();
   virtual const GenericLogEntry* get_log_entry() override { return get_write_log_entry(); }
   const WriteLogEntry* get_write_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {
     os << "(Write) ";
     GeneralWriteLogEntry::format(os);
-    os << "reader_count=" << reader_count;
+    os << "pmem_buffer=" << pmem_buffer;
+    os << "pmem_bp=" << pmem_bp;
+    os << "pmem_bl=" << pmem_bl;
+    os << "bl_refs=" << bl_refs;
     return os;
   };
   friend std::ostream &operator<<(std::ostream &os,

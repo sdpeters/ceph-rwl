@@ -78,14 +78,25 @@ const BlockExtent WriteLogPmemEntry::block_extent() {
 }
 
 const BlockExtent GeneralWriteLogEntry::block_extent() { return ram_entry.block_extent(); }
-void WriteLogEntry::add_reader() { reader_count++; }
-void WriteLogEntry::remove_reader() { reader_count--; }
+unsigned int WriteLogEntry::reader_count() {
+  if (pmem_bp.get_raw()) {
+    return (pmem_bp.raw_nref() - bl_refs - 1);
+  } else {
+    return 0;
+  }
+}
 void WriteLogEntry::init_pmem_bl() {
   pmem_bl.clear();
+  assert(pmem_bp.get_raw());
+  int before_bl = pmem_bp.raw_nref();
   pmem_bl.append(pmem_bp);
+  int after_bl = pmem_bp.raw_nref();
+  bl_refs = after_bl - before_bl;
 };
 void WriteSameLogEntry::init_pmem_bl() {
   pmem_bl.clear();
+  assert(pmem_bp.get_raw());
+  int before_bl = pmem_bp.raw_nref();
   for (uint64_t i = 0; i < ram_entry.write_bytes / ram_entry.ws_datalen; i++) {
     pmem_bl.append(pmem_bp);
   }
@@ -93,6 +104,8 @@ void WriteSameLogEntry::init_pmem_bl() {
   if (trailing_partial) {
     pmem_bl.append(pmem_bp, 0, trailing_partial);
   }
+  int after_bl = pmem_bp.raw_nref();
+  bl_refs = after_bl - before_bl;
 };
 
 template <typename T>
@@ -3485,7 +3498,7 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
   while (entry_index != m_first_free_entry) {
     WriteLogPmemEntry *pmem_entry = &pmem_log_entries[entry_index];
     std::shared_ptr<GenericLogEntry> log_entry = nullptr;
-    bool writer = pmem_entry->is_write() || pmem_entry->is_discard();
+    bool writer = pmem_entry->is_writer();
 
     assert(pmem_entry->entry_index == entry_index);
     if (pmem_entry->is_sync_point()) {
@@ -3507,7 +3520,21 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
       auto write_entry =
 	std::make_shared<WriteLogEntry>(nullptr, pmem_entry->image_offset_bytes, pmem_entry->write_bytes);
       write_entry->pmem_buffer = D_RW(pmem_entry->write_data);
+      write_entry->pmem_bp = buffer::ptr(buffer::create_static(write_entry->write_bytes(),
+							       (char*)write_entry->pmem_buffer));
+      write_entry->init_pmem_bl();
       log_entry = write_entry;
+    } else if (pmem_entry->is_writesame()) {
+      ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
+				 << " is a write same. pmem_entry=[" << *pmem_entry << "]" << dendl;
+      auto ws_entry =
+	std::make_shared<WriteSameLogEntry>(nullptr, pmem_entry->image_offset_bytes,
+					    pmem_entry->write_bytes, pmem_entry->ws_datalen);
+      ws_entry->pmem_buffer = D_RW(pmem_entry->write_data);
+      ws_entry->pmem_bp = buffer::ptr(buffer::create_static(ws_entry->write_bytes(),
+							    (char*)ws_entry->pmem_buffer));
+      ws_entry->init_pmem_bl();
+      log_entry = ws_entry;
     } else if (pmem_entry->is_discard()) {
       ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
 				 << " is a discard. pmem_entry=[" << *pmem_entry << "]" << dendl;
@@ -3870,11 +3897,12 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	Mutex::Locker locker(m_lock);
 	assert(m_dirty_log_entries.size() == 0);
 	for (auto entry : m_log_entries) {
-	  if (entry->ram_entry.is_write()) {
+	  if (entry->ram_entry.is_write() || entry->ram_entry.is_writesame()) {
+	    /* WS entry is also a Write entry */
 	    auto write_entry = static_pointer_cast<WriteLogEntry>(entry);
 	    m_blocks_to_log_entries.remove_log_entry(write_entry);
 	    assert(write_entry->referring_map_entries == 0);
-	    assert(write_entry->reader_count == 0);
+	    assert(write_entry->reader_count() == 0);
 	    assert(!write_entry->flushing);
 	  }
 	}
@@ -4163,6 +4191,7 @@ template <typename I>
 Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<GenericLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
   bool invalidating = m_invalidating; // snapshot so we behave consistently
+  bufferlist entry_bl;
 
   ldout(cct, 20) << "" << dendl;
   assert(log_entry->is_writer());
@@ -4185,7 +4214,6 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
   gen_write_entry->flushing = true;
 
   /* Construct bl for pmem buffer now while we hold m_entry_reader_lock */
-  buffer::raw *entry_buf = nullptr;
   if (invalidating || log_entry->is_discard()) {
     /* If we're invalidating the RWL, we don't actually flush, so don't create
      * the buffer.  If we're flushing a discard, we also don't need the
@@ -4193,19 +4221,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
   } else {
     assert(log_entry->is_write() || log_entry->is_writesame());
     auto write_entry = static_pointer_cast<WriteLogEntry>(log_entry);
-    write_entry->add_reader();
-    m_async_op_tracker.start_op();
-    entry_buf =
-      buffer::claim_buffer(write_entry->write_bytes(),
-			   (char*)write_entry->pmem_buffer,
-			   make_deleter([this, write_entry]
-					{
-					  CephContext *cct = m_image_ctx.cct;
-					  ldout(cct, 20) << "removing (flush) reader: log_entry="
-							 << *write_entry << dendl;
-					  write_entry->remove_reader();
-					  m_async_op_tracker.finish_op();
-					}));
+    entry_bl.substr_of(write_entry->pmem_bl, 0, write_entry->write_bytes());
   }
 
   /* Flush write completion action */
@@ -4239,31 +4255,29 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
   } else {
     if (log_entry->is_write()) {
       return new FunctionContext(
-	[this, gen_write_entry, entry_buf, ctx](int r) {
+	[this, gen_write_entry, entry_bl, ctx](int r) {
 	  m_image_ctx.op_work_queue->queue(new FunctionContext(
-	    [this, gen_write_entry, entry_buf, ctx](int r) {
-	      bufferlist entry_bl;
-	      entry_bl.push_back(entry_buf);
+	    [this, gen_write_entry, entry_bl, ctx](int r) {
 	      ldout(m_image_ctx.cct, 15) << "flushing:" << gen_write_entry
 					 << " " << *gen_write_entry << dendl;
+	      bufferlist write_bl(entry_bl);
 	      m_image_writeback->aio_write({{gen_write_entry->ram_entry.image_offset_bytes,
-					   gen_write_entry->ram_entry.write_bytes}},
-					   std::move(entry_bl), 0, ctx);
+					     gen_write_entry->ram_entry.write_bytes}},
+					   std::move(write_bl), 0, ctx);
 	    }));
 	});
     } else if (log_entry->is_writesame()) {
       auto ws_entry = static_pointer_cast<WriteSameLogEntry>(log_entry);
       return new FunctionContext(
-	[this, ws_entry, entry_buf, ctx](int r) {
+	[this, ws_entry, entry_bl, ctx](int r) {
 	  m_image_ctx.op_work_queue->queue(new FunctionContext(
-	    [this, ws_entry, entry_buf, ctx](int r) {
-	      bufferlist entry_bl;
-	      entry_bl.push_back(entry_buf);
+	    [this, ws_entry, entry_bl, ctx](int r) {
 	      ldout(m_image_ctx.cct, 02) << "flushing:" << ws_entry
 					 << " " << *ws_entry << dendl;
+	      bufferlist write_bl(entry_bl);
 	      m_image_writeback->aio_writesame(ws_entry->ram_entry.image_offset_bytes,
 					       ws_entry->ram_entry.write_bytes,
-					       std::move(entry_bl), 0, ctx);
+					       std::move(write_bl), 0, ctx);
 	    }));
 	});
     } else if (log_entry->is_discard()) {
@@ -4352,7 +4366,7 @@ bool ReplicatedWriteLog<I>::can_retire_entry(std::shared_ptr<GenericLogEntry> lo
   if (log_entry->is_write() || log_entry->is_writesame()) {
     auto write_entry = static_pointer_cast<WriteLogEntry>(log_entry);
     return (write_entry->flushed &&
-	    0 == write_entry->reader_count);
+	    0 == write_entry->reader_count());
   } else {
     return true;
   }
@@ -4398,7 +4412,7 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
 	m_blocks_to_log_entries.remove_log_entry(write_entry);
 	assert(!write_entry->flushing);
 	assert(write_entry->flushed);
-	assert(!write_entry->reader_count);
+	assert(!write_entry->reader_count());
 	assert(!write_entry->referring_map_entries);
       }
       entry = m_log_entries.front();
