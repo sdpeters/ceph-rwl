@@ -404,6 +404,8 @@ class WriteLogEntry : public GeneralWriteLogEntry {
 public:
   uint8_t *pmem_buffer = nullptr;
   std::atomic<int> reader_count = {0};
+  buffer::ptr pmem_bp;
+  buffer::list pmem_bl;
   WriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
 		const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : GeneralWriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) { }
@@ -414,6 +416,7 @@ public:
   const BlockExtent block_extent();
   void add_reader();
   void remove_reader();
+  virtual void init_pmem_bl();
   virtual const GenericLogEntry* get_log_entry() override { return get_write_log_entry(); }
   const WriteLogEntry* get_write_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {
@@ -456,6 +459,7 @@ public:
   const BlockExtent block_extent();
   void add_reader();
   void remove_reader();
+  void init_pmem_bl();
   const GenericLogEntry* get_log_entry() override { return get_write_same_log_entry(); }
   const WriteSameLogEntry* get_write_same_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {

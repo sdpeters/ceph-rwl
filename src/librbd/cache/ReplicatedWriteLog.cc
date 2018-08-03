@@ -80,6 +80,20 @@ const BlockExtent WriteLogPmemEntry::block_extent() {
 const BlockExtent GeneralWriteLogEntry::block_extent() { return ram_entry.block_extent(); }
 void WriteLogEntry::add_reader() { reader_count++; }
 void WriteLogEntry::remove_reader() { reader_count--; }
+void WriteLogEntry::init_pmem_bl() {
+  pmem_bl.clear();
+  pmem_bl.append(pmem_bp);
+};
+void WriteSameLogEntry::init_pmem_bl() {
+  pmem_bl.clear();
+  for (uint64_t i = 0; i < ram_entry.write_bytes / ram_entry.ws_datalen; i++) {
+    pmem_bl.append(pmem_bp);
+  }
+  int trailing_partial = ram_entry.write_bytes % ram_entry.ws_datalen;
+  if (trailing_partial) {
+    pmem_bl.append(pmem_bp, 0, trailing_partial);
+  }
+};
 
 template <typename T>
 SyncPoint<T>::SyncPoint(T &rwl, uint64_t sync_gen_num)
@@ -744,7 +758,6 @@ public:
 
 struct ImageExtentBuf : public Extent {
 public:
-  //buffer::raw *m_buf;
   bufferlist m_bl;
   ImageExtentBuf(Extent extent, buffer::raw *buf = nullptr)
     : Extent(extent) {
@@ -799,6 +812,7 @@ struct C_ReadRequest : public Context {
       for (auto &extent : m_read_extents) {
 	if (extent.m_bl.length()) {
 	  /* This was a hit */
+	  assert(extent.second == extent.m_bl.length());
 	  ++hits;
 	  hit_bytes += extent.second;
 	  m_out_bl->claim_append(extent.m_bl);
@@ -819,6 +833,7 @@ struct C_ReadRequest : public Context {
       ldout(m_cct, 20) << "(" << get_name() << "): r=" << r << " bl=" << *m_out_bl << dendl;
     }
     utime_t now = ceph_clock_now();
+    assert((int)m_out_bl->length() == hit_bytes + miss_bytes);
     m_on_finish->complete(r);
     m_perfcounter->inc(l_librbd_rwl_rd_bytes, hit_bytes + miss_bytes);
     m_perfcounter->inc(l_librbd_rwl_rd_hit_bytes, hit_bytes);
@@ -903,43 +918,23 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 				      extent.second - extent_offset);
       Extent hit_extent(entry_image_extent.first, entry_hit_length);
       assert(map_entry.log_entry->is_writer());
-      if (map_entry.log_entry->is_write()) {
+      if (map_entry.log_entry->is_write() || map_entry.log_entry->is_writesame()) {
 	/* Offset of the map entry into the log entry's buffer */
 	uint64_t map_entry_buffer_offset = entry_image_extent.first - map_entry.log_entry->ram_entry.image_offset_bytes;
 	/* Offset into the log entry buffer of this read hit */
 	uint64_t read_buffer_offset = map_entry_buffer_offset + entry_offset;
 	/* Create buffer object referring to pmem pool for this read hit */
 	auto write_entry = static_pointer_cast<WriteLogEntry>(map_entry.log_entry);
-	if (RWL_VERBOSE_LOGGING) {
-	  ldout(cct, 20) << "adding reader: log_entry=" << *write_entry << dendl;
-	}
-	write_entry->add_reader();
-	m_async_op_tracker.start_op();
-	buffer::raw *hit_buf =
-	  buffer::claim_buffer(entry_hit_length,
-			       (char*)(write_entry->pmem_buffer + read_buffer_offset),
-			       make_deleter([this, write_entry]
-					    {
-					      CephContext *cct = m_image_ctx.cct;
-					      if (RWL_VERBOSE_LOGGING) {
-						ldout(cct, 20) << "removing reader: write_entry="
-							       << *write_entry << dendl;
-					      }
-					      write_entry->remove_reader();
-					      m_async_op_tracker.finish_op();
-					    }));
-	/* Add hit extent to read extents */
-	ImageExtentBuf hit_extent_buf(hit_extent, hit_buf);
-	read_ctx->m_read_extents.push_back(hit_extent_buf);
-      } else if (map_entry.log_entry->is_writesame()) {
-	assert(0);
-	// bufferlist total_bl;
 
-	// uint64_t left = length;
-	// while(left) {
-	//   total_bl.append(bl);
-	//   left -= bl.length();
-	// }
+	/* Make a bl for this hit extent. This will add references to the write_entry->pmem_bp */
+	buffer::list hit_bl;
+	assert(write_entry->pmem_bl.length());
+	hit_bl.substr_of(write_entry->pmem_bl, read_buffer_offset, entry_hit_length);
+	assert(hit_bl.length() == entry_hit_length);
+
+	/* Add hit extent to read extents */
+	ImageExtentBuf hit_extent_buf(hit_extent, hit_bl);
+	read_ctx->m_read_extents.push_back(hit_extent_buf);
       } else if (map_entry.log_entry->is_discard()) {
 	auto discard_entry = static_pointer_cast<DiscardLogEntry>(map_entry.log_entry);
 	if (RWL_VERBOSE_LOGGING) {
@@ -947,7 +942,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 	}
 	/* Discards read as zero, so we'll construct a bufferlist of zeros */
 	bufferlist zero_bl;
-	zero_bl.append_zero(discard_entry->ram_entry.write_bytes);
+	zero_bl.append_zero(entry_hit_length);
 	/* Add hit extent to read extents */
 	ImageExtentBuf hit_extent_buf(hit_extent, zero_bl);
 	read_ctx->m_read_extents.push_back(hit_extent_buf);
@@ -2552,6 +2547,9 @@ void C_WriteRequest<T>::dispatch()
       operation->buffer_alloc_action = &allocation->buffer_alloc_action;
       assert(!TOID_IS_NULL(operation->log_entry->ram_entry.write_data));
       operation->log_entry->pmem_buffer = D_RW(operation->log_entry->ram_entry.write_data);
+      operation->log_entry->pmem_bp = buffer::ptr(buffer::create_static(operation->log_entry->write_bytes(),
+									(char*)operation->log_entry->pmem_buffer));
+      operation->log_entry->init_pmem_bl();
       operation->log_entry->ram_entry.sync_gen_number = rwl.m_current_sync_gen;
       if (m_op_set->m_persist_on_flush) {
 	/* Persist on flush. Sequence #0 is never used. */
@@ -4317,8 +4315,12 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
 	post_unlock.add(construct_flush_entry_ctx(candidate));
 	flushed++;
       }
-      if (flushable || !candidate->ram_entry.is_write()) {
-	/* Remove if we're flushing it, or it's not a write */
+      if (flushable || !candidate->ram_entry.is_writer()) {
+	/* Remove if we're flushing it, or it's not a writer */
+	if (!candidate->ram_entry.is_writer()) {
+	  ldout(cct, 20) << "Removing non-writing entry from m_dirty_log_entries:"
+			 << *m_dirty_log_entries.front() << dendl;
+	}
 	m_dirty_log_entries.pop_front();
       } else {
 	ldout(cct, 20) << "Next dirty entry isn't flushable yet" << dendl;
