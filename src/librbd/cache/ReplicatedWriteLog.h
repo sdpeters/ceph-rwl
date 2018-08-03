@@ -1040,6 +1040,7 @@ private:
   friend class rwl::WriteLogOperation<This>;
   friend class rwl::WriteLogOperationSet<This>;
   friend class rwl::DiscardLogOperation<This>;
+  friend class rwl::WriteSameLogOperation<This>;
   friend class rwl::SyncPointLogOperation<This>;
   friend class rwl::C_GuardedBlockIORequest<This>;
   friend class C_BlockIORequest<This>;

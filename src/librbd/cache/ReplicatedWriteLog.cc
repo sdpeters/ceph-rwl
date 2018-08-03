@@ -221,19 +221,25 @@ WriteSameLogOperation<T>::WriteSameLogOperation(WriteLogOperationSet<T> &set, ui
   auto ws_entry =
     std::make_shared<WriteSameLogEntry>(set.sync_point->log_entry, image_offset_bytes, write_bytes, data_len);
   log_entry = static_pointer_cast<WriteLogEntry>(ws_entry);
-  on_write_append = set.m_extent_ops_appending->new_sub();
-  on_write_persist = set.m_extent_ops_persist->new_sub();
-  log_entry->sync_point_entry->m_writes++;
-  log_entry->sync_point_entry->m_bytes += data_len;
+  if (RWL_VERBOSE_LOGGING) {
+    ldout(rwl.m_image_ctx.cct, 20) << __func__ << " " << this << dendl;
+  }
 }
 
 template <typename T>
-WriteSameLogOperation<T>::~WriteSameLogOperation() { }
+WriteSameLogOperation<T>::~WriteSameLogOperation() {
+  if (RWL_VERBOSE_LOGGING) {
+    ldout(rwl.m_image_ctx.cct, 20) << __func__ << " " << this << dendl;
+  }
+}
 
 /* Called when the write log operation is appending and its log position is guaranteed */
 template <typename T>
 void GeneralWriteLogOperation<T>::appending() {
   Context *on_append = nullptr;
+  if (RWL_VERBOSE_LOGGING) {
+    ldout(rwl.m_image_ctx.cct, 20) << __func__ << " " << this << dendl;
+  }
   {
     Mutex::Locker locker(m_lock);
     on_append = on_write_append;
@@ -241,6 +247,9 @@ void GeneralWriteLogOperation<T>::appending() {
   }
   if (on_append) {
     //rwl.m_work_queue.queue(on_append);
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 20) << __func__ << " " << this << " on_append=" << on_append << dendl;
+    }
     on_append->complete(0);
   }
 }
@@ -250,12 +259,18 @@ template <typename T>
 void GeneralWriteLogOperation<T>::complete(int result) {
   appending();
   Context *on_persist = nullptr;
+  if (RWL_VERBOSE_LOGGING) {
+    ldout(rwl.m_image_ctx.cct, 20) << __func__ << " " << this << dendl;
+  }
   {
     Mutex::Locker locker(m_lock);
     on_persist = on_write_persist;
     on_write_persist = nullptr;
   }
   if (on_persist) {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 20) << __func__ << " " << this << " on_persist=" << on_persist << dendl;
+    }
     on_persist->complete(result);
   }
 }
@@ -271,7 +286,7 @@ WriteLogOperationSet<T>::WriteLogOperationSet(T &rwl, utime_t dispatched, std::s
     new C_Gather(rwl.m_image_ctx.cct,
 		 new FunctionContext( [this](int r) {
 		     if (RWL_VERBOSE_LOGGING) {
-		       ldout(this->rwl.m_image_ctx.cct,20) << "m_extent_ops_persist completed" << dendl;
+		       ldout(this->rwl.m_image_ctx.cct,20) << __func__ << " " << this << " m_extent_ops_persist completed" << dendl;
 		     }
 		     if (m_on_ops_persist) {
 		       m_on_ops_persist->complete(r);
@@ -283,7 +298,7 @@ WriteLogOperationSet<T>::WriteLogOperationSet(T &rwl, utime_t dispatched, std::s
     new C_Gather(rwl.m_image_ctx.cct,
 		 new FunctionContext( [this, appending_persist_sub](int r) {
 		     if (RWL_VERBOSE_LOGGING) {
-		       ldout(this->rwl.m_image_ctx.cct, 20) << "m_extent_ops_appending completed" << dendl;
+		       ldout(this->rwl.m_image_ctx.cct, 20) << __func__ << " " << this << " m_extent_ops_appending completed" << dendl;
 		     }
 		     m_on_ops_appending->complete(r);
 		     appending_persist_sub->complete(r);
@@ -1378,7 +1393,7 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
     }
   }
 
-  void schedule_append() {
+  virtual void schedule_append() {
     assert(++m_appended == 1);
     if (m_do_early_flush) {
       /* This caller is waiting for persist, so we'll use their thread to
@@ -1651,14 +1666,14 @@ struct C_WriteSameRequest : public C_WriteRequest<T> {
     /* Write same stats. Compare-and-write excluded from most write
      * stats because the read phase will make them look like slow writes in
      * those histograms. */
-    ldout(rwl.m_image_ctx.cct, 01) << __func__ << this->get_name() << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 01) << __func__ << " " << this->get_name() << " " << this << dendl;
     utime_t comp_latency = now - this->m_arrived_time;
     rwl.m_perfcounter->tinc(l_librbd_rwl_ws_latency, comp_latency);
   }
 
   /* Write sames will allocate one buffer, the size of the repeating pattern */
   void setup_buffer_resources(uint64_t &bytes_cached, uint64_t &bytes_dirtied) override {
-    ldout(rwl.m_image_ctx.cct, 01) << __func__ << this->get_name() << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 01) << __func__ << " " << this->get_name() << " " << this << dendl;
     assert(this->m_image_extents.size() == 1);
     bytes_dirtied += this->m_image_extents[0].second;
     auto pattern_length = this->bl.length();
@@ -1673,7 +1688,7 @@ struct C_WriteSameRequest : public C_WriteRequest<T> {
   }
 
   virtual void setup_log_operations() {
-    ldout(rwl.m_image_ctx.cct, 01) << __func__ << this->get_name() << this << dendl;
+    ldout(rwl.m_image_ctx.cct, 01) << __func__ << " " << this->get_name() << " " << this << dendl;
     /* Write same adds a single WS log op to the vector, corresponding to the single buffer item created above */
     assert(this->m_image_extents.size() == 1);
     auto extent = this->m_image_extents.front();
@@ -1687,6 +1702,13 @@ struct C_WriteSameRequest : public C_WriteRequest<T> {
    * Write same doesn't implement alloc_resources(), deferred_handler(), or
    * dispatch(). We use the implementation in C_WriteRequest().
    */
+
+  void schedule_append() {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 20) << __func__ << " " << this->get_name() << " " << this << dendl;
+    }
+    C_WriteRequest<T>::schedule_append();
+  }
 
   const char *get_name() const override {
     return "C_WriteSameRequest";
@@ -2507,6 +2529,9 @@ void C_WriteRequest<T>::dispatch()
     m_op_set =
       make_unique<WriteLogOperationSet<T>>(rwl, now, rwl.m_current_sync_point, rwl.m_persist_on_flush,
 					   this->m_image_extents_summary.block_extent(), set_complete);
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(cct, 20) << "write_req=" << this << " m_op_set=" << m_op_set.get() << dendl;
+    }
     assert(m_resources.allocated);
     /* m_op_set->operations initialized differently for plain write or write same */
     this->setup_log_operations();
@@ -2514,6 +2539,10 @@ void C_WriteRequest<T>::dispatch()
     for (auto &gen_op : m_op_set->operations) {
       /* A WS is also a write */
       auto operation = gen_op->get_write_op();
+      if (RWL_VERBOSE_LOGGING) {
+	ldout(cct, 20) << "write_req=" << this << " m_op_set=" << m_op_set.get()
+		       << " operation=" << operation << dendl;
+      }
       log_entries.emplace_back(operation->log_entry);
       rwl.m_perfcounter->inc(l_librbd_rwl_log_ops, 1);
 
@@ -3099,7 +3128,7 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 	    }
 	    /* Bufferlist doesn't tell us where they differed, so we'll have to determine that here */
 	    assert(cw_req->m_read_bl.length() == cw_req->m_cmp_bl.length());
-	    uint64_t bl_index;
+	    uint64_t bl_index = 0;
 	    for (bl_index = 0; bl_index < cw_req->m_cmp_bl.length(); bl_index++) {
 	      if (cw_req->m_cmp_bl[bl_index] != cw_req->m_read_bl[bl_index]) {
 		if (RWL_VERBOSE_LOGGING) {
@@ -4196,7 +4225,6 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 	} else {
 	  assert(!gen_write_entry->flushed);
 	  gen_write_entry->flushed = true;
-	  assert(gen_write_entry->bytes_dirty());
 	  assert(m_bytes_dirty >= gen_write_entry->bytes_dirty());
 	  m_bytes_dirty -= gen_write_entry->bytes_dirty();
 	  sync_point_writer_flushed(gen_write_entry->sync_point_entry);
