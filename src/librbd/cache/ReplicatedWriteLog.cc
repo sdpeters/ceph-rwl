@@ -4018,6 +4018,7 @@ void ReplicatedWriteLog<I>::process_work() {
   CephContext *cct = m_image_ctx.cct;
   int max_iterations = 4;
   bool wake_up_requested = false;
+  uint64_t aggressive_high_water_bytes = m_bytes_allocated_cap * AGGRESSIVE_RETIRE_HIGH_WATER;
   uint64_t high_water_bytes = m_bytes_allocated_cap * RETIRE_HIGH_WATER;
   uint64_t low_water_bytes = m_bytes_allocated_cap * RETIRE_LOW_WATER;
   if (RWL_VERBOSE_LOGGING) {
@@ -4041,7 +4042,8 @@ void ReplicatedWriteLog<I>::process_work() {
 	     (m_bytes_allocated > high_water_bytes) ||
 	     ((m_bytes_allocated > low_water_bytes) &&
 	      (utime_t(ceph_clock_now() - started).to_msec() < RETIRE_BATCH_TIME_LIMIT_MS))) {
-	if (!retire_entries((m_shutting_down || m_invalidating)
+	if (!retire_entries((m_shutting_down || m_invalidating ||
+			     (m_bytes_allocated > aggressive_high_water_bytes))
 			    ? MAX_ALLOC_PER_TRANSACTION
 			    : MAX_FREE_PER_TRANSACTION)) {
 	  break;
