@@ -27,7 +27,7 @@ using namespace librbd::cache::rwl;
 
 namespace rwl {
 
-static const bool RWL_VERBOSE_LOGGING = true;
+static const bool RWL_VERBOSE_LOGGING = false;
 
 typedef ReplicatedWriteLog<ImageCtx>::Extent Extent;
 typedef ReplicatedWriteLog<ImageCtx>::Extents Extents;
@@ -85,8 +85,13 @@ unsigned int WriteLogEntry::reader_count() {
     return 0;
   }
 }
+void WriteLogEntry::init_pmem_bp() {
+  assert(!pmem_bp.get_raw());
+  pmem_bp = buffer::ptr(buffer::create_static(this->write_bytes(), (char*)pmem_buffer));
+};
 void WriteLogEntry::init_pmem_bl() {
   pmem_bl.clear();
+  init_pmem_bp();
   assert(pmem_bp.get_raw());
   int before_bl = pmem_bp.raw_nref();
   pmem_bl.append(pmem_bp);
@@ -95,6 +100,7 @@ void WriteLogEntry::init_pmem_bl() {
 };
 void WriteSameLogEntry::init_pmem_bl() {
   pmem_bl.clear();
+  init_pmem_bp();
   assert(pmem_bp.get_raw());
   int before_bl = pmem_bp.raw_nref();
   for (uint64_t i = 0; i < ram_entry.write_bytes / ram_entry.ws_datalen; i++) {
@@ -107,6 +113,15 @@ void WriteSameLogEntry::init_pmem_bl() {
   int after_bl = pmem_bp.raw_nref();
   bl_refs = after_bl - before_bl;
 };
+buffer::list &WriteLogEntry::get_pmem_bl(Mutex &entry_bl_lock) {
+  if (0 == bl_refs) {
+    Mutex::Locker locker(entry_bl_lock);
+    init_pmem_bl();
+    assert(0 != bl_refs);
+  }
+  return pmem_bl;
+};
+
 
 template <typename T>
 SyncPoint<T>::SyncPoint(T &rwl, uint64_t sync_gen_num)
@@ -677,6 +692,8 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
 	   false, true, true, image_ctx.cct),
     m_blockguard_lock("librbd::cache::ReplicatedWriteLog::m_blockguard_lock",
 	   false, true, true, image_ctx.cct),
+    m_entry_bl_lock("librbd::cache::ReplicatedWriteLog::m_entry_bl_lock",
+	   false, true, true, image_ctx.cct),
     m_persist_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_persist_finisher", "pfin_rwl"),
     m_log_append_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_log_append_finisher", "afin_rwl"),
     m_on_persist_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_on_persist_finisher", "opfin_rwl"),
@@ -713,6 +730,8 @@ ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
     Mutex::Locker dispatch_locker(m_deferred_dispatch_lock);
     Mutex::Locker append_locker(m_log_append_lock);
     Mutex::Locker locker(m_lock);
+    Mutex::Locker bg_locker(m_blockguard_lock);
+    Mutex::Locker bl_locker(m_entry_bl_lock);
     ldout(m_image_ctx.cct, 15) << "gratuitous locking complete" << dendl;
     delete m_image_writeback;
     m_image_writeback = nullptr;
@@ -941,8 +960,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 
 	/* Make a bl for this hit extent. This will add references to the write_entry->pmem_bp */
 	buffer::list hit_bl;
-	assert(write_entry->pmem_bl.length());
-	hit_bl.substr_of(write_entry->pmem_bl, read_buffer_offset, entry_hit_length);
+	hit_bl.substr_of(write_entry->get_pmem_bl(m_entry_bl_lock), read_buffer_offset, entry_hit_length);
 	assert(hit_bl.length() == entry_hit_length);
 
 	/* Add hit extent to read extents */
@@ -2560,9 +2578,6 @@ void C_WriteRequest<T>::dispatch()
       operation->buffer_alloc_action = &allocation->buffer_alloc_action;
       assert(!TOID_IS_NULL(operation->log_entry->ram_entry.write_data));
       operation->log_entry->pmem_buffer = D_RW(operation->log_entry->ram_entry.write_data);
-      operation->log_entry->pmem_bp = buffer::ptr(buffer::create_static(operation->log_entry->write_bytes(),
-									(char*)operation->log_entry->pmem_buffer));
-      operation->log_entry->init_pmem_bl();
       operation->log_entry->ram_entry.sync_gen_number = rwl.m_current_sync_gen;
       if (m_op_set->m_persist_on_flush) {
 	/* Persist on flush. Sequence #0 is never used. */
@@ -2601,6 +2616,11 @@ void C_WriteRequest<T>::dispatch()
     i.copy((unsigned)write_op->log_entry->write_bytes(), (char*)write_op->log_entry->pmem_buffer);
   }
 
+  /* Adding these entries to the map of blocks to log entries makes them
+   * readable by this application. They aren't persisted yet, so they may
+   * disappear after certain failures. We'll indicate our guaratee of the
+   * persistence of these writes with the completion of this request, or the
+   * following aio_flush(), according to the configured policy. */
   rwl.m_blocks_to_log_entries.add_log_entries(log_entries);
 
   /*
@@ -2633,14 +2653,14 @@ void C_WriteRequest<T>::dispatch()
 	m_op_set->sync_point->earlier_sync_point) {
       /* In persist-on-write mode, we defer the append of this write until the
        * previous sync point is appending (meaning all the writes before it are
-       * persisted and that previous sync point can now appear in the log). Since
-       * we insert sync points in persist-on-write mode when writes have already
-       * completed to the current sync point, this limits us to one inserted sync
-       * point in flight at a time,and gives the next inserted sync point some
-       * time to accumulate a few writes if they arrive soon. Without this we can
-       * insert an absurd number of sync points, each with one or two
-       * writes. That uses a lot of log entries, and limits flushing to very few
-       * writes at a time. */
+       * persisted and that previous sync point can now appear in the
+       * log). Since we insert sync points in persist-on-write mode when writes
+       * have already completed to the current sync point, this limits us to
+       * one inserted sync point in flight at a time, and gives the next
+       * inserted sync point some time to accumulate a few writes if they
+       * arrive soon. Without this we can insert an absurd number of sync
+       * points, each with one or two writes. That uses a lot of log entries,
+       * and limits flushing to very few writes at a time. */
       m_do_early_flush = false;
       Context *schedule_append_ctx = new FunctionContext([this, write_req_sp](int r) {
 	  write_req_sp->schedule_append();
@@ -3454,8 +3474,7 @@ void ReplicatedWriteLog<I>::arm_periodic_stats() {
  * readable.
  *
  * Places all writes on the dirty entries list, which causes them all
- * to be flushed. TODO: Place only the unflushed entries on the dirty
- * list once the flushed sync point is recorded in the pool root.
+ * to be flushed.
  *
  * TODO: Turn consistency check asserts into open failures.
  *
@@ -3520,9 +3539,6 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
       auto write_entry =
 	std::make_shared<WriteLogEntry>(nullptr, pmem_entry->image_offset_bytes, pmem_entry->write_bytes);
       write_entry->pmem_buffer = D_RW(pmem_entry->write_data);
-      write_entry->pmem_bp = buffer::ptr(buffer::create_static(write_entry->write_bytes(),
-							       (char*)write_entry->pmem_buffer));
-      write_entry->init_pmem_bl();
       log_entry = write_entry;
     } else if (pmem_entry->is_writesame()) {
       ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
@@ -3531,9 +3547,6 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
 	std::make_shared<WriteSameLogEntry>(nullptr, pmem_entry->image_offset_bytes,
 					    pmem_entry->write_bytes, pmem_entry->ws_datalen);
       ws_entry->pmem_buffer = D_RW(pmem_entry->write_data);
-      ws_entry->pmem_bp = buffer::ptr(buffer::create_static(ws_entry->write_bytes(),
-							    (char*)ws_entry->pmem_buffer));
-      ws_entry->init_pmem_bl();
       log_entry = ws_entry;
     } else if (pmem_entry->is_discard()) {
       ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
@@ -4119,9 +4132,11 @@ void ReplicatedWriteLog<I>::persist_last_flushed_sync_gen(void)
   }
 
   if (D_RO(pool_root)->flushed_sync_gen < flushed_sync_gen) {
-    ldout(m_image_ctx.cct, 15) << "flushed_sync_gen in log updated from "
-			       << D_RO(pool_root)->flushed_sync_gen << " to "
-			       << flushed_sync_gen << dendl;
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(m_image_ctx.cct, 15) << "flushed_sync_gen in log updated from "
+				 << D_RO(pool_root)->flushed_sync_gen << " to "
+				 << flushed_sync_gen << dendl;
+    }
     //tx_start = ceph_clock_now();
     TX_BEGIN(m_log_pool) {
       D_RW(pool_root)->flushed_sync_gen = flushed_sync_gen;
@@ -4138,6 +4153,7 @@ void ReplicatedWriteLog<I>::persist_last_flushed_sync_gen(void)
 
 /* Returns true if the specified SyncPointLogEntry is considered flushed, and
  * the log will be updated to reflect this. */
+static const unsigned int HANDLE_FLUSHED_SYNC_POINT_RECURSE_LIMIT = 4;
 template <typename I>
 bool ReplicatedWriteLog<I>::handle_flushed_sync_point(std::shared_ptr<SyncPointLogEntry> log_entry)
 {
@@ -4145,10 +4161,12 @@ bool ReplicatedWriteLog<I>::handle_flushed_sync_point(std::shared_ptr<SyncPointL
   assert(log_entry);
 
   if ((log_entry->m_writes_flushed == log_entry->m_writes) &&
-      log_entry->completed && log_entry->m_next_sync_point_entry &&
-      log_entry->m_prior_sync_point_flushed) {
-    ldout(m_image_ctx.cct, 20) << "All writes flushed up to sync point="
-			       << *log_entry << dendl;
+      log_entry->completed && log_entry->m_prior_sync_point_flushed &&
+      log_entry->m_next_sync_point_entry) {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(m_image_ctx.cct, 20) << "All writes flushed up to sync point="
+				 << *log_entry << dendl;
+    }
     log_entry->m_next_sync_point_entry->m_prior_sync_point_flushed = true;
     /* Don't move the flushed sync gen num backwards. */
     if (m_flushed_sync_gen < log_entry->ram_entry.sync_gen_number) {
@@ -4221,7 +4239,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
   } else {
     assert(log_entry->is_write() || log_entry->is_writesame());
     auto write_entry = static_pointer_cast<WriteLogEntry>(log_entry);
-    entry_bl.substr_of(write_entry->pmem_bl, 0, write_entry->write_bytes());
+    entry_bl.substr_of(write_entry->get_pmem_bl(m_entry_bl_lock), 0, write_entry->write_bytes());
   }
 
   /* Flush write completion action */

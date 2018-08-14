@@ -401,11 +401,14 @@ public:
 };
 
 class WriteLogEntry : public GeneralWriteLogEntry {
-public:
-  uint8_t *pmem_buffer = nullptr;
+protected:
   buffer::ptr pmem_bp;
   buffer::list pmem_bl;
-  int bl_refs = 0; /* The refs held on pmem_bp by pmem_bl */
+  std::atomic<int> bl_refs = {0}; /* The refs held on pmem_bp by pmem_bl */
+  void init_pmem_bp();
+  virtual void init_pmem_bl();
+public:
+  uint8_t *pmem_buffer = nullptr;
   WriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
 		const uint64_t image_offset_bytes, const uint64_t write_bytes)
     : GeneralWriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) { }
@@ -415,7 +418,7 @@ public:
   WriteLogEntry &operator=(const WriteLogEntry&) = delete;
   const BlockExtent block_extent();
   unsigned int reader_count();
-  virtual void init_pmem_bl();
+  buffer::list &get_pmem_bl(Mutex &entry_bl_lock);
   virtual const GenericLogEntry* get_log_entry() override { return get_write_log_entry(); }
   const WriteLogEntry* get_write_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {
@@ -434,6 +437,8 @@ public:
 };
 
 class WriteSameLogEntry : public WriteLogEntry {
+protected:
+  void init_pmem_bl();
 public:
   WriteSameLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
 		    const uint64_t image_offset_bytes, const uint64_t write_bytes,
@@ -459,9 +464,6 @@ public:
     return ram_entry.write_bytes;
   };
   const BlockExtent block_extent();
-  void add_reader();
-  void remove_reader();
-  void init_pmem_bl();
   const GenericLogEntry* get_log_entry() override { return get_write_same_log_entry(); }
   const WriteSameLogEntry* get_write_same_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {
@@ -1138,6 +1140,8 @@ private:
   mutable Mutex m_lock;
   /* Used in release/detain to make BlockGuard preserve submission order */
   mutable Mutex m_blockguard_lock;
+  /* Used in WriteLogEntry::get_pmem_bl() to syncronize between threads making entries readable */
+  mutable Mutex m_entry_bl_lock;
 
   /* Use m_blockguard_lock for the following 3 things */
   WriteLogGuard::BlockOperations m_awaiting_barrier;
