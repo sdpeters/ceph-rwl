@@ -1825,9 +1825,6 @@ void writesame_test_data(rbd_image_t image, const char *test_data, uint64_t off,
                          uint64_t data_len, uint32_t iohint, bool *passed)
 {
   ssize_t written;
-  if (len % data_len) {
-    printf("expecting fail\n");
-  }
   written = rbd_writesame(image, off, len, test_data, data_len, iohint);
   if (len % data_len) {
     ASSERT_EQ(-EINVAL, written);
