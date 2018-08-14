@@ -116,7 +116,9 @@ void WriteSameLogEntry::init_pmem_bl() {
 buffer::list &WriteLogEntry::get_pmem_bl(Mutex &entry_bl_lock) {
   if (0 == bl_refs) {
     Mutex::Locker locker(entry_bl_lock);
-    init_pmem_bl();
+    if (0 == bl_refs) {
+      init_pmem_bl();
+    }
     assert(0 != bl_refs);
   }
   return pmem_bl;
