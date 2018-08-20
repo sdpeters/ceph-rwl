@@ -425,9 +425,10 @@ public:
   std::ostream &format(std::ostream &os) const {
     os << "(Write) ";
     GeneralWriteLogEntry::format(os);
-    os << "pmem_buffer=" << pmem_buffer;
-    os << "pmem_bp=" << pmem_bp;
-    os << "pmem_bl=" << pmem_bl;
+    os << ", "
+       << "pmem_buffer=" << (void*)pmem_buffer << ", ";
+    os << "pmem_bp=" << pmem_bp << ", ";
+    os << "pmem_bl=" << pmem_bl << ", ";
     os << "bl_refs=" << bl_refs;
     return os;
   };
@@ -646,7 +647,8 @@ public:
   std::ostream &format(std::ostream &os) const {
     os << "(Sync Point) ";
     GenericLogOperation<T>::format(os);
-    os << "sync_point=[" << *sync_point << "]";
+    os << ", "
+       << "sync_point=[" << *sync_point << "]";
     return os;
   };
   friend std::ostream &operator<<(std::ostream &os,
@@ -712,6 +714,7 @@ public:
   std::ostream &format(std::ostream &os) const {
     os << "(Write) ";
     GeneralWriteLogOperation<T>::format(os);
+    os << ", ";
     if (log_entry) {
       os << "log_entry=[" << *log_entry << "], ";
     } else {
@@ -784,6 +787,7 @@ public:
   std::ostream &format(std::ostream &os) const {
     os << "(Discard) ";
     GeneralWriteLogOperation<T>::format(os);
+    os << ", ";
     if (log_entry) {
       os << "log_entry=[" << *log_entry << "], ";
     } else {
