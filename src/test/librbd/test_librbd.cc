@@ -210,6 +210,16 @@ public:
     ASSERT_NE("", m_pool_name = create_pool());
   }
 
+  bool is_rbd_rwl_enabled() {
+#if defined(WITH_RWL)
+    std::string value;
+    EXPECT_EQ(0, _rados.conf_get("rbd_rwl_enabled", value));
+    return value == "true";
+#else
+    return false;
+#endif //defined(WITH_RWL)
+  }
+
   bool is_skip_partial_discard_enabled() {
     std::string value;
     EXPECT_EQ(0, _rados.conf_get("rbd_skip_partial_discard", value));
@@ -1897,7 +1907,7 @@ TEST_F(TestLibRBD, TestIO)
   rados_ioctx_t ioctx;
   rados_ioctx_create(_cluster, m_pool_name.c_str(), &ioctx);
 
-  bool skip_discard = is_skip_partial_discard_enabled();
+  bool skip_discard = is_skip_partial_discard_enabled() && !is_rbd_rwl_enabled();
 
   rbd_image_t image;
   int order = 0;
@@ -2008,6 +2018,9 @@ TEST_F(TestLibRBD, TestIO)
   rbd_aio_release(comp);
 
   ASSERT_PASSED(validate_object_map, image);
+
+  rbd_flush(image);
+
   ASSERT_EQ(0, rbd_close(image));
 
   rados_ioctx_destroy(ioctx);
@@ -2018,7 +2031,7 @@ TEST_F(TestLibRBD, TestIOWithIOHint)
   rados_ioctx_t ioctx;
   rados_ioctx_create(_cluster, m_pool_name.c_str(), &ioctx);
 
-  bool skip_discard = is_skip_partial_discard_enabled();
+  bool skip_discard = is_skip_partial_discard_enabled() && !is_rbd_rwl_enabled();
 
   rbd_image_t image;
   int order = 0;
@@ -2164,7 +2177,7 @@ TEST_F(TestLibRBD, TestDataPoolIO)
 
   std::string data_pool_name = create_pool(true);
 
-  bool skip_discard = is_skip_partial_discard_enabled();
+  bool skip_discard = is_skip_partial_discard_enabled() && !is_rbd_rwl_enabled();
 
   rbd_image_t image;
   std::string name = get_temp_image_name();
@@ -2640,7 +2653,7 @@ TEST_F(TestLibRBD, TestIOPP)
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
 
-  bool skip_discard = is_skip_partial_discard_enabled();
+  bool skip_discard = is_skip_partial_discard_enabled() && !is_rbd_rwl_enabled();
 
   {
     librbd::RBD rbd;
@@ -3905,7 +3918,7 @@ TYPED_TEST(DiffIterateTest, DiffIterate)
   librados::IoCtx ioctx;
   ASSERT_EQ(0, this->_rados.ioctx_create(this->m_pool_name.c_str(), ioctx));
 
-  bool skip_discard = this->is_skip_partial_discard_enabled();
+  bool skip_discard = this->is_skip_partial_discard_enabled() && !this->is_rbd_rwl_enabled();
 
   {
     librbd::RBD rbd;
@@ -4055,7 +4068,7 @@ TYPED_TEST(DiffIterateTest, DiffIterateStress)
   librados::IoCtx ioctx;
   ASSERT_EQ(0, this->_rados.ioctx_create(this->m_pool_name.c_str(), ioctx));
 
-  bool skip_discard = this->is_skip_partial_discard_enabled();
+  bool skip_discard = this->is_skip_partial_discard_enabled() && !this->is_rbd_rwl_enabled();
 
   librbd::RBD rbd;
   librbd::Image image;
@@ -4176,7 +4189,7 @@ TYPED_TEST(DiffIterateTest, DiffIterateIgnoreParent)
   librados::IoCtx ioctx;
   ASSERT_EQ(0, this->_rados.ioctx_create(this->m_pool_name.c_str(), ioctx));
 
-  bool skip_discard = this->is_skip_partial_discard_enabled();
+  bool skip_discard = this->is_skip_partial_discard_enabled() && !this->is_rbd_rwl_enabled();
 
   librbd::RBD rbd;
   librbd::Image image;
@@ -4227,7 +4240,7 @@ TYPED_TEST(DiffIterateTest, DiffIterateCallbackError)
   librados::IoCtx ioctx;
   ASSERT_EQ(0, this->_rados.ioctx_create(this->m_pool_name.c_str(), ioctx));
 
-  bool skip_discard = this->is_skip_partial_discard_enabled();
+  bool skip_discard = this->is_skip_partial_discard_enabled() && !this->is_rbd_rwl_enabled();
 
   {
     librbd::RBD rbd;
@@ -4259,7 +4272,7 @@ TYPED_TEST(DiffIterateTest, DiffIterateParentDiscard)
   librados::IoCtx ioctx;
   ASSERT_EQ(0, this->_rados.ioctx_create(this->m_pool_name.c_str(), ioctx));
 
-  bool skip_discard = this->is_skip_partial_discard_enabled();
+  bool skip_discard = this->is_skip_partial_discard_enabled() && !this->is_rbd_rwl_enabled();
 
   librbd::RBD rbd;
   librbd::Image image;
@@ -5877,7 +5890,7 @@ TEST_F(TestLibRBD, BlockingAIO)
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
 
-  bool skip_discard = is_skip_partial_discard_enabled();
+  bool skip_discard = is_skip_partial_discard_enabled() && !is_rbd_rwl_enabled();
 
   librbd::RBD rbd;
   std::string name = get_temp_image_name();
@@ -6128,6 +6141,7 @@ TEST_F(TestLibRBD, FlushEmptyOpsOnExternalSnapshot) {
   read_comp->release();
 }
 
+#if 0
 TEST_F(TestLibRBD, TestImageOptions)
 {
   rados_ioctx_t ioctx;
@@ -6203,6 +6217,7 @@ TEST_F(TestLibRBD, TestImageOptions)
 
   rados_ioctx_destroy(ioctx);
 }
+#endif
 
 TEST_F(TestLibRBD, TestImageOptionsPP)
 {

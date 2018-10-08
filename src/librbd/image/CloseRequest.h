@@ -50,6 +50,9 @@ private:
    * FLUSH_READAHEAD
    *    |
    *    v
+   * SHUTDOWN_IMAGE_CACHE (skip if disabled)
+   *    |
+   *    v
    * SHUT_DOWN_OBJECT_DISPATCHER
    *    |
    *    v
@@ -96,6 +99,9 @@ private:
 
   void send_flush_readahead();
   void handle_flush_readahead(int r);
+
+  void send_shut_down_image_cache();
+  void handle_shut_down_image_cache(int r);
 
   void send_shut_down_object_dispatcher();
   void handle_shut_down_object_dispatcher(int r);

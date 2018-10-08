@@ -358,4 +358,7 @@
 /* Define if unit tests are built. */
 #cmakedefine UNIT_TESTS_BUILT
 
+/* Define if RWL is enabled */
+#cmakedefine WITH_RWL
+
 #endif /* CONFIG_H */

@@ -3900,6 +3900,9 @@ extern "C" int rbd_open(rados_ioctx_t p, const char *name, rbd_image_t *image,
   TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
   librbd::ImageCtx *ictx = new librbd::ImageCtx(name, "", snap_name, io_ctx,
 						false);
+#if defined(WITH_RWL)
+  ldout(ictx->cct, 1) << "wip-librbd-rwl-3 build" << dendl;
+#endif //defined(WITH_RWL)
   tracepoint(librbd, open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only);
 
   int r = ictx->state->open(0);

@@ -124,6 +124,7 @@ if(WITH_BLUESTORE)
 endif()
 
 if(WITH_PMEM)
+  # also used in src/librbd/CMakeLists.txt
   include(ExternalProject)
   ExternalProject_Add(nvml_ext
     DOWNLOAD_DIR ${CMAKE_BINARY_DIR}/src/
@@ -131,7 +132,11 @@ if(WITH_PMEM)
     GIT_TAG "dd622819dd4ee97d3920f913c70be"
     SOURCE_DIR ${CMAKE_BINARY_DIR}/src/nvml
     CONFIGURE_COMMAND ""
-    BUILD_COMMAND $(MAKE)
+    # Explicitly built w/o NDCTL, otherwise if ndtcl is present on the
+    # build system tests statically linking to librbd (which uses
+    # libpmemobj) will not link (because we don't build the ndctl
+    # static library here).
+    BUILD_COMMAND $(MAKE) NDCTL_ENABLE=n
     BUILD_IN_SOURCE 1
     INSTALL_COMMAND "true")
 

@@ -592,8 +592,7 @@ template <typename I>
 Context *OpenRequest<I>::send_set_snap(int *result) {
   if (m_image_ctx->snap_name.empty() &&
       m_image_ctx->open_snap_id == CEPH_NOSNAP) {
-    *result = 0;
-    return finalize(*result);
+    return send_init_image_cache(result);
   }
 
   CephContext *cct = m_image_ctx->cct;
@@ -636,6 +635,50 @@ Context *OpenRequest<I>::handle_set_snap(int *result) {
 }
 
 template <typename I>
+Context *OpenRequest<I>::send_init_image_cache(int *result) {
+  if (m_image_ctx->old_format || m_image_ctx->read_only ||
+      (!m_image_ctx->rwl_enabled)) {
+    *result = 0;
+    return finalize(*result);
+  }
+
+  CephContext *cct = m_image_ctx->cct;
+  ldout(cct, 10) << this << " " << __func__ << dendl;
+
+   cache::ImageCache<I> *layer =
+    new cache::ImageWriteback<I>(*m_image_ctx);
+  m_image_ctx->image_cache = layer;
+  /* An ImageCache below RWL would be created here */
+#if defined(WITH_RWL)
+  if (m_image_ctx->rwl_enabled) {
+    ldout(cct, 4) << this << " " << __func__ << "RWL enabled" << dendl;
+    layer = new cache::ReplicatedWriteLog<I>(*m_image_ctx, layer);
+    m_image_ctx->image_cache = layer;
+  }
+#endif //defined(WITH_RWL)
+  Context *ctx = create_context_callback<
+    OpenRequest<I>, &OpenRequest<I>::handle_init_image_cache>(this);
+  m_image_ctx->image_cache->init(ctx);
+  return nullptr;
+}
+
+template <typename I>
+Context *OpenRequest<I>::handle_init_image_cache(int *result) {
+  CephContext *cct = m_image_ctx->cct;
+  ldout(cct, 10) << __func__ << ": r=" << *result << dendl;
+
+  if (*result < 0) {
+    lderr(cct) << "failed to init image cache: " << cpp_strerror(*result)
+               << dendl;
+    send_close_image(*result);
+    return nullptr;
+  }
+
+  *result = 0;
+  return finalize(*result);
+}
+
+template <typename I>
 Context *OpenRequest<I>::finalize(int r) {
   if (r == 0) {
     auto io_scheduler_cfg =
@@ -646,9 +689,8 @@ Context *OpenRequest<I>::finalize(int r) {
         io::SimpleSchedulerObjectDispatch<I>::create(m_image_ctx);
       io_scheduler->init();
     }
+    return m_on_finish;
   }
-
-  return m_on_finish;
 }
 
 template <typename I>

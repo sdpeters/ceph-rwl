@@ -267,6 +267,8 @@ if(WITH_BLUESTORE)
   endif()
 endif()
 
+option(WITH_RWL "Enable librbd persistent write back cache" ON)
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "i386|i686|amd64|x86_64|AMD64|aarch64")
   option(WITH_SPDK "Enable SPDK" ON)
 else()
@@ -281,12 +283,13 @@ if(WITH_SPDK)
   set(HAVE_SPDK TRUE)
 endif(WITH_SPDK)
 
-option(WITH_PMEM "Enable PMEM" OFF)
+option(WITH_PMEM "Enable PMEM" ON)
 if(WITH_PMEM)
   set(HAVE_PMEM ON)
-  if(NOT WITH_BLUESTORE)
-    message(SEND_ERROR "Please enable WITH_BLUESTORE for using PMEM")
+  if(NOT WITH_BLUESTORE AND NOT WITH_RWL)
+    message(SEND_ERROR "Please enable WITH_BLUESTORE or WITH_RWL for using PMEM")
   endif()
+  option(WITH_PMEM_PKG "Use installed PMEM" OFF)
 endif()
 
 if(WITH_BLUESTORE)
@@ -296,6 +299,12 @@ if(WITH_BLUESTORE)
       "Please install libaio, or enable WITH_SPDK or WITH_PMEM (experimental)")
   endif()
 endif()
+
+if(WITH_RWL)
+  if(NOT WITH_PMEM)
+    message(SEND_ERROR "WITH_RWL requires WITH_PMEM")
+  endif()
+endif(WITH_RWL)
 
 option(WITH_BLUEFS "libbluefs library" OFF)
 
