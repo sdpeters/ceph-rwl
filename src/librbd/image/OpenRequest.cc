@@ -518,7 +518,7 @@ Context *OpenRequest<I>::handle_refresh(int *result) {
 template <typename I>
 Context *OpenRequest<I>::send_init_cache(int *result) {
   // cache is disabled or parent image context
-  if (!m_image_ctx->cache || m_image_ctx->child != nullptr) {
+  if (!m_image_ctx->cache || m_image_ctx->child != nullptr || m_image_ctx->rwl_enabled) {
     return send_register_watch(result);
   }
 
@@ -637,7 +637,7 @@ Context *OpenRequest<I>::handle_set_snap(int *result) {
 template <typename I>
 Context *OpenRequest<I>::send_init_image_cache(int *result) {
   if (m_image_ctx->old_format || m_image_ctx->read_only ||
-      (!m_image_ctx->rwl_enabled)) {
+      (!m_image_ctx->rwl_enabled) || m_image_ctx->test_features(RBD_FEATURE_MIGRATING)) {
     *result = 0;
     return finalize(*result);
   }
@@ -645,21 +645,27 @@ Context *OpenRequest<I>::send_init_image_cache(int *result) {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
-   cache::ImageCache<I> *layer =
-    new cache::ImageWriteback<I>(*m_image_ctx);
-  m_image_ctx->image_cache = layer;
-  /* An ImageCache below RWL would be created here */
 #if defined(WITH_RWL)
+  cache::ImageCache<I> *layer = nullptr;
+  /* Don't create ImageWriteback unless there's at least one ImageCache enabled */
   if (m_image_ctx->rwl_enabled) {
-    ldout(cct, 4) << this << " " << __func__ << "RWL enabled" << dendl;
+    layer = new cache::ImageWriteback<I>(*m_image_ctx);
+    m_image_ctx->image_cache = layer;
+  }
+  /* An ImageCache below RWL would be created here */
+  if (m_image_ctx->rwl_enabled) {
+    ldout(cct, 4) << this << " " << __func__ << " RWL enabled" << dendl;
     layer = new cache::ReplicatedWriteLog<I>(*m_image_ctx, layer);
     m_image_ctx->image_cache = layer;
   }
-#endif //defined(WITH_RWL)
   Context *ctx = create_context_callback<
     OpenRequest<I>, &OpenRequest<I>::handle_init_image_cache>(this);
   m_image_ctx->image_cache->init(ctx);
   return nullptr;
+#else //defined(WITH_RWL)
+  *result = 0;
+  return m_on_finish;
+#endif //defined(WITH_RWL)
 }
 
 template <typename I>

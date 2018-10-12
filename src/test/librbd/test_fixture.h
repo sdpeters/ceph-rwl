@@ -49,6 +49,7 @@ public:
   librbd::RBD m_rbd;
 
   std::string m_image_name;
+  std::string m_image_name_2;
   uint64_t m_image_size;
 
   std::set<librbd::ImageCtx *> m_ictxs;

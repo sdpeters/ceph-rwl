@@ -7181,6 +7181,7 @@ TEST_F(TestLibRBD, NamespacesPP) {
 TEST_F(TestLibRBD, Migration) {
   bool old_format;
   uint64_t features;
+  REQUIRE(!is_rbd_rwl_enabled());
   ASSERT_EQ(0, get_features(&old_format, &features));
 
   rados_ioctx_t ioctx;
@@ -7251,6 +7252,7 @@ TEST_F(TestLibRBD, Migration) {
 TEST_F(TestLibRBD, MigrationPP) {
   bool old_format;
   uint64_t features;
+  REQUIRE(!is_rbd_rwl_enabled());
   ASSERT_EQ(0, get_features(&old_format, &features));
 
   librados::IoCtx ioctx;

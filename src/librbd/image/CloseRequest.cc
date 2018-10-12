@@ -91,8 +91,9 @@ void CloseRequest<I>::send_shut_down_io_queue() {
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   RWLock::RLocker owner_locker(m_image_ctx->owner_lock);
-  m_image_ctx->io_work_queue->shut_down(create_context_callback<
-    CloseRequest<I>, &CloseRequest<I>::handle_shut_down_io_queue>(this));
+  m_image_ctx->io_work_queue->shut_down(create_async_context_callback(
+    *m_image_ctx, create_context_callback<
+    CloseRequest<I>, &CloseRequest<I>::handle_shut_down_io_queue>(this)));
 }
 
 template <typename I>
@@ -100,11 +101,7 @@ void CloseRequest<I>::handle_shut_down_io_queue(int r) {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
-  /* It's unsafe to do this synchronously because this thread may
-     still hold owner_lock */
-  m_image_ctx->op_work_queue->queue(new FunctionContext([this](int r) {
-	send_shut_down_exclusive_lock();
-      }));
+  send_shut_down_exclusive_lock();
 }
 
 template <typename I>

@@ -141,6 +141,8 @@ public:
   typedef librbd::deep_copy::MetadataCopyRequest<librbd::MockTestImageCtx> MockMetadataCopyRequest;
   typedef librbd::deep_copy::SnapshotCopyRequest<librbd::MockTestImageCtx> MockSnapshotCopyRequest;
 
+  std::string &m_src_image_name = m_image_name;
+  std::string &m_dst_image_name = m_image_name_2;
   librbd::ImageCtx *m_src_image_ctx;
   librbd::ImageCtx *m_dst_image_ctx;
   ThreadPool *m_thread_pool;
@@ -150,9 +152,9 @@ public:
     TestMockFixture::SetUp();
 
     librbd::RBD rbd;
-    ASSERT_EQ(0, open_image(m_image_name, &m_src_image_ctx));
+    ASSERT_EQ(0, open_image(m_src_image_name, &m_src_image_ctx));
 
-    ASSERT_EQ(0, open_image(m_image_name, &m_dst_image_ctx));
+    ASSERT_EQ(0, open_image(m_dst_image_name, &m_dst_image_ctx));
 
     librbd::ImageCtx::get_thread_pool_instance(m_src_image_ctx->cct,
                                                &m_thread_pool, &m_work_queue);

@@ -61,8 +61,10 @@ void TestFixture::SetUp() {
   m_cct = reinterpret_cast<CephContext*>(m_ioctx.cct());
 
   m_image_name = get_temp_image_name();
+  m_image_name_2 = get_temp_image_name();
   m_image_size = 2 << 20;
   ASSERT_EQ(0, create_image_pp(m_rbd, m_ioctx, m_image_name, m_image_size));
+  ASSERT_EQ(0, create_image_pp(m_rbd, m_ioctx, m_image_name_2, m_image_size));
 }
 
 void TestFixture::TearDown() {

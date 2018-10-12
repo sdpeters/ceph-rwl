@@ -1015,6 +1015,7 @@ struct C_ReadRequest : public Context {
   }
 };
 
+static const bool COPY_PMEM_FOR_READ = false;
 template <typename I>
 void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 				     int fadvise_flags, Context *on_finish) {
@@ -1090,7 +1091,11 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 
 	/* Make a bl for this hit extent. This will add references to the write_entry->pmem_bp */
 	buffer::list hit_bl;
-	hit_bl.substr_of(write_entry->get_pmem_bl(m_entry_bl_lock), read_buffer_offset, entry_hit_length);
+	if (COPY_PMEM_FOR_READ) {
+	  write_entry->get_pmem_bl(m_entry_bl_lock).copy(read_buffer_offset, entry_hit_length, hit_bl);
+	} else {
+	  hit_bl.substr_of(write_entry->get_pmem_bl(m_entry_bl_lock), read_buffer_offset, entry_hit_length);
+	}
 	assert(hit_bl.length() == entry_hit_length);
 
 	/* Add hit extent to read extents */
@@ -4356,6 +4361,7 @@ void ReplicatedWriteLog<I>::sync_point_writer_flushed(std::shared_ptr<SyncPointL
   }
 }
 
+static const bool COPY_PMEM_FOR_FLUSH = false;
 template <typename I>
 Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<GenericLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
@@ -4390,7 +4396,13 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
   } else {
     assert(log_entry->is_write() || log_entry->is_writesame());
     auto write_entry = static_pointer_cast<WriteLogEntry>(log_entry);
-    entry_bl.substr_of(write_entry->get_pmem_bl(m_entry_bl_lock), 0, write_entry->write_bytes());
+    if (COPY_PMEM_FOR_FLUSH) {
+      /* Pass a copy of the pmem buffer to ImageWriteback (which may hang on to the bl evcen after flush()). */
+      write_entry->get_pmem_bl(m_entry_bl_lock).copy(0, write_entry->write_bytes(), entry_bl);
+    } else {
+      /* Pass a bl that refers to the pmem buffers to ImageWriteback */
+      entry_bl.substr_of(write_entry->get_pmem_bl(m_entry_bl_lock), 0, write_entry->write_bytes());
+    }
   }
 
   /* Flush write completion action */
@@ -4415,6 +4427,17 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 	m_flush_ops_in_flight -= 1;
 	m_flush_bytes_in_flight -= gen_write_entry->ram_entry.write_bytes;
 	wake_up();
+      }
+    });
+  /* Flush through lower cache before completing */
+  ctx = new FunctionContext(
+    [this, ctx](int r) {
+      if (r < 0) {
+	lderr(m_image_ctx.cct) << "failed to flush log entry"
+	                       << cpp_strerror(r) << dendl;
+	ctx->complete(r);
+      } else {
+	m_image_writeback->aio_flush(ctx);
       }
     });
 
