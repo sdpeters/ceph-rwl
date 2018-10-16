@@ -759,6 +759,7 @@ void GuardedRequestFunctionContext::finish(int r) {
 template <typename T>
 struct C_GuardedBlockIORequest : public SharedPtrContext {
 private:
+  std::atomic<bool> m_cell_released = {false};
   BlockGuardCell* m_cell = nullptr;
 public:
   T &rwl;
@@ -772,6 +773,7 @@ public:
     if (RWL_VERBOSE_LOGGING) {
       ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
     }
+    assert(m_cell_released || !m_cell);
   }
   C_GuardedBlockIORequest(const C_GuardedBlockIORequest&) = delete;
   C_GuardedBlockIORequest &operator=(const C_GuardedBlockIORequest&) = delete;
@@ -782,16 +784,30 @@ public:
   virtual const char *get_name() const = 0;
   void set_cell(BlockGuardCell *cell) {
     if (RWL_VERBOSE_LOGGING) {
-      ldout(rwl.m_image_ctx.cct, 20) << this << dendl;
+      ldout(rwl.m_image_ctx.cct, 20) << this << " cell=" << cell << dendl;
     }
     assert(cell);
+    assert(!m_cell);
     m_cell = cell;
   }
   BlockGuardCell *get_cell(void) {
     if (RWL_VERBOSE_LOGGING) {
-      ldout(rwl.m_image_ctx.cct, 20) << this << dendl;
+      ldout(rwl.m_image_ctx.cct, 20) << this << " cell=" << m_cell << dendl;
     }
     return m_cell;
+  }
+
+  void release_cell() {
+    if (RWL_VERBOSE_LOGGING) {
+      ldout(rwl.m_image_ctx.cct, 20) << this << " cell=" << m_cell << dendl;
+    }
+    assert(m_cell);
+    bool initial = false;
+    if (m_cell_released.compare_exchange_strong(initial, true)) {
+      rwl.release_guarded_request(m_cell);
+    } else {
+      ldout(rwl.m_image_ctx.cct, 5) << "cell " << m_cell << " already released for " << this << dendl;
+    }
   }
 };
 
@@ -901,12 +917,15 @@ public:
     first_image_byte = extents.front().first;
     last_image_byte = first_image_byte + extents.front().second;
     for (auto &extent : extents) {
-      total_bytes += extent.second;
-      if (extent.first < first_image_byte) {
-	first_image_byte = extent.first;
-      }
-      if ((extent.first + extent.second) > last_image_byte) {
-	last_image_byte = extent.first + extent.second;
+      /* Ignore zero length extents */
+      if (extent.second) {
+	total_bytes += extent.second;
+	if (extent.first < first_image_byte) {
+	  first_image_byte = extent.first;
+	}
+	if ((extent.first + extent.second) > last_image_byte) {
+	  last_image_byte = extent.first + extent.second;
+	}
       }
     }
   }
@@ -1021,6 +1040,10 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 				     int fadvise_flags, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   utime_t now = ceph_clock_now();
+  if (ExtentsSummary<Extents>(image_extents).total_bytes == 0) {
+    on_finish->complete(0);
+    return;
+  }
   C_ReadRequest *read_ctx = new C_ReadRequest(cct, now, m_perfcounter, bl, on_finish);
   if (RWL_VERBOSE_LOGGING) {
     ldout(cct, 20) << "image_extents=" << image_extents << ", "
@@ -1246,7 +1269,7 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cel
 	if (req.guard_ctx->m_state.current_barrier) {
 	  /* The current barrier is acquiring the block guard, so now we know its cell */
 	  m_barrier_cell = detained_cell;
-	  assert(detained_cell != released_cell);
+	  /* detained_cell could be == released_cell here */
 	  if (RWL_VERBOSE_LOGGING) {
 	    ldout(cct, 20) << "current barrier cell=" << detained_cell << " req=" << req << dendl;
 	  }
@@ -1343,6 +1366,14 @@ struct C_BlockIORequest : public C_GuardedBlockIORequest<T> {
       user_req(user_req), m_image_extents_summary(m_image_extents), m_arrived_time(arrived) {
     if (RWL_VERBOSE_LOGGING) {
       ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
+    }
+    /* Remove zero length image extents from input */
+    for (auto it = m_image_extents.begin(); it != m_image_extents.end(); ) {
+      if (0 == it->second) {
+	it = m_image_extents.erase(it);
+	continue;
+      }
+      ++it;
     }
   }
 
@@ -1475,7 +1506,7 @@ struct C_WriteRequest : public C_BlockIORequest<T> {
     /* Completed to caller by here (in finish(), which calls this) */
     utime_t now = ceph_clock_now();
     rwl.release_write_lanes(this);
-    rwl.release_guarded_request(this->get_cell()); /* TODO: Consider doing this in appending state */
+    this->release_cell(); /* TODO: Consider doing this in appending state */
     update_req_stats(now);
   }
 
@@ -2833,6 +2864,11 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
     }
   }
 
+  if (ExtentsSummary<Extents>(image_extents).total_bytes == 0) {
+    on_finish->complete(0);
+    return;
+  }
+
   auto *write_req =
     C_WriteRequestT::create(*this, now, std::move(image_extents), std::move(bl), fadvise_flags, on_finish).get();
   m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
@@ -2909,6 +2945,11 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
     }
   }
 
+  if (length == 0) {
+    on_finish->complete(0);
+    return;
+  }
+
   auto discard_req_sp =
     C_DiscardRequestT::create(*this, now, std::move(discard_extents), skip_partial_discard, on_finish);
   auto *discard_req = discard_req_sp.get();
@@ -2943,7 +2984,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
       //utime_t now = ceph_clock_now();
       //m_perfcounter->tinc(l_librbd_rwl_aio_flush_latency, now - flush_req->m_arrived_time);
 
-      release_guarded_request(discard_req_sp->get_cell());
+      discard_req_sp->release_cell();
     });
 
   /* The lambda below will be called when the block guard for all
@@ -3254,12 +3295,18 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
   utime_t now = ceph_clock_now();
   m_perfcounter->inc(l_librbd_rwl_cmp, 1);
   assert(m_initialized);
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       on_finish->complete(-EROFS);
       return;
     }
+  }
+
+  if (ExtentsSummary<Extents>(image_extents).total_bytes == 0) {
+    on_finish->complete(0);
+    return;
   }
 
   /* A compare and write request is also a write request. We only allocate
@@ -3313,7 +3360,7 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 	    cw_req->m_compare_succeeded = false;
 	    *cw_req->m_mismatch_offset = bl_index;
 	    cw_req->complete_user_request(-EILSEQ);
-	    release_guarded_request(cw_req->get_cell());
+	    cw_req->release_cell();
 	    cw_req->complete(0);
 	  }
 	});
@@ -4434,7 +4481,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
     [this, ctx](int r) {
       if (r < 0) {
 	lderr(m_image_ctx.cct) << "failed to flush log entry"
-	                       << cpp_strerror(r) << dendl;
+			       << cpp_strerror(r) << dendl;
 	ctx->complete(r);
       } else {
 	m_image_writeback->aio_flush(ctx);
@@ -4446,7 +4493,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
     return(ctx);
   } else {
     if (log_entry->is_write()) {
-      /* entry_bl is moved through the layers of lambdas here, and ultimately into the 
+      /* entry_bl is moved through the layers of lambdas here, and ultimately into the
        * m_image_writeback call */
       return new FunctionContext(
 	[this, gen_write_entry, entry_bl=move(entry_bl), ctx](int r) {
@@ -4463,7 +4510,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 	});
     } else if (log_entry->is_writesame()) {
       auto ws_entry = static_pointer_cast<WriteSameLogEntry>(log_entry);
-      /* entry_bl is moved through the layers of lambdas here, and ultimately into the 
+      /* entry_bl is moved through the layers of lambdas here, and ultimately into the
        * m_image_writeback call */
       return new FunctionContext(
 	[this, ws_entry, entry_bl=move(entry_bl), ctx](int r) {
@@ -4757,7 +4804,7 @@ void ReplicatedWriteLog<I>::flush(Context *on_finish, bool invalidate, bool disc
 	    Mutex::Locker locker(m_lock);
 	    m_invalidating = false;
 	    ldout(m_image_ctx.cct, 6) << "Done flush/invalidating (invalidate="
-	                              << invalidate << "discard="
+				      << invalidate << "discard="
 				      << discard_unflushed_writes << ")" << dendl;
 	    if (m_log_entries.size()) {
 	      ldout(m_image_ctx.cct, 1) << "m_log_entries.size()=" << m_log_entries.size() << ", "

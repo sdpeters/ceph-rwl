@@ -144,7 +144,6 @@ set(librbd_internal_srcs
 if(WITH_RWL)
   set(librbd_internal_srcs
     ${librbd_internal_srcs}
-    cache/BlockGuard.cc
     cache/ReplicatedWriteLog.cc)
 endif(WITH_RWL)
 
