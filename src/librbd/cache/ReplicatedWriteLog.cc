@@ -1034,7 +1034,7 @@ struct C_ReadRequest : public Context {
   }
 };
 
-static const bool COPY_PMEM_FOR_READ = false;
+static const bool COPY_PMEM_FOR_READ = true;
 template <typename I>
 void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 				     int fadvise_flags, Context *on_finish) {
@@ -4167,12 +4167,27 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
       ldout(m_image_ctx.cct, 6) << "flushing" << dendl;
       flush_dirty_entries(next_ctx);
     });
-  {
-    ldout(m_image_ctx.cct, 6) << "waiting for in flight operations" << dendl;
-    // Wait for in progress IOs to complete
-    Mutex::Locker locker(m_lock);
-    m_async_op_tracker.wait(m_image_ctx, ctx);
-  }
+  ctx = new FunctionContext(
+    [this, ctx](int r) {
+      Context *next_ctx = ctx;
+      if (r < 0) {
+	/* Override next_ctx status with this error */
+	next_ctx = new FunctionContext(
+	  [r, ctx](int _r) {
+	    ctx->complete(r);
+	  });
+      }
+      ldout(m_image_ctx.cct, 6) << "waiting for in flight operations" << dendl;
+      // Wait for in progress IOs to complete
+      Mutex::Locker locker(m_lock);
+      m_async_op_tracker.wait(m_image_ctx, next_ctx);
+    });
+  ctx = new FunctionContext(
+    [this, ctx](int r) {
+      m_work_queue.queue(ctx);
+    });
+  /* Complete all in-flight writes before shutting down */
+  internal_flush(ctx, false, false);
 }
 
 template <typename I>
@@ -4783,7 +4798,11 @@ void ReplicatedWriteLog<I>::flush(Context *on_finish, bool invalidate, bool disc
     m_image_ctx.op_work_queue->queue(on_finish);
     return;
   }
+  internal_flush(on_finish, invalidate, discard_unflushed_writes);
+}
 
+template <typename I>
+void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
   if (discard_unflushed_writes) {
     assert(invalidate);
   }

@@ -831,6 +831,7 @@ private:
   int append_op_log_entries(GenericLogOperationsT &ops);
   void complete_op_log_entries(GenericLogOperationsT &&ops, const int r);
   void schedule_complete_op_log_entries(GenericLogOperationsT &&ops, const int r);
+  void internal_flush(Context *on_finish, bool invalidate=false, bool discard_unflushed_writes=false);
 };
 
 } // namespace cache

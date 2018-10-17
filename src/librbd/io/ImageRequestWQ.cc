@@ -245,8 +245,7 @@ int ImageRequestWQ<I>::flush() {
   ldout(cct, 20) << "ictx=" << &m_image_ctx << dendl;
 
   C_SaferCond cond;
-  AioCompletion *c = AioCompletion::create(&cond);
-  aio_flush(c, false);
+  flush_image(m_image_ctx, &cond);
 
   int r = cond.wait();
   if (r < 0) {
