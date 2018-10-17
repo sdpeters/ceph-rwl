@@ -970,6 +970,7 @@ TEST_F(TestInternal, DiscardCopyup)
 
   CephContext* cct = reinterpret_cast<CephContext*>(_rados.cct());
   REQUIRE(!cct->_conf.get_val<bool>("rbd_skip_partial_discard"));
+  REQUIRE(!cct->_conf.get_val<bool>("rbd_rwl_enabled"));
 
   m_image_name = get_temp_image_name();
   m_image_size = 1 << 14;
@@ -1133,17 +1134,19 @@ TEST_F(TestInternal, WriteFullCopyup) {
   ASSERT_EQ(0, ictx->operations->resize(1 << ictx->order, true, no_op));
 
   bufferlist bl;
-  bl.append(std::string(1 << ictx->order, '1'));
+  int order = ictx->order;
+  auto features = ictx->features;
+  bl.append(std::string(1 << order, '1'));
   ASSERT_EQ((ssize_t)bl.length(),
             ictx->io_work_queue->write(0, bl.length(), bufferlist{bl}, 0));
   ASSERT_EQ(0, ictx->io_work_queue->flush());
+  close_image(ictx);
 
   ASSERT_EQ(0, create_snapshot("snap1", true));
 
   std::string clone_name = get_temp_image_name();
-  int order = ictx->order;
   ASSERT_EQ(0, librbd::clone(m_ioctx, m_image_name.c_str(), "snap1", m_ioctx,
-                             clone_name.c_str(), ictx->features, &order, 0, 0));
+                             clone_name.c_str(), features, &order, 0, 0));
 
   TestInternal *parent = this;
   librbd::ImageCtx *ictx2 = NULL;
