@@ -4788,11 +4788,10 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
 */
 template <typename I>
 void ReplicatedWriteLog<I>::flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
-  CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << __func__ << ":" << dendl;
+  ldout(m_image_ctx.cct, 20) << __func__ << ":" << dendl;
   if (m_perfcounter) {
     if (discard_unflushed_writes) {
-      ldout(cct, 1) << "Write back cache discarded (not flushed)" << dendl;
+      ldout(m_image_ctx.cct, 1) << "Write back cache discarded (not flushed)" << dendl;
       m_perfcounter->inc(l_librbd_rwl_invalidate_discard_cache, 1);
     } else if (invalidate) {
       m_perfcounter->inc(l_librbd_rwl_invalidate_cache, 1);
@@ -4801,13 +4800,6 @@ void ReplicatedWriteLog<I>::flush(Context *on_finish, bool invalidate, bool disc
     }
   }
 
-  /* May be called even if initialization fails */
-  if (!m_initialized) {
-    ldout(cct, 05) << "never initialized" << dendl;
-    /* Deadlock if completed here */
-    m_image_ctx.op_work_queue->queue(on_finish);
-    return;
-  }
   internal_flush(on_finish, invalidate, discard_unflushed_writes);
 }
 
@@ -4815,6 +4807,14 @@ template <typename I>
 void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
   if (discard_unflushed_writes) {
     assert(invalidate);
+  }
+
+  /* May be called even if initialization fails */
+  if (!m_initialized) {
+    ldout(m_image_ctx.cct, 05) << "never initialized" << dendl;
+    /* Deadlock if completed here */
+    m_image_ctx.op_work_queue->queue(on_finish);
+    return;
   }
 
   /* Flush/invalidate must pass through block guard to ensure all layers of
