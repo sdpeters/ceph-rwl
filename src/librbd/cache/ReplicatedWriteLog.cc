@@ -303,8 +303,27 @@ protected:
   buffer::ptr pmem_bp;
   buffer::list pmem_bl;
   std::atomic<int> bl_refs = {0}; /* The refs held on pmem_bp by pmem_bl */
-  void init_pmem_bp();
-  virtual void init_pmem_bl();
+
+  void init_pmem_bp() {
+    assert(!pmem_bp.get_raw());
+    pmem_bp = buffer::ptr(buffer::create_static(this->write_bytes(), (char*)pmem_buffer));
+  }
+
+  /* Write same will override */
+  virtual void init_bl(buffer::ptr &bp, buffer::list &bl) {
+    bl.append(bp);
+  }
+
+  void init_pmem_bl() {
+    pmem_bl.clear();
+    init_pmem_bp();
+    assert(pmem_bp.get_raw());
+    int before_bl = pmem_bp.raw_nref();
+    this->init_bl(pmem_bp, pmem_bl);
+    int after_bl = pmem_bp.raw_nref();
+    bl_refs = after_bl - before_bl;
+  }
+
 public:
   uint8_t *pmem_buffer = nullptr;
   WriteLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
@@ -315,8 +334,36 @@ public:
   WriteLogEntry(const WriteLogEntry&) = delete;
   WriteLogEntry &operator=(const WriteLogEntry&) = delete;
   const BlockExtent block_extent();
-  unsigned int reader_count();
-  buffer::list &get_pmem_bl(Mutex &entry_bl_lock);
+
+  unsigned int reader_count() {
+    if (pmem_bp.get_raw()) {
+      return (pmem_bp.raw_nref() - bl_refs - 1);
+    } else {
+      return 0;
+    }
+  }
+
+  /* Returns a ref to a bl containing bufferptrs to the entry pmem buffer */
+  buffer::list &get_pmem_bl(Mutex &entry_bl_lock) {
+    if (0 == bl_refs) {
+      Mutex::Locker locker(entry_bl_lock);
+      if (0 == bl_refs) {
+	init_pmem_bl();
+      }
+      assert(0 != bl_refs);
+    }
+    return pmem_bl;
+  };
+
+  /* Constructs a new bl containing copies of pmem_bp */
+  void copy_pmem_bl(Mutex &entry_bl_lock, bufferlist *out_bl) {
+    this->get_pmem_bl(entry_bl_lock);
+    /* pmem_bp is now initialized */
+    buffer::ptr cloned_bp(pmem_bp.clone());
+    out_bl->clear();
+    this->init_bl(cloned_bp, *out_bl);
+  }
+
   virtual const GenericLogEntry* get_log_entry() override { return get_write_log_entry(); }
   const WriteLogEntry* get_write_log_entry() override { return this; }
   std::ostream &format(std::ostream &os) const {
@@ -335,22 +382,18 @@ public:
   }
 };
 
-unsigned int WriteLogEntry::reader_count() {
-  if (pmem_bp.get_raw()) {
-    return (pmem_bp.raw_nref() - bl_refs - 1);
-  } else {
-    return 0;
-  }
-}
-
-void WriteLogEntry::init_pmem_bp() {
-  assert(!pmem_bp.get_raw());
-  pmem_bp = buffer::ptr(buffer::create_static(this->write_bytes(), (char*)pmem_buffer));
-}
-
 class WriteSameLogEntry : public WriteLogEntry {
 protected:
-  void init_pmem_bl();
+  void init_bl(buffer::ptr &bp, buffer::list &bl) override {
+    for (uint64_t i = 0; i < ram_entry.write_bytes / ram_entry.ws_datalen; i++) {
+      bl.append(bp);
+    }
+    int trailing_partial = ram_entry.write_bytes % ram_entry.ws_datalen;
+    if (trailing_partial) {
+      bl.append(bp, 0, trailing_partial);
+    }
+  };
+
 public:
   WriteSameLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
 		    const uint64_t image_offset_bytes, const uint64_t write_bytes,
@@ -379,43 +422,6 @@ public:
 				  const WriteSameLogEntry &entry) {
     return entry.format(os);
   }
-};
-
-void WriteLogEntry::init_pmem_bl() {
-  pmem_bl.clear();
-  init_pmem_bp();
-  assert(pmem_bp.get_raw());
-  int before_bl = pmem_bp.raw_nref();
-  pmem_bl.append(pmem_bp);
-  int after_bl = pmem_bp.raw_nref();
-  bl_refs = after_bl - before_bl;
-}
-
-buffer::list &WriteLogEntry::get_pmem_bl(Mutex &entry_bl_lock) {
-  if (0 == bl_refs) {
-    Mutex::Locker locker(entry_bl_lock);
-    if (0 == bl_refs) {
-      init_pmem_bl();
-    }
-    assert(0 != bl_refs);
-  }
-  return pmem_bl;
-};
-
-void WriteSameLogEntry::init_pmem_bl() {
-  pmem_bl.clear();
-  init_pmem_bp();
-  assert(pmem_bp.get_raw());
-  int before_bl = pmem_bp.raw_nref();
-  for (uint64_t i = 0; i < ram_entry.write_bytes / ram_entry.ws_datalen; i++) {
-    pmem_bl.append(pmem_bp);
-  }
-  int trailing_partial = ram_entry.write_bytes % ram_entry.ws_datalen;
-  if (trailing_partial) {
-    pmem_bl.append(pmem_bp, 0, trailing_partial);
-  }
-  int after_bl = pmem_bp.raw_nref();
-  bl_refs = after_bl - before_bl;
 };
 
 WriteSameLogEntry::WriteSameLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
@@ -1115,7 +1121,9 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
 	/* Make a bl for this hit extent. This will add references to the write_entry->pmem_bp */
 	buffer::list hit_bl;
 	if (COPY_PMEM_FOR_READ) {
-	  write_entry->get_pmem_bl(m_entry_bl_lock).copy(read_buffer_offset, entry_hit_length, hit_bl);
+	  buffer::list entry_bl_copy;
+	  write_entry->copy_pmem_bl(m_entry_bl_lock, &entry_bl_copy);
+	  entry_bl_copy.copy(read_buffer_offset, entry_hit_length, hit_bl);
 	} else {
 	  hit_bl.substr_of(write_entry->get_pmem_bl(m_entry_bl_lock), read_buffer_offset, entry_hit_length);
 	}
@@ -4423,7 +4431,7 @@ void ReplicatedWriteLog<I>::sync_point_writer_flushed(std::shared_ptr<SyncPointL
   }
 }
 
-static const bool COPY_PMEM_FOR_FLUSH = false;
+static const bool COPY_PMEM_FOR_FLUSH = true;
 template <typename I>
 Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<GenericLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
@@ -4460,7 +4468,9 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
     auto write_entry = static_pointer_cast<WriteLogEntry>(log_entry);
     if (COPY_PMEM_FOR_FLUSH) {
       /* Pass a copy of the pmem buffer to ImageWriteback (which may hang on to the bl evcen after flush()). */
-      write_entry->get_pmem_bl(m_entry_bl_lock).copy(0, write_entry->write_bytes(), entry_bl);
+      buffer::list entry_bl_copy;
+      write_entry->copy_pmem_bl(m_entry_bl_lock, &entry_bl_copy);
+      entry_bl_copy.copy(0, write_entry->write_bytes(), entry_bl);
     } else {
       /* Pass a bl that refers to the pmem buffers to ImageWriteback */
       entry_bl.substr_of(write_entry->get_pmem_bl(m_entry_bl_lock), 0, write_entry->write_bytes());
