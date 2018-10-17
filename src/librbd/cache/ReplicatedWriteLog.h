@@ -635,7 +635,9 @@ public:
   void flush(Context *on_finish, bool invalidate=false, bool discard_unflushed_writes=false);
   void flush(Context *on_finish) override { flush(on_finish, false, false); };
   
-  void invalidate(Context *on_finish, bool discard_unflushed_writes=false) { flush(on_finish, true, false); };
+  void invalidate(Context *on_finish, bool discard_unflushed_writes=false) {
+    flush(on_finish, true, discard_unflushed_writes);
+  };
   void invalidate(Context *on_finish) override { invalidate(on_finish, false); };
 
 private:

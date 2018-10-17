@@ -1052,7 +1052,8 @@ void ReplicatedWriteLog<I>::aio_read(Extents &&image_extents, bufferlist *bl,
   }
   C_ReadRequest *read_ctx = new C_ReadRequest(cct, now, m_perfcounter, bl, on_finish);
   if (RWL_VERBOSE_LOGGING) {
-    ldout(cct, 20) << "image_extents=" << image_extents << ", "
+    ldout(cct, 20) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
+		   << "image_extents=" << image_extents << ", "
 		   << "bl=" << bl << ", "
 		   << "on_finish=" << on_finish << dendl;
   }
@@ -2700,7 +2701,8 @@ void C_WriteRequest<T>::dispatch()
   pool_root = POBJ_ROOT(rwl.m_internal->m_log_pool, struct WriteLogPoolRoot);
 
   if (RWL_VERBOSE_LOGGING) {
-    ldout(cct, 15) << "write_req=" << this << " cell=" << this->get_cell() << dendl;
+    ldout(cct, 15) << "name: " << rwl.m_image_ctx.name << " id: " << rwl.m_image_ctx.id
+		   << "write_req=" << this << " cell=" << this->get_cell() << dendl;
   }
 
   {
@@ -2939,7 +2941,8 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 
   CephContext *cct = m_image_ctx.cct;
   if (RWL_VERBOSE_LOGGING) {
-    ldout(cct, 20) << "offset=" << offset << ", "
+    ldout(cct, 20) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
+		   << "offset=" << offset << ", "
 		   << "length=" << length << ", "
 		   << "on_finish=" << on_finish << dendl;
   }
@@ -3265,7 +3268,8 @@ void ReplicatedWriteLog<I>::aio_writesame(uint64_t offset, uint64_t length,
     return;
   }
 
-  ldout(m_image_ctx.cct, 06) << "offset=" << offset << ", "
+  ldout(m_image_ctx.cct, 06) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
+			     << "offset=" << offset << ", "
 			     << "length=" << length << ", "
 			     << "data_len=" << bl.length() << ", "
 			     << "on_finish=" << on_finish << dendl;
@@ -3334,7 +3338,8 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
       auto read_complete_ctx = new FunctionContext(
 	[this, cw_req](int r) {
 	  if (RWL_VERBOSE_LOGGING) {
-	    ldout(m_image_ctx.cct, 20) << "cw_req=" << cw_req << dendl;
+	    ldout(m_image_ctx.cct, 20) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
+	                               << "cw_req=" << cw_req << dendl;
 	  }
 
 	  /* Compare read_bl to cmp_bl to determine if this will produce a write */
@@ -4034,7 +4039,9 @@ void ReplicatedWriteLog<I>::init(Context *on_finish) {
       if (r >= 0) {
 	DeferredContexts later;
 	rwl_init(on_finish, later);
-	periodic_stats();
+	if (m_periodic_stats_enabled) {
+	  periodic_stats();
+	}
       } else {
 	/* Don't init RWL if layer below failed to init */
 	on_finish->complete(r);
@@ -4791,7 +4798,9 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
 */
 template <typename I>
 void ReplicatedWriteLog<I>::flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
-  ldout(m_image_ctx.cct, 20) << __func__ << ":" << dendl;
+  ldout(m_image_ctx.cct, 20) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
+			     << "invalidate=" << invalidate
+			     << " discard_unflushed_writes=" << discard_unflushed_writes << dendl;
   if (m_perfcounter) {
     if (discard_unflushed_writes) {
       ldout(m_image_ctx.cct, 1) << "Write back cache discarded (not flushed)" << dendl;
@@ -4808,6 +4817,8 @@ void ReplicatedWriteLog<I>::flush(Context *on_finish, bool invalidate, bool disc
 
 template <typename I>
 void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
+  ldout(m_image_ctx.cct, 20) << "invalidate=" << invalidate
+			     << " discard_unflushed_writes=" << discard_unflushed_writes << dendl;
   if (discard_unflushed_writes) {
     assert(invalidate);
   }

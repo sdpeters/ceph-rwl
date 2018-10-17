@@ -19,6 +19,7 @@
 namespace librbd {
 namespace image {
 
+using util::create_async_context_callback;
 using util::create_context_callback;
 
 template <typename I>
@@ -101,8 +102,9 @@ void SetSnapRequest<I>::send_block_writes() {
   m_writes_blocked = true;
 
   using klass = SetSnapRequest<I>;
-  Context *ctx = create_context_callback<
-    klass, &klass::handle_block_writes>(this);
+  Context *ctx = create_async_context_callback(
+    m_image_ctx, create_context_callback<
+      klass, &klass::handle_block_writes>(this));
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
   m_image_ctx.io_work_queue->block_writes(ctx);
