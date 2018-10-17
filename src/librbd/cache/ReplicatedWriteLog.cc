@@ -3886,6 +3886,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
 
   Mutex::Locker locker(m_lock);
   assert(!m_initialized);
+  ldout(cct,5) << "image name: " << m_image_ctx.name << " id: " << m_image_ctx.id << dendl;
   ldout(cct,5) << "rwl_enabled: " << m_image_ctx.rwl_enabled << dendl;
   ldout(cct,5) << "rwl_size: " << m_image_ctx.rwl_size << dendl;
   std::string rwl_path = m_image_ctx.rwl_path;
@@ -4014,9 +4015,9 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
   init_flush_new_sync_point(later);
   ldout(cct,20) << "new sync point = [" << m_current_sync_point << "]" << dendl;
 
-  m_dump_perfcounters_on_shutdown = true;
   m_initialized = true;
 
+  m_periodic_stats_enabled = m_image_ctx.rwl_log_periodic_stats;
   arm_periodic_stats();
   on_finish->complete(0);
 }
@@ -4047,6 +4048,8 @@ template <typename I>
 void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
+
+  ldout(cct,5) << "image name: " << m_image_ctx.name << " id: " << m_image_ctx.id << dendl;
 
   Context *ctx = new FunctionContext(
     [this, on_finish](int r) {
@@ -4091,7 +4094,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	/* Log stats one last time if they were enabled */
 	periodic_stats();
       }
-      if (m_perfcounter && m_dump_perfcounters_on_shutdown) {
+      if (m_perfcounter && m_image_ctx.rwl_log_stats_on_close) {
 	log_perf();
       }
       if (use_finishers) {

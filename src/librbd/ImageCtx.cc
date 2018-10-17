@@ -771,6 +771,8 @@ public:
     ASSIGN_OPTION(blkin_trace_all, bool);
     ASSIGN_OPTION(rwl_enabled, bool);
     ASSIGN_OPTION(rwl_remove_on_close, bool);
+    ASSIGN_OPTION(rwl_log_stats_on_close, bool);
+    ASSIGN_OPTION(rwl_log_periodic_stats, bool);
     ASSIGN_OPTION(rwl_size, uint64_t);
     ASSIGN_OPTION(rwl_path, std::string);
 

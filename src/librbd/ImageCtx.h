@@ -197,6 +197,8 @@ namespace librbd {
 
     bool rwl_enabled;
     bool rwl_remove_on_close;
+    bool rwl_log_stats_on_close;
+    bool rwl_log_periodic_stats;
     uint64_t rwl_size;
     std::string rwl_path;
 
