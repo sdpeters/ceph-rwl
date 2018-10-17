@@ -2365,6 +2365,7 @@ TEST_F(TestLibRBD, TestEmptyDiscard)
 
 TEST_F(TestLibRBD, TestFUA)
 {
+  REQUIRE(!is_rbd_rwl_enabled());
   rados_ioctx_t ioctx;
   rados_ioctx_create(_cluster, m_pool_name.c_str(), &ioctx);
 
