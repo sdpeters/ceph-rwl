@@ -3313,6 +3313,7 @@ static void test_list_children2(rbd_image_t image, int num_expected, ...)
 TEST_F(TestLibRBD, ListChildren)
 {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librbd::RBD rbd;
   rados_ioctx_t ioctx1, ioctx2;
@@ -3467,6 +3468,7 @@ TEST_F(TestLibRBD, ListChildren)
 TEST_F(TestLibRBD, ListChildrenTiered)
 {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librbd::RBD rbd;
   string pool_name1 = create_pool(true);
@@ -5359,6 +5361,7 @@ void memset_rand(char *buf, size_t len) {
 TEST_F(TestLibRBD, Metadata)
 {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   rados_ioctx_t ioctx;
   rados_ioctx_create(_cluster, m_pool_name.c_str(), &ioctx);
@@ -6113,10 +6116,16 @@ TEST_F(TestLibRBD, CacheMayCopyOnWrite) {
 
 TEST_F(TestLibRBD, FlushEmptyOpsOnExternalSnapshot) {
   std::string cache_enabled;
+  std::string rwl_enabled;
   ASSERT_EQ(0, _rados.conf_get("rbd_cache", cache_enabled));
   ASSERT_EQ(0, _rados.conf_set("rbd_cache", "false"));
+  ASSERT_EQ(0, _rados.conf_get("rbd_rwl_enabled", rwl_enabled));
+  ASSERT_EQ(0, _rados.conf_set("rbd_rwl_enabled", "false"));
   BOOST_SCOPE_EXIT( (cache_enabled) ) {
     ASSERT_EQ(0, _rados.conf_set("rbd_cache", cache_enabled.c_str()));
+  } BOOST_SCOPE_EXIT_END;
+  BOOST_SCOPE_EXIT( (rwl_enabled) ) {
+    ASSERT_EQ(0, _rados.conf_set("rbd_rwl_enabled", rwl_enabled.c_str()));
   } BOOST_SCOPE_EXIT_END;
 
   librados::IoCtx ioctx;
@@ -6539,6 +6548,7 @@ TEST_F(TestLibRBD, MirrorPeerAttributes) {
 
 TEST_F(TestLibRBD, FlushCacheWithCopyupOnExternalSnapshot) {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
