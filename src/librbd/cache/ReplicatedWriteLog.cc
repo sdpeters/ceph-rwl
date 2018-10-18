@@ -3339,7 +3339,7 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 	[this, cw_req](int r) {
 	  if (RWL_VERBOSE_LOGGING) {
 	    ldout(m_image_ctx.cct, 20) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
-	                               << "cw_req=" << cw_req << dendl;
+				       << "cw_req=" << cw_req << dendl;
 	  }
 
 	  /* Compare read_bl to cmp_bl to determine if this will produce a write */
@@ -4814,6 +4814,21 @@ void ReplicatedWriteLog<I>::flush(Context *on_finish, bool invalidate, bool disc
 
   internal_flush(on_finish, invalidate, discard_unflushed_writes);
 }
+
+template <typename I>
+void ReplicatedWriteLog<I>::flush(Context *on_finish) {
+  flush(on_finish, m_image_ctx.rwl_invalidate_on_flush, false);
+};
+
+template <typename I>
+void ReplicatedWriteLog<I>::invalidate(Context *on_finish, bool discard_unflushed_writes) {
+  flush(on_finish, true, discard_unflushed_writes);
+};
+
+template <typename I>
+void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
+  invalidate(on_finish, false);
+};
 
 template <typename I>
 void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {

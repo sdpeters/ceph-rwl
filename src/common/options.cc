@@ -7414,6 +7414,10 @@ static std::vector<Option> get_rbd_options() {
     .set_default(false)
     .set_description("emi periodic perf stats to debug log"),
 
+    Option("rbd_rwl_invalidate_on_flush", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
+    .set_default(false)
+    .set_description("Invalidate RWL contents after flushing to RADOS"),
+
     Option("rbd_rwl_size", Option::TYPE_UINT, Option::LEVEL_ADVANCED)
     .set_default(1073741824)
     .set_min(1073741824)
