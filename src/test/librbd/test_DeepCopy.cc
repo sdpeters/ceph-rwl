@@ -487,6 +487,7 @@ TEST_F(TestDeepCopy, CloneExpand)
 TEST_F(TestDeepCopy, CloneHideParent)
 {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
+  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
 
   test_clone_hide_parent();
 }

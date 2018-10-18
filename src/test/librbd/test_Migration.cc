@@ -736,6 +736,7 @@ TEST_F(TestMigration, MirroringPool)
 TEST_F(TestMigration, Group)
 {
   REQUIRE_FORMAT_V2();
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
 
   ASSERT_EQ(0, librbd::api::Group<>::create(m_ioctx, "123"));
   ASSERT_EQ(0, librbd::api::Group<>::image_add(m_ioctx, "123", m_ioctx,
@@ -758,6 +759,7 @@ TEST_F(TestMigration, Group)
 TEST_F(TestMigration, GroupAbort)
 {
   REQUIRE_FORMAT_V2();
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
 
   ASSERT_EQ(0, librbd::api::Group<>::create(m_ioctx, "123"));
   ASSERT_EQ(0, librbd::api::Group<>::image_add(m_ioctx, "123", m_ioctx,
@@ -785,12 +787,14 @@ TEST_F(TestMigration, GroupAbort)
 
 TEST_F(TestMigration, NoSnaps)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_no_snaps();
   migrate(m_ioctx, m_image_name);
 }
 
 TEST_F(TestMigration, NoSnapsOtherPool)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_no_snaps();
 
   test_no_snaps();
@@ -799,6 +803,7 @@ TEST_F(TestMigration, NoSnapsOtherPool)
 
 TEST_F(TestMigration, NoSnapsDataPool)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_no_snaps();
 
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_DATA_POOL,
@@ -810,6 +815,7 @@ TEST_F(TestMigration, NoSnapsDataPool)
 
 TEST_F(TestMigration, NoSnapsShrinkAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_no_snaps();
 
   migration_prepare(m_ioctx, m_image_name);
@@ -824,6 +830,7 @@ TEST_F(TestMigration, NoSnapsShrinkAfterPrepare)
 
 TEST_F(TestMigration, NoSnapsShrinkToZeroBeforePrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_no_snaps();
   resize(0);
 
@@ -832,6 +839,7 @@ TEST_F(TestMigration, NoSnapsShrinkToZeroBeforePrepare)
 
 TEST_F(TestMigration, NoSnapsShrinkToZeroAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_no_snaps();
 
   migration_prepare(m_ioctx, m_image_name);
@@ -846,6 +854,7 @@ TEST_F(TestMigration, NoSnapsShrinkToZeroAfterPrepare)
 
 TEST_F(TestMigration, NoSnapsExpandAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_no_snaps();
 
   migration_prepare(m_ioctx, m_image_name);
@@ -860,6 +869,7 @@ TEST_F(TestMigration, NoSnapsExpandAfterPrepare)
 
 TEST_F(TestMigration, NoSnapsSnapAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_no_snaps();
 
   migration_prepare(m_ioctx, m_image_name);
@@ -876,12 +886,14 @@ TEST_F(TestMigration, NoSnapsSnapAfterPrepare)
 
 TEST_F(TestMigration, Snaps)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
   migrate(m_ioctx, m_image_name);
 }
 
 TEST_F(TestMigration, SnapsOtherPool)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
 
   test_no_snaps();
@@ -892,6 +904,7 @@ TEST_F(TestMigration, SnapsOtherPool)
 
 TEST_F(TestMigration, SnapsDataPool)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
 
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_DATA_POOL,
@@ -903,6 +916,7 @@ TEST_F(TestMigration, SnapsDataPool)
 
 TEST_F(TestMigration, SnapsShrinkAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
 
   migration_prepare(m_ioctx, m_image_name);
@@ -917,6 +931,7 @@ TEST_F(TestMigration, SnapsShrinkAfterPrepare)
 
 TEST_F(TestMigration, SnapsShrinkToZeroBeforePrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
   resize(0);
 
@@ -925,6 +940,7 @@ TEST_F(TestMigration, SnapsShrinkToZeroBeforePrepare)
 
 TEST_F(TestMigration, SnapsShrinkToZeroAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
 
   migration_prepare(m_ioctx, m_image_name);
@@ -939,6 +955,7 @@ TEST_F(TestMigration, SnapsShrinkToZeroAfterPrepare)
 
 TEST_F(TestMigration, SnapsExpandAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
 
   migration_prepare(m_ioctx, m_image_name);
@@ -955,6 +972,7 @@ TEST_F(TestMigration, SnapsExpandAfterPrepare)
 
 TEST_F(TestMigration, SnapsExpandAfterPrepare2)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   auto size = m_ictx->size;
 
   write(size >> 1, 10, 'X');
@@ -976,6 +994,7 @@ TEST_F(TestMigration, SnapsExpandAfterPrepare2)
 
 TEST_F(TestMigration, SnapsSnapAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
 
   migration_prepare(m_ioctx, m_image_name);
@@ -1002,6 +1021,7 @@ TEST_F(TestMigration, SnapsSnapAfterPrepare)
 
 TEST_F(TestMigration, SnapsSnapExpandAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
 
   migration_prepare(m_ioctx, m_image_name);
@@ -1019,6 +1039,7 @@ TEST_F(TestMigration, SnapsSnapExpandAfterPrepare)
 
 TEST_F(TestMigration, Clone)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
 
   test_clone();
@@ -1057,6 +1078,7 @@ TEST_F(TestMigration, CloneParent) {
 
 TEST_F(TestMigration, CloneUpdateAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
 
   write(0, 10, 'X');
@@ -1073,6 +1095,7 @@ TEST_F(TestMigration, CloneUpdateAfterPrepare)
 
 TEST_F(TestMigration, TriggerAssertSnapcSeq)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   auto size = m_ictx->size;
 
   write((size >> 1) + 0, 10, 'A');
@@ -1097,6 +1120,7 @@ TEST_F(TestMigration, TriggerAssertSnapcSeq)
 
 TEST_F(TestMigration, SnapTrimBeforePrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   auto size = m_ictx->size;
 
   write(size >> 1, 10, 'A');
@@ -1318,6 +1342,7 @@ TEST_F(TestMigration, StressNoMigrate)
 
 TEST_F(TestMigration, Stress)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_stress();
 
   migrate(m_ioctx, m_image_name);
@@ -1325,10 +1350,12 @@ TEST_F(TestMigration, Stress)
 
 TEST_F(TestMigration, Stress2)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_stress2(false);
 }
 
 TEST_F(TestMigration, StressLive)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_stress2(true);
 }

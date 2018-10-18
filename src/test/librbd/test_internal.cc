@@ -39,6 +39,7 @@ public:
 
   void TearDown() override {
     unlock_image();
+    close_images();
     for (Snaps::iterator iter = m_snaps.begin(); iter != m_snaps.end(); ++iter) {
       librbd::ImageCtx *ictx;
       EXPECT_EQ(0, open_image(m_image_name, &ictx));

@@ -25,6 +25,8 @@ public:
 
   int open_image(const std::string &image_name, librbd::ImageCtx **ictx);
   void close_image(librbd::ImageCtx *ictx);
+  void close_images(const std::string &image_name);
+  void close_images();
 
   int snap_create(librbd::ImageCtx &ictx, const std::string &snap_name);
   int snap_protect(librbd::ImageCtx &ictx, const std::string &snap_name);

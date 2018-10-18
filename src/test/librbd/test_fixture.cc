@@ -69,10 +69,7 @@ void TestFixture::SetUp() {
 
 void TestFixture::TearDown() {
   unlock_image();
-  for (std::set<librbd::ImageCtx *>::iterator iter = m_ictxs.begin();
-       iter != m_ictxs.end(); ++iter) {
-    (*iter)->state->close();
-  }
+  close_images();
 
   m_ioctx.close();
 }
@@ -111,6 +108,24 @@ void TestFixture::close_image(librbd::ImageCtx *ictx) {
   m_ictxs.erase(ictx);
 
   ictx->state->close();
+}
+
+void TestFixture::close_images() {
+  for (std::set<librbd::ImageCtx *>::iterator iter = m_ictxs.begin();
+       iter != m_ictxs.end(); ++iter) {
+    (*iter)->state->close();
+    m_ictxs.erase(*iter);
+  }
+}
+
+void TestFixture::close_images(const std::string &image_name) {
+  for (std::set<librbd::ImageCtx *>::iterator iter = m_ictxs.begin();
+       iter != m_ictxs.end(); ++iter) {
+    if ((*iter)->name == image_name) {
+      (*iter)->state->close();
+      m_ictxs.erase(*iter);
+    }
+  }
 }
 
 int TestFixture::lock_image(librbd::ImageCtx &ictx, ClsLockType lock_type,

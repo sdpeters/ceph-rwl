@@ -4807,6 +4807,7 @@ TEST_F(TestLibRBD, SnapshotLimitPP)
 TEST_F(TestLibRBD, RebuildObjectMapViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK | RBD_FEATURE_OBJECT_MAP);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -4891,6 +4892,7 @@ TEST_F(TestLibRBD, RenameViaLockOwner)
 TEST_F(TestLibRBD, SnapCreateViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -4935,6 +4937,7 @@ TEST_F(TestLibRBD, SnapCreateViaLockOwner)
 TEST_F(TestLibRBD, SnapRemoveViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_FAST_DIFF);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -5063,6 +5066,7 @@ TEST_F(TestLibRBD, SnapRemove2)
 TEST_F(TestLibRBD, SnapRenameViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING | RBD_FEATURE_EXCLUSIVE_LOCK);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -5104,6 +5108,7 @@ TEST_F(TestLibRBD, SnapRenameViaLockOwner)
 TEST_F(TestLibRBD, SnapProtectViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING | RBD_FEATURE_EXCLUSIVE_LOCK);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -5145,6 +5150,7 @@ TEST_F(TestLibRBD, SnapProtectViaLockOwner)
 TEST_F(TestLibRBD, SnapUnprotectViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING | RBD_FEATURE_EXCLUSIVE_LOCK);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -5189,6 +5195,7 @@ TEST_F(TestLibRBD, SnapUnprotectViaLockOwner)
 TEST_F(TestLibRBD, FlattenViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -5237,6 +5244,7 @@ TEST_F(TestLibRBD, FlattenViaLockOwner)
 TEST_F(TestLibRBD, ResizeViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -5555,6 +5563,7 @@ TEST_F(TestLibRBD, Metadata)
 TEST_F(TestLibRBD, MetadataPP)
 {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -5734,6 +5743,7 @@ TEST_F(TestLibRBD, RebuildObjectMap)
 {
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librbd::RBD rbd;
   std::string name = get_temp_image_name();
@@ -5955,6 +5965,7 @@ TEST_F(TestLibRBD, BlockingAIO)
 TEST_F(TestLibRBD, ExclusiveLockTransition)
 {
   REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -6428,6 +6439,7 @@ static std::ostream& operator<<(std::ostream &os, const mirror_peer_t &peer) {
 TEST_F(TestLibRBD, Mirror) {
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librbd::RBD rbd;
 
@@ -6595,6 +6607,7 @@ TEST_F(TestLibRBD, FlushCacheWithCopyupOnExternalSnapshot) {
 TEST_F(TestLibRBD, ExclusiveLock)
 {
   REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   static char buf[10];
 
@@ -6738,6 +6751,7 @@ TEST_F(TestLibRBD, ExclusiveLock)
 TEST_F(TestLibRBD, BreakLock)
 {
   REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   static char buf[10];
 
@@ -7038,6 +7052,7 @@ TEST_F(TestLibRBD, TestTrashMoveAndRestore) {
 
 TEST_F(TestLibRBD, TestListWatchers) {
   librados::IoCtx ioctx;
+  REQUIRE(!is_rbd_rwl_enabled());
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
 
   librbd::RBD rbd;
