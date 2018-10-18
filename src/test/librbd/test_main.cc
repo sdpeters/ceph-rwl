@@ -31,7 +31,10 @@ extern void register_test_write_log_map();
 int main(int argc, char **argv)
 {
   setenv("RBD_FORCE_ALLOW_V1","1",1);
-
+#if defined(WITH_RWL)
+  /* Disable actual PMDK persistence guarantees for unit tests */
+  setenv("PMEM_IS_PMEM_FORCE","1",1);
+#endif
   register_test_librbd();
 #ifdef TEST_LIBRBD_INTERNALS
   register_test_deep_copy();
