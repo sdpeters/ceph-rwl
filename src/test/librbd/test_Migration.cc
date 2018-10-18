@@ -534,6 +534,7 @@ librados::IoCtx TestMigration::_other_pool_ioctx;
 
 TEST_F(TestMigration, Empty)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   uint64_t features = m_ictx->features ^ RBD_FEATURE_LAYERING;
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_FEATURES, features));
 
@@ -544,6 +545,7 @@ TEST_F(TestMigration, Empty)
 
 TEST_F(TestMigration, OtherName)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   std::string name = get_temp_image_name();
 
   migrate(m_ioctx, name);
@@ -553,6 +555,7 @@ TEST_F(TestMigration, OtherName)
 
 TEST_F(TestMigration, OtherPool)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   migrate(_other_pool_ioctx, m_image_name);
 
   ASSERT_EQ(_other_pool_ioctx.get_id(), m_ictx->md_ctx.get_id());
@@ -572,6 +575,7 @@ TEST_F(TestMigration, OtherNamespace)
 
 TEST_F(TestMigration, DataPool)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_DATA_POOL,
                           _other_pool_ioctx.get_pool_name().c_str()));
 
@@ -582,6 +586,7 @@ TEST_F(TestMigration, DataPool)
 
 TEST_F(TestMigration, AbortAfterPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   migration_prepare(m_ioctx, m_image_name);
   migration_status(RBD_IMAGE_MIGRATION_STATE_PREPARED);
   migration_abort(m_ioctx, m_image_name);
@@ -589,6 +594,7 @@ TEST_F(TestMigration, AbortAfterPrepare)
 
 TEST_F(TestMigration, AbortAfterFailedPrepare)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_DATA_POOL, "INVALID_POOL"));
 
   migration_prepare(m_ioctx, m_image_name, -ENOENT);
@@ -598,6 +604,7 @@ TEST_F(TestMigration, AbortAfterFailedPrepare)
 
 TEST_F(TestMigration, AbortAfterExecute)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   migration_prepare(m_ioctx, m_image_name);
   migration_status(RBD_IMAGE_MIGRATION_STATE_PREPARED);
   migration_execute(m_ioctx, m_image_name);
@@ -607,6 +614,7 @@ TEST_F(TestMigration, AbortAfterExecute)
 
 TEST_F(TestMigration, OtherPoolAbortAfterExecute)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   migration_prepare(_other_pool_ioctx, m_image_name);
   migration_status(RBD_IMAGE_MIGRATION_STATE_PREPARED);
   migration_execute(_other_pool_ioctx, m_image_name);
@@ -631,6 +639,7 @@ TEST_F(TestMigration, OtherNamespaceAbortAfterExecute)
 
 TEST_F(TestMigration, MirroringSamePool)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
 
   ASSERT_EQ(0, librbd::api::Mirror<>::mode_set(m_ioctx, RBD_MIRROR_MODE_IMAGE));
@@ -648,6 +657,7 @@ TEST_F(TestMigration, MirroringSamePool)
 
 TEST_F(TestMigration, MirroringAbort)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
 
   ASSERT_EQ(0, librbd::api::Mirror<>::mode_set(m_ioctx, RBD_MIRROR_MODE_IMAGE));
@@ -670,6 +680,7 @@ TEST_F(TestMigration, MirroringAbort)
 
 TEST_F(TestMigration, MirroringOtherPoolDisabled)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
 
   ASSERT_EQ(0, librbd::api::Mirror<>::mode_set(m_ioctx, RBD_MIRROR_MODE_IMAGE));
@@ -687,6 +698,7 @@ TEST_F(TestMigration, MirroringOtherPoolDisabled)
 
 TEST_F(TestMigration, MirroringOtherPoolEnabled)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
 
   ASSERT_EQ(0, librbd::api::Mirror<>::mode_set(m_ioctx, RBD_MIRROR_MODE_IMAGE));
@@ -706,6 +718,7 @@ TEST_F(TestMigration, MirroringOtherPoolEnabled)
 
 TEST_F(TestMigration, MirroringPool)
 {
+  REQUIRE(!m_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
 
   ASSERT_EQ(0, librbd::api::Mirror<>::mode_set(_other_pool_ioctx,

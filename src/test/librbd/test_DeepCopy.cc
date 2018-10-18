@@ -453,11 +453,13 @@ TEST_F(TestDeepCopy, NoSnaps)
 
 TEST_F(TestDeepCopy, Snaps)
 {
+  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snaps();
 }
 
 TEST_F(TestDeepCopy, SnapDiscard)
 {
+  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_snap_discard();
 }
 
@@ -508,6 +510,7 @@ TEST_F(TestDeepCopy, CloneFlatten)
 
 TEST_F(TestDeepCopy, Stress)
 {
+  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   test_stress();
 }
 
@@ -522,6 +525,7 @@ TEST_F(TestDeepCopy, NoSnaps_LargerDstObjSize)
 TEST_F(TestDeepCopy, Snaps_LargerDstObjSize)
 {
   uint64_t order = m_src_ictx->order + 1;
+  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_ORDER, order));
 
   test_snaps();
@@ -551,6 +555,7 @@ TEST_F(TestDeepCopy, CloneFlatten_LargerDstObjSize)
 
 TEST_F(TestDeepCopy, Stress_LargerDstObjSize)
 {
+  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   uint64_t order = m_src_ictx->order + 1 + rand() % 2;
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_ORDER, order));
 
@@ -570,6 +575,7 @@ TEST_F(TestDeepCopy, NoSnaps_SmallerDstObjSize)
 TEST_F(TestDeepCopy, Snaps_SmallerDstObjSize)
 {
   uint64_t order = m_src_ictx->order - 1;
+  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_ORDER, order));
   uint64_t stripe_unit = m_src_ictx->stripe_unit >> 1;
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_STRIPE_UNIT, stripe_unit));
@@ -606,6 +612,7 @@ TEST_F(TestDeepCopy, CloneFlatten_SmallerDstObjSize)
 TEST_F(TestDeepCopy, Stress_SmallerDstObjSize)
 {
   uint64_t order = m_src_ictx->order - 1 - rand() % 2;
+  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_ORDER, order));
   uint64_t stripe_unit = m_src_ictx->stripe_unit >> 2;
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_STRIPE_UNIT, stripe_unit));

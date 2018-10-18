@@ -13,6 +13,7 @@
 #include "test/librbd/mock/MockObjectMap.h"
 #include "test/librbd/mock/MockOperations.h"
 #include "test/librbd/mock/MockReadahead.h"
+#include "test/librbd/mock/cache/MockImageCache.h"
 #include "test/librbd/mock/io/MockImageRequestWQ.h"
 #include "test/librbd/mock/io/MockObjectDispatcher.h"
 #include "common/RWLock.h"
@@ -26,7 +27,6 @@ class MockSafeTimer;
 
 namespace librbd {
 
-namespace cache { class MockImageCache; }
 namespace operation {
 template <typename> class ResizeRequest;
 }
