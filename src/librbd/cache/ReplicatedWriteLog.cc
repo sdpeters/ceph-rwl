@@ -4007,7 +4007,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
 
   m_periodic_stats_enabled = m_image_ctx.rwl_log_periodic_stats;
   arm_periodic_stats();
-  on_finish->complete(0);
+  m_image_ctx.op_work_queue->queue(on_finish);
 }
 
 template <typename I>
@@ -4027,7 +4027,7 @@ void ReplicatedWriteLog<I>::init(Context *on_finish) {
 	}
       } else {
 	/* Don't init RWL if layer below failed to init */
-	on_finish->complete(r);
+	m_image_ctx.op_work_queue->queue(on_finish, r);
       }
     });
   /* Initialize the cache layer below first */
@@ -4048,7 +4048,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	m_timer.cancel_all_events();
       }
       ldout(m_image_ctx.cct, 6) << "shutdown complete" << dendl;
-      on_finish->complete(r);
+      m_image_ctx.op_work_queue->queue(on_finish, r);
     });
   ctx = new FunctionContext(
     [this, ctx](int r) {
@@ -4135,6 +4135,11 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
     });
   ctx = new FunctionContext(
     [this, ctx](int r) {
+      /* Get off of RWL WQ - thread pool about to be shut down */
+      m_image_ctx.op_work_queue->queue(ctx);
+    });
+  ctx = new FunctionContext(
+    [this, ctx](int r) {
       Context *next_ctx = ctx;
       if (r < 0) {
 	/* Override next_ctx status with this error */
@@ -4167,6 +4172,11 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
       // flush all writes to OSDs
       ldout(m_image_ctx.cct, 6) << "flushing" << dendl;
       flush_dirty_entries(next_ctx);
+    });
+  ctx = new FunctionContext(
+    [this, ctx](int r) {
+      /* Back to RWL WQ */
+      m_work_queue.queue(ctx);
     });
   ctx = new FunctionContext(
     [this, ctx](int r) {
@@ -4855,7 +4865,7 @@ void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, 
 	      assert(m_log_entries.size() == 0);
 	    }
 	    assert(m_dirty_log_entries.size() == 0);
-	    on_finish->complete(r);
+	    m_image_ctx.op_work_queue->queue(on_finish, r);
 	    release_guarded_request(cell);
 	  });
 	ctx = new FunctionContext(
