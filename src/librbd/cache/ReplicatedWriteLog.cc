@@ -170,7 +170,9 @@ public:
   WriteLogPmemEntry *pmem_entry = nullptr;
   uint32_t log_entry_index = 0;
   bool completed = false;
-  GenericLogEntry(const uint64_t image_offset_bytes = 0, const uint64_t write_bytes = 0);
+  GenericLogEntry(const uint64_t image_offset_bytes = 0, const uint64_t write_bytes = 0)
+    : ram_entry(image_offset_bytes, write_bytes) {
+  };
   virtual ~GenericLogEntry() { };
   GenericLogEntry(const GenericLogEntry&) = delete;
   GenericLogEntry &operator=(const GenericLogEntry&) = delete;
@@ -199,10 +201,6 @@ public:
   }
 };
 
-GenericLogEntry::GenericLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
-  : ram_entry(image_offset_bytes, write_bytes) {
-};
-
 class SyncPointLogEntry : public GenericLogEntry {
 public:
   /* Writing entries using this sync gen number */
@@ -216,7 +214,10 @@ public:
   /* All writing entries using all prior sync gen numbers have been flushed */
   std::atomic<bool> m_prior_sync_point_flushed = {true};
   std::shared_ptr<SyncPointLogEntry> m_next_sync_point_entry = nullptr;
-  SyncPointLogEntry(const uint64_t sync_gen_number);
+  SyncPointLogEntry(const uint64_t sync_gen_number) {
+    ram_entry.sync_gen_number = sync_gen_number;
+    ram_entry.sync_point = 1;
+  };
   SyncPointLogEntry(const SyncPointLogEntry&) = delete;
   SyncPointLogEntry &operator=(const SyncPointLogEntry&) = delete;
   virtual inline unsigned int write_bytes() { return 0; }
@@ -239,11 +240,6 @@ public:
     return entry.format(os);
   }
 };
-
-SyncPointLogEntry::SyncPointLogEntry(const uint64_t sync_gen_number) {
-  ram_entry.sync_gen_number = sync_gen_number;
-  ram_entry.sync_point = 1;
-}
 
 class GeneralWriteLogEntry : public GenericLogEntry {
 private:
@@ -269,7 +265,7 @@ public:
     /* The bytes in the image this op makes dirty. Discard and WS override. */
     return write_bytes();
   };
-  const BlockExtent block_extent();
+  const BlockExtent block_extent() { return ram_entry.block_extent(); }
   const GenericLogEntry* get_log_entry() override { return get_gen_write_log_entry(); }
   const GeneralWriteLogEntry* get_gen_write_log_entry() override { return this; }
   uint32_t get_map_ref() { return(referring_map_entries); }
@@ -295,8 +291,6 @@ public:
     return entry.format(os);
   }
 };
-
-const BlockExtent GeneralWriteLogEntry::block_extent() { return ram_entry.block_extent(); }
 
 class WriteLogEntry : public GeneralWriteLogEntry {
 protected:
@@ -397,9 +391,17 @@ protected:
 public:
   WriteSameLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
 		    const uint64_t image_offset_bytes, const uint64_t write_bytes,
-		    const uint32_t data_length);
+		    const uint32_t data_length)
+    : WriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) {
+    ram_entry.writesame = 1;
+    ram_entry.ws_datalen = data_length;
+  };
   WriteSameLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes,
-		    const uint32_t data_length);
+		    const uint32_t data_length)
+    : WriteLogEntry(nullptr, image_offset_bytes, write_bytes) {
+    ram_entry.writesame = 1;
+    ram_entry.ws_datalen = data_length;
+  };
   WriteSameLogEntry(const WriteSameLogEntry&) = delete;
   WriteSameLogEntry &operator=(const WriteSameLogEntry&) = delete;
   virtual inline unsigned int write_bytes() override {
@@ -424,25 +426,17 @@ public:
   }
 };
 
-WriteSameLogEntry::WriteSameLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
-				     const uint64_t image_offset_bytes, const uint64_t write_bytes,
-				     const uint32_t data_length)
-  : WriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) {
-    ram_entry.writesame = 1;
-    ram_entry.ws_datalen = data_length;
-}
-WriteSameLogEntry::WriteSameLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes,
-				     const uint32_t data_length)
-  : WriteLogEntry(nullptr, image_offset_bytes, write_bytes) {
-  ram_entry.writesame = 1;
-  ram_entry.ws_datalen = data_length;
-}
-
 class DiscardLogEntry : public GeneralWriteLogEntry {
 public:
   DiscardLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
-		  const uint64_t image_offset_bytes, const uint64_t write_bytes);
-  DiscardLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes);
+		  const uint64_t image_offset_bytes, const uint64_t write_bytes)
+    : GeneralWriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) {
+    ram_entry.discard = 1;
+  };
+  DiscardLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
+    : GeneralWriteLogEntry(nullptr, image_offset_bytes, write_bytes) {
+    ram_entry.discard = 1;
+  };
   DiscardLogEntry(const DiscardLogEntry&) = delete;
   DiscardLogEntry &operator=(const DiscardLogEntry&) = delete;
   virtual inline unsigned int write_bytes() {
@@ -466,17 +460,6 @@ public:
     return entry.format(os);
   }
 };
-
-DiscardLogEntry::DiscardLogEntry(std::shared_ptr<SyncPointLogEntry> sync_point_entry,
-				 const uint64_t image_offset_bytes, const uint64_t write_bytes)
-  : GeneralWriteLogEntry(sync_point_entry, image_offset_bytes, write_bytes) {
-  ram_entry.discard = 1;
-}
-
-DiscardLogEntry::DiscardLogEntry(const uint64_t image_offset_bytes, const uint64_t write_bytes)
-  : GeneralWriteLogEntry(nullptr, image_offset_bytes, write_bytes) {
-  ram_entry.discard = 1;
-}
 
 template <typename T>
 SyncPoint<T>::SyncPoint(T &rwl, uint64_t sync_gen_num)
