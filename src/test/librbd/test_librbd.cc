@@ -4860,6 +4860,7 @@ TEST_F(TestLibRBD, RebuildObjectMapViaLockOwner)
 TEST_F(TestLibRBD, RenameViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -4979,6 +4980,7 @@ TEST_F(TestLibRBD, SnapRemoveViaLockOwner)
 TEST_F(TestLibRBD, EnableJournalingViaLockOwner)
 {
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
@@ -6022,6 +6024,7 @@ TEST_F(TestLibRBD, ExclusiveLockTransition)
 TEST_F(TestLibRBD, ExclusiveLockReadTransition)
 {
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
+  REQUIRE(!is_rbd_rwl_enabled());
 
   librados::IoCtx ioctx;
   ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
