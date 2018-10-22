@@ -143,7 +143,7 @@ int PMEMDevice::collect_metadata(const string& prefix, map<string,string> *pm) c
   if (S_ISBLK(st.st_mode)) {
     (*pm)[prefix + "access_mode"] = "blk";
     char buffer[1024] = {0};
-    BlkDev blkdev(fd_buffered);
+    BlkDev blkdev(fd);
 
     blkdev.model(buffer, sizeof(buffer));
     (*pm)[prefix + "model"] = buffer;
