@@ -50,6 +50,7 @@ public:
   /// internal state methods
   virtual void init(Context *on_finish) = 0;
   virtual void shut_down(Context *on_finish) = 0;
+  virtual void get_state(bool &clean, bool &empty, bool &present) = 0;
 
   virtual void invalidate(Context *on_finish) = 0;
   virtual void flush(Context *on_finish) = 0;

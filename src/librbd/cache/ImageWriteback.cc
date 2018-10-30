@@ -128,6 +128,14 @@ void ImageWriteback<I>::aio_compare_and_write(Extents &&image_extents,
   req.send();
 }
 
+template <typename I>
+void ImageWriteback<I>::get_state(bool &clean, bool &empty, bool &present) {
+  /* ImageWriteback state is never persisted, but has to conform to ImageCache interface */
+  clean = true;    /* never dirty, no need to flush */
+  empty = true;    /* always empty, no need to invalidate */
+  present = false; /* never present, no storage to release */
+}
+
 } // namespace cache
 } // namespace librbd
 

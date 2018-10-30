@@ -188,22 +188,32 @@ Context *DisableFeaturesRequest<I>::handle_acquire_exclusive_lock(int *result) {
 
     if ((m_features & RBD_FEATURE_EXCLUSIVE_LOCK) != 0) {
       if ((m_new_features & RBD_FEATURE_OBJECT_MAP) != 0 ||
-          (m_new_features & RBD_FEATURE_JOURNALING) != 0) {
-        lderr(cct) << "cannot disable exclusive-lock. object-map "
-                      "or journaling must be disabled before "
+          (m_new_features & RBD_FEATURE_JOURNALING) != 0 ||
+          (m_new_features & RBD_FEATURE_IMAGE_CACHE) != 0) {
+        lderr(cct) << "cannot disable exclusive-lock. object-map, "
+                      "journaling, or image-cache must be disabled before "
                       "disabling exclusive-lock." << dendl;
         *result = -EINVAL;
         break;
       }
       m_features_mask |= (RBD_FEATURE_OBJECT_MAP |
                           RBD_FEATURE_FAST_DIFF |
-                          RBD_FEATURE_JOURNALING);
+                          RBD_FEATURE_JOURNALING |
+                          RBD_FEATURE_IMAGE_CACHE);
     }
     if ((m_features & RBD_FEATURE_FAST_DIFF) != 0) {
       m_disable_flags |= RBD_FLAG_FAST_DIFF_INVALID;
     }
     if ((m_features & RBD_FEATURE_OBJECT_MAP) != 0) {
       m_disable_flags |= RBD_FLAG_OBJECT_MAP_INVALID;
+    }
+    if (((m_features & RBD_FEATURE_IMAGE_CACHE) != 0) &&
+	(!image_ctx.image_cache_state.clean)) {
+      lderr(cct) << "cannot disable image-cache. Unflushed writes "
+	"remain on " << image_ctx.m_rwl_spec->host << ". Open the "
+	"image there to flush the cache." << dendl;
+      *result = -EINVAL;
+      break;
     }
   } while (false);
   image_ctx.owner_lock.put_read();

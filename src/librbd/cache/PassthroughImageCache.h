@@ -43,6 +43,7 @@ public:
   /// internal state methods
   void init(Context *on_finish) override;
   void shut_down(Context *on_finish) override;
+  void get_state(bool &clean, bool &empty, bool &present) override;
 
   void invalidate(Context *on_finish) override;
   void flush(Context *on_finish) override;

@@ -103,6 +103,14 @@ void PassthroughImageCache<I>::init(Context *on_finish) {
 }
 
 template <typename I>
+void PassthroughImageCache<I>::get_state(bool &clean, bool &empty, bool &present) {
+  /* State of this cache to be recorded in image metadata */
+  clean = true;    /* never dirty, no need to flush */
+  empty = true;    /* always empty, no need to invalidate */
+  present = false; /* never present, no storage to release */
+}
+
+template <typename I>
 void PassthroughImageCache<I>::shut_down(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;

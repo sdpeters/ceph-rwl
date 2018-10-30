@@ -3901,10 +3901,16 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
 			(S_IWUSR | S_IRUSR))) == NULL) {
       lderr(cct) << "failed to create pool (" << m_log_pool_name << ")"
 		 << pmemobj_errormsg() << dendl;
+      m_present = false;
+      m_clean = true;
+      m_empty = true;
       /* TODO: filter/replace errnos that are meaningless to the caller */
       on_finish->complete(-errno);
       return;
     }
+    m_present = true;
+    m_clean = true;
+    m_empty = true;
     pool_root = POBJ_ROOT(m_internal->m_log_pool, struct WriteLogPoolRoot);
 
     /* new pool, calculate and store metadata */
@@ -3944,6 +3950,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
     } TX_FINALLY {
     } TX_END;
   } else {
+    m_present = true;
     /* Open existing pool */
     if ((m_internal->m_log_pool =
 	 pmemobj_open(m_log_pool_name.c_str(),
@@ -3985,6 +3992,8 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
     size_t effective_pool_size = (size_t)(m_log_pool_config_size * USABLE_SIZE);
     m_bytes_allocated_cap = effective_pool_size;
     load_existing_entries(later);
+    m_clean = m_dirty_log_entries.empty();
+    m_empty = m_log_entries.empty();
   }
 
   ldout(cct,1) << "pool " << m_log_pool_name << " has " << m_total_log_entries
@@ -3995,6 +4004,7 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
 	       << ", current_sync_gen=" << m_current_sync_gen << dendl;
   if (m_first_free_entry == m_first_valid_entry) {
     ldout(cct,1) << "write log is empty" << dendl;
+    m_empty = true;
   }
 
   /* Start the sync point following the last one seen in the
@@ -4032,6 +4042,14 @@ void ReplicatedWriteLog<I>::init(Context *on_finish) {
     });
   /* Initialize the cache layer below first */
   m_image_writeback->init(ctx);
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::get_state(bool &clean, bool &empty, bool &present) {
+  /* State of this cache to be recorded in image metadata */
+  clean = m_clean;     /* true if there's nothing to flush */
+  empty = m_empty;     /* true if there's nothing to invalidate */
+  present = m_present; /* true if there's no storage to release */
 }
 
 template <typename I>
@@ -4100,7 +4118,12 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
       {
 	Mutex::Locker locker(m_lock);
 	assert(m_dirty_log_entries.size() == 0);
+	m_clean = true;
+	bool empty = true;
 	for (auto entry : m_log_entries) {
+	  if (!entry->ram_entry.is_sync_point()) {
+	    empty = false; /* ignore sync points for emptiness */
+	  }
 	  if (entry->ram_entry.is_write() || entry->ram_entry.is_writesame()) {
 	    /* WS entry is also a Write entry */
 	    auto write_entry = static_pointer_cast<WriteLogEntry>(entry);
@@ -4110,6 +4133,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    assert(!write_entry->flushing);
 	  }
 	}
+	m_empty = empty;
 	m_log_entries.clear();
       }
       if (m_internal->m_log_pool) {
@@ -4125,6 +4149,10 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	  if (remove(m_log_pool_name.c_str()) != 0) {
 	    lderr(m_image_ctx.cct) << "failed to remove empty pool \"" << m_log_pool_name << "\": "
 				   << pmemobj_errormsg() << dendl;
+	  } else {
+	    m_clean = true;
+	    m_empty = true;
+	    m_present = false;
 	  }
 	}
       }

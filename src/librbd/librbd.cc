@@ -125,7 +125,7 @@ struct C_AioCompletion : public Context {
   }
 
   void finish(int r) override {
-    ldout(cct, 20) << "C_AioComplete::finish: r=" << r << dendl;
+    ldout(cct, 20) << "C_AioCompletion::finish: r=" << r << dendl;
     if (r < 0) {
       aio_comp->fail(r);
     } else {

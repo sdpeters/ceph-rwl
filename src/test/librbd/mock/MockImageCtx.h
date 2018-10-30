@@ -5,6 +5,8 @@
 #define CEPH_TEST_LIBRBD_MOCK_IMAGE_CTX_H
 
 #include "include/rados/librados.hpp"
+#include "cls/rbd/cls_rbd_types.h"
+#include "cls/rbd/cls_rbd_client.h"
 #include "test/librbd/mock/MockContextWQ.h"
 #include "test/librbd/mock/MockExclusiveLock.h"
 #include "test/librbd/mock/MockImageState.h"
@@ -269,6 +271,8 @@ struct MockImageCtx {
 
   file_layout_t layout;
 
+  cls::rbd::ImageCacheState image_cache_state;
+
   xlist<operation::ResizeRequest<MockImageCtx>*> resize_reqs;
   xlist<AsyncRequest<MockImageCtx>*> async_requests;
   std::list<Context*> async_requests_waiters;
@@ -307,6 +311,7 @@ struct MockImageCtx {
   bool enable_sparse_copyup;
   uint64_t mtime_update_interval;
   uint64_t atime_update_interval;
+  cls::rbd::ReplicatedWriteLogSpec *m_rwl_spec = nullptr;
   bool cache;
 
   ConfigProxy config;

@@ -148,7 +148,9 @@ namespace librbd {
 
     file_layout_t layout;
 
+    cls::rbd::ImageCacheState image_cache_state;
     cache::ImageCache<ImageCtx> *image_cache = nullptr;
+    std::list<cache::ImageCache<ImageCtx>*> image_cache_layers; /* front layer on top */
 
     Readahead readahead;
     std::atomic<uint64_t> total_bytes_read = {0};
@@ -196,6 +198,7 @@ namespace librbd {
     uint64_t atime_update_interval;
 
     bool rwl_enabled;
+    cls::rbd::ReplicatedWriteLogSpec *m_rwl_spec = nullptr;
     bool rwl_remove_on_close;
     bool rwl_log_stats_on_close;
     bool rwl_log_periodic_stats;

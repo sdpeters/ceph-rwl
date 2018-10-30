@@ -115,7 +115,7 @@ void PostAcquireRequest<I>::send_open_journal() {
   }
   if (!journal_enabled) {
     apply();
-    finish();
+    send_open_image_cache();
     return;
   }
 
@@ -168,6 +168,39 @@ void PostAcquireRequest<I>::handle_allocate_journal_tag(int r) {
   save_result(r);
   if (r < 0) {
     lderr(cct) << "failed to allocate journal tag: " << cpp_strerror(r)
+               << dendl;
+    send_close_journal();
+    return;
+  }
+
+  send_open_image_cache();
+}
+
+template <typename I>
+void PostAcquireRequest<I>::send_open_image_cache() {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 10) << dendl;
+
+  if (!m_image_ctx.test_features(RBD_FEATURE_IMAGE_CACHE)) {
+    finish();
+    return;
+  }
+
+  using klass = PostAcquireRequest<I>;
+  Context *ctx = create_async_context_callback(
+    m_image_ctx, create_context_callback<
+    klass, &klass::handle_open_image_cache>(this));
+  m_image_ctx.state->init_image_cache(ctx);
+}
+
+template <typename I>
+void PostAcquireRequest<I>::handle_open_image_cache(int r) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 10) << "r=" << r << dendl;
+
+  save_result(r);
+  if (r < 0) {
+    lderr(cct) << "failed to open image cache: " << cpp_strerror(r)
                << dendl;
     send_close_journal();
     return;

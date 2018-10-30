@@ -631,6 +631,7 @@ public:
   /// internal state methods
   void init(Context *on_finish) override;
   void shut_down(Context *on_finish) override;
+  void get_state(bool &clean, bool &empty, bool &present) override;
 
   void flush(Context *on_finish, bool invalidate=false, bool discard_unflushed_writes=false);
   void flush(Context *on_finish) override;
@@ -784,6 +785,11 @@ private:
 
   ThreadPool m_thread_pool;
   ContextWQ m_work_queue;
+
+  /* Returned by get_state() */
+  std::atomic<bool> m_clean = {false};
+  std::atomic<bool> m_empty = {false};
+  std::atomic<bool> m_present = {true};
 
   const Extent whole_volume_extent(void);
   void perf_start(const std::string name);
