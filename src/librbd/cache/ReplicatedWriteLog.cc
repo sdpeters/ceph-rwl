@@ -9,7 +9,6 @@
 #include "common/deleter.h"
 #include "common/dout.h"
 #include "common/errno.h"
-#include "common/io_priority.h"
 #include "common/WorkQueue.h"
 #include "librbd/ImageCtx.h"
 #include "rwl/SharedPtrContext.h"
@@ -842,7 +841,6 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
 		 &m_thread_pool)
 {
   assert(lower);
-  m_thread_pool.set_ioprio(IOPRIO_CLASS_BE, 0);
   m_thread_pool.start();
   if (use_finishers) {
     m_persist_finisher.start();
