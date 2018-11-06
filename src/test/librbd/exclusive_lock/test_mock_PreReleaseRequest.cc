@@ -61,8 +61,8 @@ public:
   }
 
   void expect_block_writes(MockImageCtx &mock_image_ctx, int r) {
-    expect_test_features(mock_image_ctx, RBD_FEATURE_JOURNALING,
-                         ((mock_image_ctx.features & RBD_FEATURE_JOURNALING) != 0));
+    expect_test_features(mock_image_ctx, RBD_FEATURES_REQUIRE_LOCK_BOTH,
+                         ((mock_image_ctx.features & RBD_FEATURES_REQUIRE_LOCK_BOTH) != 0));
     if (mock_image_ctx.clone_copy_on_read ||
         (mock_image_ctx.features & RBD_FEATURE_JOURNALING) != 0) {
       expect_set_require_lock(mock_image_ctx, librbd::io::DIRECTION_BOTH, true);
