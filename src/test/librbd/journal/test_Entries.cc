@@ -202,7 +202,6 @@ TEST_F(TestJournalEntries, AioFlush) {
 
   librbd::ImageCtx *ictx;
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
-  REQUIRE(!ictx->rwl_enabled);
 
   journal::Journaler *journaler = create_journaler(ictx);
   ASSERT_TRUE(journaler != NULL);

@@ -752,11 +752,7 @@ TEST_F(TestMockDeepCopyObjectCopyRequest, WriteSnaps) {
 TEST_F(TestMockDeepCopyObjectCopyRequest, Trim) {
   ASSERT_EQ(0, m_src_image_ctx->operations->metadata_set(
               "conf_rbd_skip_partial_discard", "false"));
-
   m_src_image_ctx->discard_granularity_bytes = 0;
-
-  REQUIRE(!m_src_image_ctx->rwl_enabled);
-  REQUIRE(!m_dst_image_ctx->rwl_enabled);
 
   // scribble some data
   interval_set<uint64_t> one;
@@ -813,8 +809,6 @@ TEST_F(TestMockDeepCopyObjectCopyRequest, Trim) {
 
 TEST_F(TestMockDeepCopyObjectCopyRequest, Remove) {
   // scribble some data
-  REQUIRE(!m_src_image_ctx->rwl_enabled);
-  REQUIRE(!m_dst_image_ctx->rwl_enabled);
   interval_set<uint64_t> one;
   scribble(m_src_image_ctx, 10, 102400, &one);
   ASSERT_EQ(0, create_snap("one"));

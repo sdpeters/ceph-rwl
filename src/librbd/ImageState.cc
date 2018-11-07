@@ -7,6 +7,7 @@
 #include "common/errno.h"
 #include "common/Cond.h"
 #include "common/WorkQueue.h"
+#include "common/hostname.h"
 #include "librbd/ImageCtx.h"
 #include "librbd/Utils.h"
 #include "librbd/image/CloseRequest.h"
@@ -788,7 +789,7 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
   /* Record RWL config for image if no RWL config is recorded,
      or there was no cache left behind by the last opener. */
   if (cache_desired && (!rwl_spec || !m_image_ctx->image_cache_state.present)) {
-    auto rwl_conf = cls::rbd::ReplicatedWriteLogSpec("<this node>",
+    auto rwl_conf = cls::rbd::ReplicatedWriteLogSpec(ceph_get_short_hostname(),
 						     m_image_ctx->rwl_path,
 						     m_image_ctx->rwl_size,
 						     m_image_ctx->rwl_invalidate_on_flush);
@@ -808,6 +809,20 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
     m_image_ctx->rwl_size = rwl_spec->size;
     m_image_ctx->rwl_invalidate_on_flush = rwl_spec->invalidate_on_flush;
     /* TODO: If these are different, shut down the existing cache and re-init with new params */
+  }
+
+  if (m_image_ctx->image_cache_state.present &&
+      (rwl_spec->host.compare(ceph_get_short_hostname()) != 0)) {
+    auto cleanstring = "dirty";
+    if (m_image_ctx->image_cache_state.clean) {
+      cleanstring = "clean";
+    }
+
+    lderr(cct) << "An image cache (RWL) remains on host " << rwl_spec->host
+	       << " which is " << cleanstring
+	       << ". Flush/close the image there to remove the image cache" << dendl;
+    on_finish->complete(-ENOENT);
+    return;
   }
 
   ceph_assert(!m_image_ctx->old_format);
