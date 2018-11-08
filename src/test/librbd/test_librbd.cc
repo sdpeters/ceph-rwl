@@ -212,9 +212,7 @@ public:
 
   bool is_rbd_rwl_enabled() {
 #if defined(WITH_RWL)
-    std::string value;
-    EXPECT_EQ(0, _rados.conf_get("rbd_rwl_enabled", value));
-    return value == "true";
+    return is_feature_enabled(RBD_FEATURE_IMAGE_CACHE);
 #else
     return false;
 #endif //defined(WITH_RWL)
@@ -6166,9 +6164,10 @@ TEST_F(TestLibRBD, FlushEmptyOpsOnExternalSnapshot) {
   read_comp->release();
 }
 
-#if 0
 TEST_F(TestLibRBD, TestImageOptions)
 {
+  REQUIRE(!is_rbd_rwl_enabled());
+
   rados_ioctx_t ioctx;
   rados_ioctx_create(_cluster, m_pool_name.c_str(), &ioctx);
 
@@ -6242,7 +6241,6 @@ TEST_F(TestLibRBD, TestImageOptions)
 
   rados_ioctx_destroy(ioctx);
 }
-#endif
 
 TEST_F(TestLibRBD, TestImageOptionsPP)
 {

@@ -39,7 +39,6 @@ public:
 
   void TearDown() override {
     unlock_image();
-    close_images();
     for (Snaps::iterator iter = m_snaps.begin(); iter != m_snaps.end(); ++iter) {
       librbd::ImageCtx *ictx;
       EXPECT_EQ(0, open_image(m_image_name, &ictx));
@@ -972,7 +971,7 @@ TEST_F(TestInternal, DiscardCopyup)
 
   CephContext* cct = reinterpret_cast<CephContext*>(_rados.cct());
   REQUIRE(!cct->_conf.get_val<bool>("rbd_skip_partial_discard"));
-  REQUIRE(!cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
 
   m_image_name = get_temp_image_name();
   m_image_size = 1 << 14;

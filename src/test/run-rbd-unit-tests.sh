@@ -9,7 +9,7 @@ PATH="$CEPH_BIN:$PATH"
 unset RBD_FEATURES
 unittest_librbd
 
-for i in 0 1 61 109 127 1085 1133
+for i in 0 1 61 109 127
 do
     RBD_FEATURES=$i unittest_librbd
 done

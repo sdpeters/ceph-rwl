@@ -812,10 +812,10 @@ TEST_F(TestJournalReplay, MetadataRemove) {
 
 TEST_F(TestJournalReplay, ObjectPosition) {
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
 
   librbd::ImageCtx *ictx;
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
-  REQUIRE(!ictx->rwl_enabled);
   ASSERT_EQ(0, when_acquired_lock(ictx));
 
   // get current commit position

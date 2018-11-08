@@ -61,15 +61,16 @@ void TestFixture::SetUp() {
   m_cct = reinterpret_cast<CephContext*>(m_ioctx.cct());
 
   m_image_name = get_temp_image_name();
-  m_image_name_2 = get_temp_image_name();
   m_image_size = 2 << 20;
   ASSERT_EQ(0, create_image_pp(m_rbd, m_ioctx, m_image_name, m_image_size));
-  ASSERT_EQ(0, create_image_pp(m_rbd, m_ioctx, m_image_name_2, m_image_size));
 }
 
 void TestFixture::TearDown() {
   unlock_image();
-  close_images();
+  for (std::set<librbd::ImageCtx *>::iterator iter = m_ictxs.begin();
+       iter != m_ictxs.end(); ++iter) {
+    (*iter)->state->close();
+  }
 
   m_ioctx.close();
 }
@@ -108,24 +109,6 @@ void TestFixture::close_image(librbd::ImageCtx *ictx) {
   m_ictxs.erase(ictx);
 
   ictx->state->close();
-}
-
-void TestFixture::close_images() {
-  for (std::set<librbd::ImageCtx *>::iterator iter = m_ictxs.begin();
-       iter != m_ictxs.end(); ++iter) {
-    (*iter)->state->close();
-    m_ictxs.erase(*iter);
-  }
-}
-
-void TestFixture::close_images(const std::string &image_name) {
-  for (std::set<librbd::ImageCtx *>::iterator iter = m_ictxs.begin();
-       iter != m_ictxs.end(); ++iter) {
-    if ((*iter)->name == image_name) {
-      (*iter)->state->close();
-      m_ictxs.erase(*iter);
-    }
-  }
 }
 
 int TestFixture::lock_image(librbd::ImageCtx &ictx, ClsLockType lock_type,

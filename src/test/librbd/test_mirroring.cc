@@ -54,9 +54,7 @@ public:
 
   bool is_rbd_rwl_enabled() {
 #if defined(WITH_RWL)
-    std::string value;
-    EXPECT_EQ(0, _rados.conf_get("rbd_rwl_enabled", value));
-    return value == "true";
+    return is_feature_enabled(RBD_FEATURE_IMAGE_CACHE);
 #else
     return false;
 #endif //defined(WITH_RWL)

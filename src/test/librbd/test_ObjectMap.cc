@@ -90,6 +90,7 @@ TEST_F(TestObjectMap, RefreshInvalidatesWhenTooSmall) {
 
 TEST_F(TestObjectMap, InvalidateFlagOnDisk) {
   REQUIRE_FEATURE(RBD_FEATURE_OBJECT_MAP);
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
 
   librbd::ImageCtx *ictx;
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
@@ -115,7 +116,6 @@ TEST_F(TestObjectMap, InvalidateFlagOnDisk) {
                                 &flags_set));
   ASSERT_TRUE(flags_set);
 
-  close_images(m_image_name);
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
   ASSERT_EQ(0, ictx->test_flags(CEPH_NOSNAP, RBD_FLAG_OBJECT_MAP_INVALID,
                                 &flags_set));

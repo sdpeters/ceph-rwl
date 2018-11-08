@@ -62,7 +62,7 @@ struct TestDeepCopy : public TestFixture {
     EXPECT_EQ(0, librbd::snap_list(m_src_ictx, src_snaps));
     EXPECT_EQ(0, librbd::snap_list(m_dst_ictx, dst_snaps));
     EXPECT_EQ(src_snaps.size(), dst_snaps.size());
-    for (size_t i = 0; (i <= src_snaps.size()) && (i <= dst_snaps.size()); i++) {
+    for (size_t i = 0; i <= src_snaps.size(); i++) {
       const char *src_snap_name = nullptr;
       const char *dst_snap_name = nullptr;
       if (i < src_snaps.size()) {
@@ -453,13 +453,13 @@ TEST_F(TestDeepCopy, NoSnaps)
 
 TEST_F(TestDeepCopy, Snaps)
 {
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   test_snaps();
 }
 
 TEST_F(TestDeepCopy, SnapDiscard)
 {
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   test_snap_discard();
 }
 
@@ -487,7 +487,7 @@ TEST_F(TestDeepCopy, CloneExpand)
 TEST_F(TestDeepCopy, CloneHideParent)
 {
   REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
 
   test_clone_hide_parent();
 }
@@ -511,12 +511,13 @@ TEST_F(TestDeepCopy, CloneFlatten)
 
 TEST_F(TestDeepCopy, Stress)
 {
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   test_stress();
 }
 
 TEST_F(TestDeepCopy, NoSnaps_LargerDstObjSize)
 {
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   uint64_t order = m_src_ictx->order + 1;
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_ORDER, order));
 
@@ -525,7 +526,7 @@ TEST_F(TestDeepCopy, NoSnaps_LargerDstObjSize)
 
 TEST_F(TestDeepCopy, Snaps_LargerDstObjSize)
 {
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   uint64_t order = m_src_ictx->order + 1;
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_ORDER, order));
 
@@ -556,7 +557,7 @@ TEST_F(TestDeepCopy, CloneFlatten_LargerDstObjSize)
 
 TEST_F(TestDeepCopy, Stress_LargerDstObjSize)
 {
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   uint64_t order = m_src_ictx->order + 1 + rand() % 2;
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_ORDER, order));
 
@@ -575,7 +576,7 @@ TEST_F(TestDeepCopy, NoSnaps_SmallerDstObjSize)
 
 TEST_F(TestDeepCopy, Snaps_SmallerDstObjSize)
 {
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   uint64_t order = m_src_ictx->order - 1;
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_ORDER, order));
   uint64_t stripe_unit = m_src_ictx->stripe_unit >> 1;
@@ -612,8 +613,7 @@ TEST_F(TestDeepCopy, CloneFlatten_SmallerDstObjSize)
 
 TEST_F(TestDeepCopy, Stress_SmallerDstObjSize)
 {
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
-  REQUIRE(!m_src_ictx->rwl_enabled);
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
 
   uint64_t order = m_src_ictx->order - 1 - rand() % 2;
   ASSERT_EQ(0, m_opts.set(RBD_IMAGE_OPTION_ORDER, order));
@@ -625,7 +625,7 @@ TEST_F(TestDeepCopy, Stress_SmallerDstObjSize)
 
 TEST_F(TestDeepCopy, NoSnaps_StrippingLargerDstObjSize)
 {
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   REQUIRE_FEATURE(RBD_FEATURE_STRIPINGV2);
 
   uint64_t order = m_src_ictx->order + 1;
@@ -640,7 +640,7 @@ TEST_F(TestDeepCopy, NoSnaps_StrippingLargerDstObjSize)
 
 TEST_F(TestDeepCopy, Snaps_StrippingLargerDstObjSize)
 {
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   REQUIRE_FEATURE(RBD_FEATURE_STRIPINGV2);
 
   uint64_t order = m_src_ictx->order + 1;
@@ -714,7 +714,7 @@ TEST_F(TestDeepCopy, NoSnaps_StrippingSmallerDstObjSize)
 TEST_F(TestDeepCopy, Snaps_StrippingSmallerDstObjSize)
 {
   REQUIRE_FEATURE(RBD_FEATURE_STRIPINGV2);
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
 
   uint64_t order = m_src_ictx->order - 1;
   uint64_t stripe_unit = 1 << (order - 2);
@@ -759,7 +759,7 @@ TEST_F(TestDeepCopy, CloneFlatten_StrippingSmallerDstObjSize)
 TEST_F(TestDeepCopy, Stress_StrippingSmallerDstObjSize)
 {
   REQUIRE_FEATURE(RBD_FEATURE_STRIPINGV2);
-  REQUIRE(!m_src_ictx->cct->_conf.get_val<bool>("rbd_rwl_enabled"));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
 
   uint64_t order = m_src_ictx->order - 1 - rand() % 2;
   uint64_t stripe_unit = 1 << (order - rand() % 4);
