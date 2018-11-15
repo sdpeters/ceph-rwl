@@ -209,7 +209,7 @@ TEST_F(TestJournalEntries, AioFlush) {
   C_SaferCond cond_ctx;
   auto c = librbd::io::AioCompletion::create(&cond_ctx);
   c->get();
-  ictx->io_work_queue->aio_flush(c);
+  ictx->io_work_queue->aio_flush(c, false, librbd::io::FLUSH_SOURCE_INTERNAL);
   ASSERT_EQ(0, c->wait_for_complete());
   c->put();
 

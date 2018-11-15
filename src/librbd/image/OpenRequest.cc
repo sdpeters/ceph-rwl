@@ -389,7 +389,7 @@ Context *OpenRequest<I>::handle_v2_get_image_cache_state(int *result) {
 
   ldout(cct, 10) << __func__ << " result=" << *result << dendl;
   if (*result == 0) {
-    ldout(cct, 10) << __func__ << "image_cache_state=" << m_image_ctx->image_cache_state << dendl;
+    ldout(cct, 10) << __func__ << " image_cache_state=" << m_image_ctx->image_cache_state << dendl;
   }
 
   if (*result == -ENOEXEC || *result == -EINVAL) {
