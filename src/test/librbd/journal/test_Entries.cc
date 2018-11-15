@@ -199,6 +199,11 @@ TEST_F(TestJournalEntries, AioDiscard) {
 
 TEST_F(TestJournalEntries, AioFlush) {
   REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
+  /* This can't work with IMAGE_CACHE because FLUSH_SOURCE_USER
+   * terminates there. The only flushes that ever leave the image
+   * cache are FLUSH_SOURCE_INTERNAL, which are not appended to the
+   * journal. */
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
 
   librbd::ImageCtx *ictx;
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
@@ -209,7 +214,7 @@ TEST_F(TestJournalEntries, AioFlush) {
   C_SaferCond cond_ctx;
   auto c = librbd::io::AioCompletion::create(&cond_ctx);
   c->get();
-  ictx->io_work_queue->aio_flush(c, false, librbd::io::FLUSH_SOURCE_INTERNAL);
+  ictx->io_work_queue->aio_flush(c);
   ASSERT_EQ(0, c->wait_for_complete());
   c->put();
 
