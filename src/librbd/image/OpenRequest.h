@@ -73,9 +73,6 @@ private:
    *                                             SET_SNAP (skip if no snap)
    *                                                |
    *                                                v
-   *                                             INIT_IMAGE_CACHE (skip if
-   *                                                |              disabled)
-   *                                                v
    *                                             <finish>
    *                                                ^
    *     (on error)                                 |

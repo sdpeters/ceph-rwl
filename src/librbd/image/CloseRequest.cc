@@ -14,7 +14,6 @@
 #include "librbd/io/ImageDispatchSpec.h"
 #include "librbd/io/ImageRequestWQ.h"
 #include "librbd/io/ObjectDispatcher.h"
-#include "librbd/cache/ImageCache.h"
 
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
@@ -91,9 +90,8 @@ void CloseRequest<I>::send_shut_down_io_queue() {
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   RWLock::RLocker owner_locker(m_image_ctx->owner_lock);
-  m_image_ctx->io_work_queue->shut_down(create_async_context_callback(
-    *m_image_ctx, create_context_callback<
-    CloseRequest<I>, &CloseRequest<I>::handle_shut_down_io_queue>(this)));
+  m_image_ctx->io_work_queue->shut_down(create_context_callback<
+    CloseRequest<I>, &CloseRequest<I>::handle_shut_down_io_queue>(this));
 }
 
 template <typename I>

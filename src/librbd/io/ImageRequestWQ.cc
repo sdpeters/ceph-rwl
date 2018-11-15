@@ -245,7 +245,8 @@ int ImageRequestWQ<I>::flush() {
   ldout(cct, 20) << "ictx=" << &m_image_ctx << dendl;
 
   C_SaferCond cond;
-  flush_image(m_image_ctx, &cond);
+  AioCompletion *c = AioCompletion::create(&cond);
+  aio_flush(c, false, FLUSH_SOURCE_INTERNAL);
 
   int r = cond.wait();
   if (r < 0) {
@@ -375,7 +376,7 @@ void ImageRequestWQ<I>::aio_discard(AioCompletion *c, uint64_t off,
 }
 
 template <typename I>
-void ImageRequestWQ<I>::aio_flush(AioCompletion *c, bool native_async) {
+void ImageRequestWQ<I>::aio_flush(AioCompletion *c, bool native_async, FlushSource flush_source) {
   CephContext *cct = m_image_ctx.cct;
   FUNCTRACE(cct);
   ZTracer::Trace trace;
@@ -399,10 +400,10 @@ void ImageRequestWQ<I>::aio_flush(AioCompletion *c, bool native_async) {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
   if (m_image_ctx.non_blocking_aio || writes_blocked() || !writes_empty()) {
     queue(ImageDispatchSpec<I>::create_flush_request(
-            m_image_ctx, c, FLUSH_SOURCE_USER, trace));
+            m_image_ctx, c, flush_source, trace));
   } else {
     c->start_op();
-    ImageRequest<I>::aio_flush(&m_image_ctx, c, FLUSH_SOURCE_USER, trace);
+    ImageRequest<I>::aio_flush(&m_image_ctx, c, flush_source, trace);
     finish_in_flight_io();
   }
   trace.event("finish");

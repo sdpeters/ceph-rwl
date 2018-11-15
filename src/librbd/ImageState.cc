@@ -745,6 +745,7 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 20) << __func__ << dendl;
 
+#if defined(WITH_RWL)
   // {
   //   /* This must (?) be called during exclusive lock acquire */
   //   Mutex::Locker locker(m_lock);
@@ -766,7 +767,6 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
     return;
   }
 
-#if defined(WITH_RWL)
   /* Find the layer with the RWL */
   cls::rbd::ReplicatedWriteLogSpec *rwl_spec = nullptr;
   for (auto spec_it = m_image_ctx->image_cache_state.layers.begin();
@@ -857,6 +857,7 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
   m_image_ctx->image_cache->init(ctx);
   return;
 #else //defined(WITH_RWL)
+  m_image_ctx->image_cache = nullptr;
   on_finish->complete(0);
 #endif //defined(WITH_RWL)
 }
@@ -866,6 +867,7 @@ void ImageState<I>::shut_down_image_cache(Context *on_finish) {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+#if defined(WITH_RWL)
   if (m_image_ctx->image_cache == nullptr) {
     on_finish->complete(0);
     return;
@@ -900,11 +902,16 @@ void ImageState<I>::shut_down_image_cache(Context *on_finish) {
       m_image_ctx->op_work_queue->queue(ctx, r);
     });
   m_image_ctx->image_cache->shut_down(ctx);
+#else //defined(WITH_RWL)
+  ceph_assert(m_image_ctx->image_cache == nullptr);
+  on_finish->complete(0);
+#endif //defined(WITH_RWL)
 }
 
 template <typename I>
 void ImageState<I>::update_image_cache_state(Context *on_finish, bool always_write) {
   ldout(m_image_ctx->cct, 10) << this << " " << __func__ << dendl;
+#if defined(WITH_RWL)
   bool changed = always_write;
   bool any_present = false;
   bool all_empty = true;
@@ -935,11 +942,16 @@ void ImageState<I>::update_image_cache_state(Context *on_finish, bool always_wri
   } else {
     on_finish->complete(0);
   }
+#else //defined(WITH_RWL)
+  ceph_assert(m_image_ctx->image_cache == nullptr);
+  on_finish->complete(0);
+#endif //defined(WITH_RWL)
 }
 
 template <typename I>
 void ImageState<I>::write_image_cache_state(Context *on_finish) {
   ldout(m_image_ctx->cct, 10) << __func__ << " state=" << m_image_ctx->image_cache_state << dendl;
+#if defined(WITH_RWL)
   librados::ObjectWriteOperation op;
   librbd::cls_client::set_image_cache_state(&op, m_image_ctx->image_cache_state);
 
@@ -947,6 +959,10 @@ void ImageState<I>::write_image_cache_state(Context *on_finish) {
   int r = m_image_ctx->md_ctx.aio_operate(m_image_ctx->header_oid, comp, &op);
   ceph_assert(r == 0);
   comp->release();
+#else //defined(WITH_RWL)
+  ceph_assert(m_image_ctx->image_cache == nullptr);
+  on_finish->complete(0);
+#endif //defined(WITH_RWL)
 }
 
 } // namespace librbd

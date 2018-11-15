@@ -221,7 +221,8 @@ void ResizeRequest<I>::send_invalidate_image_cache() {
   I &image_ctx = this->m_image_ctx;
   CephContext *cct = image_ctx.cct;
   if (image_ctx.image_cache == nullptr) {
-    return send_invalidate_cache();
+    send_invalidate_cache();
+    return;
   }
 
   ldout(cct, 10) << __func__ << dendl;

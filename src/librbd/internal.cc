@@ -1822,14 +1822,16 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     }
 
     C_SaferCond ctx;
-    Context *obj_invd_ctx = new FunctionContext([ictx, &ctx](int r) {
-	RWLock::RLocker owner_locker(ictx->owner_lock);
+    {
+      RWLock::RLocker owner_locker(ictx->owner_lock);
+      if (ictx->image_cache == nullptr) {
 	ictx->io_object_dispatcher->invalidate_cache(&ctx);
-      });
-    if (ictx->image_cache == nullptr) {
-      obj_invd_ctx->complete(0);
-    } else {
-      ictx->image_cache->invalidate(obj_invd_ctx);
+      } else {
+	Context *obj_invd_ctx = new FunctionContext([ictx, &ctx](int r) {
+	    ictx->io_object_dispatcher->invalidate_cache(&ctx);
+	  });
+	ictx->image_cache->invalidate(obj_invd_ctx);
+      }
     }
     r = ctx.wait();
     ictx->perfcounter->inc(l_librbd_invalidate_cache);
