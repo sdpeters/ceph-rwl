@@ -184,7 +184,7 @@ void PMEMDevice::aio_submit(IOContext *ioc)
   return;
 }
 
-int PMEMDevice::write(uint64_t off, bufferlist& bl, bool buffered, int write_hint = WRITE_LIFE_NOT_SET)
+int PMEMDevice::write(uint64_t off, bufferlist& bl, bool buffered, int write_hint)
 {
   uint64_t len = bl.length();
   dout(20) << __func__ << " " << off << "~" << len  << dendl;
@@ -219,7 +219,7 @@ int PMEMDevice::aio_write(
   bufferlist &bl,
   IOContext *ioc,
   bool buffered,
-  int write_hint = WRITE_LIFE_NOT_SET)
+  int write_hint)
 {
   return write(off, bl, buffered);
 }
