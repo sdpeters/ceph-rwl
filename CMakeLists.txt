@@ -267,7 +267,12 @@ if(WITH_BLUESTORE)
   endif()
 endif()
 
-option(WITH_RWL "Enable librbd persistent write back cache" ON)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "i386|i686|amd64|x86_64")
+  option(WITH_RWL "Enable librbd persistent write back cache" ON)
+else()
+  # ARM64 PMDK support is still experimental
+  option(WITH_RWL "Enable librbd persistent write back cache" OFF)
+endif(CMAKE_SYSTEM_PROCESSOR MATCHES "i386|i686|amd64|x86_64")
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "i386|i686|amd64|x86_64|AMD64|aarch64")
   option(WITH_SPDK "Enable SPDK" ON)
@@ -283,7 +288,12 @@ if(WITH_SPDK)
   set(HAVE_SPDK TRUE)
 endif(WITH_SPDK)
 
-option(WITH_PMEM "Enable PMEM" ON)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "i386|i686|amd64|x86_64")
+  option(WITH_PMEM "Enable PMEM" ON)
+else()
+  # ARM64 PMDK support is still experimental
+  option(WITH_PMEM "Enable PMEM" OFF)
+endif(CMAKE_SYSTEM_PROCESSOR MATCHES "i386|i686|amd64|x86_64")
 if(WITH_PMEM)
   set(HAVE_PMEM ON)
   if(NOT WITH_BLUESTORE AND NOT WITH_RWL)
