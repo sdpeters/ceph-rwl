@@ -5,6 +5,7 @@
 #include "global/global_context.h"
 #include "test/librados/test.h"
 #include "test/librados/test_cxx.h"
+#include "test_support.h"
 #include "gtest/gtest.h"
 #include <iostream>
 #include <string>
@@ -34,6 +35,15 @@ int main(int argc, char **argv)
 #if defined(WITH_RWL)
   /* Disable actual PMDK persistence guarantees for unit tests */
   setenv("PMEM_IS_PMEM_FORCE","1",1);
+#else
+  uint64_t features;
+
+  if (get_features(&features)) {
+    if (features & RBD_FEATURE_IMAGE_CACHE) {
+      std::cout << "RBD_FEATURE_IMAGE_CACHE not supported in this build. No tests run." << std::endl;
+      return 0;
+    }
+  }
 #endif
   register_test_librbd();
 #ifdef TEST_LIBRBD_INTERNALS
