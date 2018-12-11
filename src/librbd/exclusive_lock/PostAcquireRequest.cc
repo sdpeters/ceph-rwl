@@ -181,7 +181,9 @@ void PostAcquireRequest<I>::send_open_image_cache() {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << dendl;
 
-  if (!m_image_ctx.test_features(RBD_FEATURE_IMAGE_CACHE)) {
+  if (!m_image_ctx.test_features(RBD_FEATURE_IMAGE_CACHE) ||
+      /* For R/O, only open image cache if it contains writes not flushed to RADOS yet. */
+      (m_image_ctx.read_only && m_image_ctx.image_cache_state.clean)) {
     finish();
     return;
   }
