@@ -397,7 +397,7 @@ Context *OpenRequest<I>::handle_v2_get_image_cache_state(int *result) {
   }
 
   if (*result < 0) {
-    lderr(cct) << "failed to read striping metadata: " << cpp_strerror(*result)
+    lderr(cct) << "failed to read image cache state: " << cpp_strerror(*result)
                << dendl;
     send_close_image(*result);
     return nullptr;
