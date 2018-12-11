@@ -786,6 +786,9 @@ private:
   ThreadPool m_thread_pool;
   ContextWQ m_work_queue;
 
+  const bool m_flush_on_close;
+  const bool m_retire_on_close;
+
   /* Returned by get_state() */
   std::atomic<bool> m_clean = {false};
   std::atomic<bool> m_empty = {false};

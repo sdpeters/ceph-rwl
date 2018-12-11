@@ -8,6 +8,7 @@
 #include "include/Context.h"
 #include "common/deleter.h"
 #include "common/dout.h"
+#include "common/environment.h"
 #include "common/errno.h"
 #include "common/WorkQueue.h"
 #include "librbd/ImageCtx.h"
@@ -838,7 +839,9 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
 		  /*"rbd_op_threads"*/""), //TODO: match above
     m_work_queue("librbd::cache::ReplicatedWriteLog::work_queue",
 		 60, //image_ctx.cct->_conf.get_val<int64_t>("rbd_op_thread_timeout"),
-		 &m_thread_pool)
+		 &m_thread_pool),
+    m_flush_on_close(!get_env_bool("RBD_RWL_NO_FLUSH_ON_CLOSE")),
+    m_retire_on_close(m_flush_on_close || !get_env_bool("RBD_RWL_NO_RETIRE_ON_CLOSE"))
 {
   assert(lower);
   m_thread_pool.start();
@@ -872,9 +875,13 @@ ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
     assert(m_ops_to_append.size() == 0);
     assert(m_flush_ops_in_flight == 0);
     assert(m_unpublished_reserves == 0);
-    assert(m_bytes_dirty == 0);
-    assert(m_bytes_cached == 0);
-    assert(m_bytes_allocated == 0);
+    if (m_flush_on_close) {
+      assert(m_bytes_dirty == 0);
+    }
+    if (m_retire_on_close) {
+      assert(m_bytes_cached == 0);
+      assert(m_bytes_allocated == 0);
+    }
     delete m_internal;
   }
   ldout(m_image_ctx.cct, 20) << "exit" << dendl;
@@ -4115,23 +4122,27 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
       m_thread_pool.stop();
       {
 	Mutex::Locker locker(m_lock);
-	assert(m_dirty_log_entries.size() == 0);
-	m_clean = true;
-	bool empty = true;
-	for (auto entry : m_log_entries) {
-	  if (!entry->ram_entry.is_sync_point()) {
-	    empty = false; /* ignore sync points for emptiness */
-	  }
-	  if (entry->ram_entry.is_write() || entry->ram_entry.is_writesame()) {
-	    /* WS entry is also a Write entry */
-	    auto write_entry = static_pointer_cast<WriteLogEntry>(entry);
-	    m_blocks_to_log_entries.remove_log_entry(write_entry);
-	    assert(write_entry->referring_map_entries == 0);
-	    assert(write_entry->reader_count() == 0);
-	    assert(!write_entry->flushing);
-	  }
+	if (m_flush_on_close) {
+	  assert(m_dirty_log_entries.size() == 0);
+	  m_clean = true;
 	}
-	m_empty = empty;
+	if (m_retire_on_close) {
+	  bool empty = true;
+	  for (auto entry : m_log_entries) {
+	    if (!entry->ram_entry.is_sync_point()) {
+	      empty = false; /* ignore sync points for emptiness */
+	    }
+	    if (entry->ram_entry.is_write() || entry->ram_entry.is_writesame()) {
+	      /* WS entry is also a Write entry */
+	      auto write_entry = static_pointer_cast<WriteLogEntry>(entry);
+	      m_blocks_to_log_entries.remove_log_entry(write_entry);
+	      assert(write_entry->referring_map_entries == 0);
+	      assert(write_entry->reader_count() == 0);
+	      assert(!write_entry->flushing);
+	    }
+	  }
+	  m_empty = empty;
+	}
 	m_log_entries.clear();
       }
       if (m_internal->m_log_pool) {
@@ -4139,7 +4150,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	pmemobj_close(m_internal->m_log_pool);
 	r = -errno;
       }
-      if (m_image_ctx.rwl_remove_on_close) {
+      if (m_clean && m_image_ctx.rwl_remove_on_close) {
 	if (m_log_is_poolset) {
 	  ldout(m_image_ctx.cct, 5) << "Not removing poolset " << m_log_pool_name << dendl;
 	} else {
@@ -4174,9 +4185,13 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    ctx->complete(r);
 	  });
       }
-      ldout(m_image_ctx.cct, 6) << "retiring entries" << dendl;
-      while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
-      ldout(m_image_ctx.cct, 6) << "waiting for internal async operations" << dendl;
+      if (m_retire_on_close) {
+	ldout(m_image_ctx.cct, 6) << "retiring entries" << dendl;
+	while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
+	ldout(m_image_ctx.cct, 6) << "waiting for internal async operations" << dendl;
+      } else {
+	ldout(m_image_ctx.cct, 1) << "Not retiring entries" << dendl;
+      }
       // Second op tracker wait after flush completion for process_work()
       {
 	Mutex::Locker locker(m_lock);
@@ -4195,9 +4210,15 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	  });
       }
       m_shutting_down = true;
-      // flush all writes to OSDs
-      ldout(m_image_ctx.cct, 6) << "flushing" << dendl;
-      flush_dirty_entries(next_ctx);
+      if (m_flush_on_close) {
+	// flush all writes to OSDs
+	ldout(m_image_ctx.cct, 6) << "flushing" << dendl;
+	flush_dirty_entries(next_ctx);
+      } else {
+	ldout(m_image_ctx.cct, 1) << "Not flushing" << dendl;
+	next_ctx->complete(0);
+      }
+
     });
   ctx = new FunctionContext(
     [this, ctx](int r) {
