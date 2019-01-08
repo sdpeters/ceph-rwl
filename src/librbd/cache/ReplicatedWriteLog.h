@@ -726,6 +726,7 @@ private:
 
   /* Acquire locks in order declared here */
 
+  mutable Mutex m_timer_lock; /* Used with and by m_timer */
   mutable Mutex m_log_retire_lock;
   /* Hold a read lock on m_entry_reader_lock to add readers to log entry
    * bufs. Hold a write lock to prevent readers from being added (e.g. when
@@ -780,8 +781,7 @@ private:
 
   /* Initialized from config, then set false during shutdown */
   std::atomic<bool> m_periodic_stats_enabled = {false};
-  mutable Mutex m_timer_lock; /* Used only by m_timer */
-  SafeTimer m_timer;
+  SafeTimer m_timer; /* Used with m_timer_lock */
 
   ThreadPool m_thread_pool;
   ContextWQ m_work_queue;

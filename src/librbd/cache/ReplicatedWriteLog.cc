@@ -128,7 +128,7 @@ struct WriteLogPoolRoot {
   uint32_t first_valid_entry;    /* Index of the oldest valid entry in the log */
 };
 
-static const bool RWL_VERBOSE_LOGGING = true;
+static const bool RWL_VERBOSE_LOGGING = false;
 
 typedef ReplicatedWriteLog<ImageCtx>::Extent Extent;
 typedef ReplicatedWriteLog<ImageCtx>::Extents Extents;
@@ -841,7 +841,7 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
 		 60, //image_ctx.cct->_conf.get_val<int64_t>("rbd_op_thread_timeout"),
 		 &m_thread_pool),
     m_flush_on_close(!get_env_bool("RBD_RWL_NO_FLUSH_ON_CLOSE")),
-    m_retire_on_close(m_flush_on_close || !get_env_bool("RBD_RWL_NO_RETIRE_ON_CLOSE"))
+    m_retire_on_close(m_flush_on_close && !get_env_bool("RBD_RWL_NO_RETIRE_ON_CLOSE"))
 {
   assert(lower);
   m_thread_pool.start();
@@ -855,11 +855,11 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
 
 template <typename I>
 ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
-  ldout(m_image_ctx.cct, 20) << "enter" << dendl;
+  ldout(m_image_ctx.cct, 5) << "enter" << dendl;
   {
     Mutex::Locker timer_locker(m_timer_lock);
     m_timer.shutdown();
-    ldout(m_image_ctx.cct, 15) << "acquiring locks that shouldn't still be held" << dendl;
+    ldout(m_image_ctx.cct, 5) << "acquiring locks that shouldn't still be held" << dendl;
     Mutex::Locker retire_locker(m_log_retire_lock);
     RWLock::WLocker reader_locker(m_entry_reader_lock);
     Mutex::Locker dispatch_locker(m_deferred_dispatch_lock);
@@ -867,7 +867,7 @@ ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
     Mutex::Locker locker(m_lock);
     Mutex::Locker bg_locker(m_blockguard_lock);
     Mutex::Locker bl_locker(m_entry_bl_lock);
-    ldout(m_image_ctx.cct, 15) << "gratuitous locking complete" << dendl;
+    ldout(m_image_ctx.cct, 5) << "gratuitous locking complete" << dendl;
     delete m_image_writeback;
     m_image_writeback = nullptr;
     assert(m_deferred_ios.size() == 0);
@@ -883,8 +883,9 @@ ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
       assert(m_bytes_allocated == 0);
     }
     delete m_internal;
+    m_internal = nullptr;
   }
-  ldout(m_image_ctx.cct, 20) << "exit" << dendl;
+  ldout(m_image_ctx.cct, 5) << "exit" << dendl;
 }
 
 template <typename ExtentsType>
@@ -4103,6 +4104,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	Mutex::Locker timer_locker(m_timer_lock);
 	m_timer.cancel_all_events();
       }
+	
       if (periodic_stats_enabled) {
 	/* Log stats one last time if they were enabled */
 	periodic_stats();
@@ -4110,68 +4112,80 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
       if (m_perfcounter && m_image_ctx.rwl_log_stats_on_close) {
 	log_perf();
       }
-      if (use_finishers) {
-	ldout(m_image_ctx.cct, 6) << "stopping finishers" << dendl;
-	m_persist_finisher.wait_for_empty();
-	m_persist_finisher.stop();
-	m_log_append_finisher.wait_for_empty();
-	m_log_append_finisher.stop();
-	m_on_persist_finisher.wait_for_empty();
-	m_on_persist_finisher.stop();
-      }
-      m_thread_pool.stop();
       {
+	ldout(m_image_ctx.cct, 5) << "acquiring locks that shouldn't still be held" << dendl;
+	Mutex::Locker retire_locker(m_log_retire_lock);
+	RWLock::WLocker reader_locker(m_entry_reader_lock);
+	Mutex::Locker dispatch_locker(m_deferred_dispatch_lock);
+	Mutex::Locker append_locker(m_log_append_lock);
 	Mutex::Locker locker(m_lock);
-	if (m_flush_on_close) {
-	  assert(m_dirty_log_entries.size() == 0);
-	  m_clean = true;
+	Mutex::Locker bg_locker(m_blockguard_lock);
+	Mutex::Locker bl_locker(m_entry_bl_lock);
+	ldout(m_image_ctx.cct, 5) << "gratuitous locking complete" << dendl;
+	if (use_finishers) {
+	  ldout(m_image_ctx.cct, 6) << "stopping finishers" << dendl;
+	  m_persist_finisher.wait_for_empty();
+	  m_persist_finisher.stop();
+	  m_log_append_finisher.wait_for_empty();
+	  m_log_append_finisher.stop();
+	  m_on_persist_finisher.wait_for_empty();
+	  m_on_persist_finisher.stop();
 	}
-	if (m_retire_on_close) {
-	  bool empty = true;
-	  for (auto entry : m_log_entries) {
-	    if (!entry->ram_entry.is_sync_point()) {
-	      empty = false; /* ignore sync points for emptiness */
-	    }
-	    if (entry->ram_entry.is_write() || entry->ram_entry.is_writesame()) {
-	      /* WS entry is also a Write entry */
-	      auto write_entry = static_pointer_cast<WriteLogEntry>(entry);
-	      m_blocks_to_log_entries.remove_log_entry(write_entry);
-	      assert(write_entry->referring_map_entries == 0);
-	      assert(write_entry->reader_count() == 0);
-	      assert(!write_entry->flushing);
-	    }
-	  }
-	  m_empty = empty;
-	}
-	m_log_entries.clear();
-      }
-      if (m_internal->m_log_pool) {
-	ldout(m_image_ctx.cct, 6) << "closing pmem pool" << dendl;
-	pmemobj_close(m_internal->m_log_pool);
-	r = -errno;
-      }
-      if (m_clean && m_image_ctx.rwl_remove_on_close) {
-	if (m_log_is_poolset) {
-	  ldout(m_image_ctx.cct, 5) << "Not removing poolset " << m_log_pool_name << dendl;
-	} else {
-	  ldout(m_image_ctx.cct, 5) << "Removing empty pool file: " << m_log_pool_name << dendl;
-	  if (remove(m_log_pool_name.c_str()) != 0) {
-	    lderr(m_image_ctx.cct) << "failed to remove empty pool \"" << m_log_pool_name << "\": "
-				   << pmemobj_errormsg() << dendl;
-	  } else {
+	m_thread_pool.stop();
+	{
+	  //Mutex::Locker locker(m_lock);
+	  if (m_flush_on_close) {
+	    assert(m_dirty_log_entries.size() == 0);
 	    m_clean = true;
-	    m_empty = true;
-	    m_present = false;
+	  }
+	  if (m_retire_on_close) {
+	    bool empty = true;
+	    for (auto entry : m_log_entries) {
+	      if (!entry->ram_entry.is_sync_point()) {
+		empty = false; /* ignore sync points for emptiness */
+	      }
+	      if (entry->ram_entry.is_write() || entry->ram_entry.is_writesame()) {
+		/* WS entry is also a Write entry */
+		auto write_entry = static_pointer_cast<WriteLogEntry>(entry);
+		m_blocks_to_log_entries.remove_log_entry(write_entry);
+		assert(write_entry->referring_map_entries == 0);
+		assert(write_entry->reader_count() == 0);
+		assert(!write_entry->flushing);
+	      }
+	    }
+	    m_empty = empty;
+	  }
+	  m_log_entries.clear();
+	}
+	if (m_internal->m_log_pool) {
+	  ldout(m_image_ctx.cct, 6) << "closing pmem pool" << dendl;
+	  pmemobj_close(m_internal->m_log_pool);
+	  r = -errno;
+	}
+	if (m_clean && m_image_ctx.rwl_remove_on_close) {
+	  if (m_log_is_poolset) {
+	    ldout(m_image_ctx.cct, 5) << "Not removing poolset " << m_log_pool_name << dendl;
+	  } else {
+	    ldout(m_image_ctx.cct, 5) << "Removing empty pool file: " << m_log_pool_name << dendl;
+	    if (remove(m_log_pool_name.c_str()) != 0) {
+	      lderr(m_image_ctx.cct) << "failed to remove empty pool \"" << m_log_pool_name << "\": "
+				     << pmemobj_errormsg() << dendl;
+	    } else {
+	      m_clean = true;
+	      m_empty = true;
+	      m_present = false;
+	    }
 	  }
 	}
-      }
-      if (m_perfcounter) {
-	perf_stop();
+	if (m_perfcounter) {
+	  perf_stop();
+	}
       }
       next_ctx->complete(r);
     });
   ctx = new FunctionContext(
     [this, ctx](int r) {
+      ldout(m_image_ctx.cct, 6) << "done waiting for in flight operations (2)" << dendl;
       /* Get off of RWL WQ - thread pool about to be shut down */
       m_image_ctx.op_work_queue->queue(ctx);
     });
@@ -4190,13 +4204,18 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
 	ldout(m_image_ctx.cct, 6) << "waiting for internal async operations" << dendl;
       } else {
-	ldout(m_image_ctx.cct, 1) << "Not retiring entries" << dendl;
+	{
+	  Mutex::Locker locker(m_lock);
+	  ldout(m_image_ctx.cct, 1) << "Not retiring " << m_log_entries.size() << " entries" << dendl;
+	}
       }
       // Second op tracker wait after flush completion for process_work()
       {
 	Mutex::Locker locker(m_lock);
 	m_wake_up_enabled = false;
       }
+      ldout(m_image_ctx.cct, 6) << "waiting for in flight operations (2)" << dendl;
+      Mutex::Locker locker(m_lock);
       m_async_op_tracker.wait(m_image_ctx, next_ctx);
     });
   ctx = new FunctionContext(
@@ -4215,7 +4234,10 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	ldout(m_image_ctx.cct, 6) << "flushing" << dendl;
 	flush_dirty_entries(next_ctx);
       } else {
-	ldout(m_image_ctx.cct, 1) << "Not flushing" << dendl;
+	{
+	  Mutex::Locker locker(m_lock);
+	  ldout(m_image_ctx.cct, 1) << "Not flushing " << m_dirty_log_entries.size() << " dirty entries" << dendl;
+	}
 	next_ctx->complete(0);
       }
 
@@ -4223,6 +4245,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
   ctx = new FunctionContext(
     [this, ctx](int r) {
       /* Back to RWL WQ */
+      ldout(m_image_ctx.cct, 6) << "done waiting for in flight operations" << dendl;
       m_work_queue.queue(ctx);
     });
   ctx = new FunctionContext(
@@ -4245,7 +4268,11 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
       m_work_queue.queue(ctx);
     });
   /* Complete all in-flight writes before shutting down */
-  internal_flush(ctx, false, false);
+  if (m_flush_on_close) {
+    internal_flush(ctx, false, false);
+  } else {
+    aio_flush(ctx);
+  }
 }
 
 template <typename I>
@@ -4302,7 +4329,7 @@ void ReplicatedWriteLog<I>::process_work() {
       Mutex::Locker locker(m_lock);
       m_wake_up_requested = false;
     }
-    if (m_alloc_failed_since_retire || m_shutting_down || m_invalidating ||
+    if (m_alloc_failed_since_retire || (m_shutting_down && m_retire_on_close) || m_invalidating ||
 	m_bytes_allocated > high_water_bytes) {
       int retired = 0;
       utime_t started = ceph_clock_now();
@@ -4310,7 +4337,7 @@ void ReplicatedWriteLog<I>::process_work() {
 				 << ", allocated > high_water="
 				 << (m_bytes_allocated > high_water_bytes)
 				 << dendl;
-      while (m_alloc_failed_since_retire || m_shutting_down || m_invalidating ||
+      while (m_alloc_failed_since_retire || (m_shutting_down && m_retire_on_close) || m_invalidating ||
 	     (m_bytes_allocated > high_water_bytes) ||
 	     ((m_bytes_allocated > low_water_bytes) &&
 	      (utime_t(ceph_clock_now() - started).to_msec() < RETIRE_BATCH_TIME_LIMIT_MS))) {
@@ -4902,7 +4929,7 @@ void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, 
 	    Mutex::Locker locker(m_lock);
 	    m_invalidating = false;
 	    ldout(m_image_ctx.cct, 6) << "Done flush/invalidating (invalidate="
-				      << invalidate << "discard="
+				      << invalidate << " discard="
 				      << discard_unflushed_writes << ")" << dendl;
 	    if (m_log_entries.size()) {
 	      ldout(m_image_ctx.cct, 1) << "m_log_entries.size()=" << m_log_entries.size() << ", "
