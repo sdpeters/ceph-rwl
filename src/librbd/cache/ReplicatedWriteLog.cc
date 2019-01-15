@@ -814,6 +814,8 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
     m_image_ctx(image_ctx),
     m_log_pool_config_size(DEFAULT_POOL_SIZE),
     m_image_writeback(lower), m_write_log_guard(image_ctx.cct),
+    m_timer_lock("librbd::cache::ReplicatedWriteLog::m_timer_lock",
+	   false, true, true),
     m_log_retire_lock("librbd::cache::ReplicatedWriteLog::m_log_retire_lock",
 		      false, true, true),
     m_entry_reader_lock("librbd::cache::ReplicatedWriteLog::m_entry_reader_lock"),
@@ -831,9 +833,7 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
     m_log_append_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_log_append_finisher", "afin_rwl"),
     m_on_persist_finisher(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::m_on_persist_finisher", "opfin_rwl"),
     m_blocks_to_log_entries(image_ctx.cct),
-    m_timer_lock("librbd::cache::ReplicatedWriteLog::m_timer_lock",
-	   false, true, true),
-    m_timer(image_ctx.cct, m_timer_lock, false),
+    m_timer(image_ctx.cct, m_timer_lock, true /* m_timer_lock held in callbacks */),
     m_thread_pool(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::thread_pool", "tp_rwl",
 		  /*image_ctx.cct->_conf.get_val<int64_t>("rbd_op_threads")*/ 4, // TODO: Add config value
 		  /*"rbd_op_threads"*/""), //TODO: match above
@@ -855,11 +855,11 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
 
 template <typename I>
 ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
-  ldout(m_image_ctx.cct, 5) << "enter" << dendl;
+  ldout(m_image_ctx.cct, 15) << "enter" << dendl;
   {
     Mutex::Locker timer_locker(m_timer_lock);
     m_timer.shutdown();
-    ldout(m_image_ctx.cct, 5) << "acquiring locks that shouldn't still be held" << dendl;
+    ldout(m_image_ctx.cct, 15) << "(destruct) acquiring locks that shouldn't still be held" << dendl;
     Mutex::Locker retire_locker(m_log_retire_lock);
     RWLock::WLocker reader_locker(m_entry_reader_lock);
     Mutex::Locker dispatch_locker(m_deferred_dispatch_lock);
@@ -867,7 +867,7 @@ ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
     Mutex::Locker locker(m_lock);
     Mutex::Locker bg_locker(m_blockguard_lock);
     Mutex::Locker bl_locker(m_entry_bl_lock);
-    ldout(m_image_ctx.cct, 5) << "gratuitous locking complete" << dendl;
+    ldout(m_image_ctx.cct, 15) << "(destruct) gratuitous locking complete" << dendl;
     delete m_image_writeback;
     m_image_writeback = nullptr;
     assert(m_deferred_ios.size() == 0);
@@ -885,7 +885,7 @@ ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
     delete m_internal;
     m_internal = nullptr;
   }
-  ldout(m_image_ctx.cct, 5) << "exit" << dendl;
+  ldout(m_image_ctx.cct, 15) << "exit" << dendl;
 }
 
 template <typename ExtentsType>
@@ -3640,10 +3640,11 @@ void ReplicatedWriteLog<I>::periodic_stats() {
 
 template <typename I>
 void ReplicatedWriteLog<I>::arm_periodic_stats() {
+  assert(m_timer_lock.is_locked());
   if (m_periodic_stats_enabled) {
-    Mutex::Locker timer_locker(m_timer_lock);
     m_timer.add_event_after(LOG_STATS_INTERVAL_SECONDS, new FunctionContext(
       [this](int r) {
+	/* m_timer_lock is held */
 	periodic_stats();
 	arm_periodic_stats();
       }));
@@ -3885,6 +3886,12 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
   ldout(cct,5) << "rwl_size: " << m_image_ctx.rwl_size << dendl;
   std::string rwl_path = m_image_ctx.rwl_path;
   ldout(cct,5) << "rwl_path: " << m_image_ctx.rwl_path << dendl;
+  if (!m_flush_on_close) {
+    ldout(cct,5) << "NOT flushing on close" << dendl;
+  }
+  if (!m_retire_on_close) {
+    ldout(cct,5) << "NOT retiring on close" << dendl;
+  }
 
   std::string log_pool_name = rwl_path + "/rbd-rwl." + m_image_ctx.id + ".pool";
   std::string log_poolset_name = rwl_path + "/rbd-rwl." + m_image_ctx.id + ".poolset";
@@ -3895,8 +3902,8 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
     m_log_is_poolset = true;
   } else {
     m_log_pool_name = log_pool_name;
-    ldout(cct, 5) << "failed to open poolset" << log_poolset_name
-		  << ". Opening/creating simple/unreplicated pool" << dendl;
+    ldout(cct, 5) << "Poolset file " << log_poolset_name
+		  << " not present (or can't open). Using unreplicated pool" << dendl;
   }
 
   if (access(m_log_pool_name.c_str(), F_OK) != 0) {
@@ -4022,7 +4029,16 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
   m_initialized = true;
 
   m_periodic_stats_enabled = m_image_ctx.rwl_log_periodic_stats;
-  arm_periodic_stats();
+  /* Do these after we drop m_lock */
+  later.add(new FunctionContext([this](int r) {
+	if (m_periodic_stats_enabled) {
+	  /* Log stats for the first time */
+	  periodic_stats();
+	  /* Arm periodic stats logging for the first time */
+	  Mutex::Locker timer_locker(m_timer_lock);
+	  arm_periodic_stats();
+	}
+      }));
   m_image_ctx.op_work_queue->queue(on_finish);
 }
 
@@ -4038,9 +4054,6 @@ void ReplicatedWriteLog<I>::init(Context *on_finish) {
       if (r >= 0) {
 	DeferredContexts later;
 	rwl_init(on_finish, later);
-	if (m_periodic_stats_enabled) {
-	  periodic_stats();
-	}
       } else {
 	/* Don't init RWL if layer below failed to init */
 	m_image_ctx.op_work_queue->queue(on_finish, r);
@@ -4067,10 +4080,6 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 
   Context *ctx = new FunctionContext(
     [this, on_finish](int r) {
-      {
-	Mutex::Locker timer_locker(m_timer_lock);
-	m_timer.cancel_all_events();
-      }
       ldout(m_image_ctx.cct, 6) << "shutdown complete" << dendl;
       m_image_ctx.op_work_queue->queue(on_finish, r);
     });
@@ -4102,9 +4111,9 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
       m_periodic_stats_enabled = false;
       {
 	Mutex::Locker timer_locker(m_timer_lock);
-	m_timer.cancel_all_events();
+	m_timer.shutdown();
       }
-	
+
       if (periodic_stats_enabled) {
 	/* Log stats one last time if they were enabled */
 	periodic_stats();
@@ -4113,7 +4122,8 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	log_perf();
       }
       {
-	ldout(m_image_ctx.cct, 5) << "acquiring locks that shouldn't still be held" << dendl;
+	ldout(m_image_ctx.cct, 15) << "acquiring locks that shouldn't still be held" << dendl;
+	Mutex::Locker timer_locker(m_timer_lock);
 	Mutex::Locker retire_locker(m_log_retire_lock);
 	RWLock::WLocker reader_locker(m_entry_reader_lock);
 	Mutex::Locker dispatch_locker(m_deferred_dispatch_lock);
@@ -4121,7 +4131,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	Mutex::Locker locker(m_lock);
 	Mutex::Locker bg_locker(m_blockguard_lock);
 	Mutex::Locker bl_locker(m_entry_bl_lock);
-	ldout(m_image_ctx.cct, 5) << "gratuitous locking complete" << dendl;
+	ldout(m_image_ctx.cct, 15) << "gratuitous locking complete" << dendl;
 	if (use_finishers) {
 	  ldout(m_image_ctx.cct, 6) << "stopping finishers" << dendl;
 	  m_persist_finisher.wait_for_empty();
@@ -4133,7 +4143,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	}
 	m_thread_pool.stop();
 	{
-	  //Mutex::Locker locker(m_lock);
+	  assert(m_lock.is_locked());
 	  if (m_flush_on_close) {
 	    assert(m_dirty_log_entries.size() == 0);
 	    m_clean = true;
@@ -4162,7 +4172,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	  pmemobj_close(m_internal->m_log_pool);
 	  r = -errno;
 	}
-	if (m_clean && m_image_ctx.rwl_remove_on_close) {
+	if (m_clean && m_retire_on_close && m_image_ctx.rwl_remove_on_close) {
 	  if (m_log_is_poolset) {
 	    ldout(m_image_ctx.cct, 5) << "Not removing poolset " << m_log_pool_name << dendl;
 	  } else {
@@ -4175,6 +4185,12 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	      m_empty = true;
 	      m_present = false;
 	    }
+	  }
+	} else {
+	  if (m_log_is_poolset) {
+	    ldout(m_image_ctx.cct, 5) << "Not removing poolset " << m_log_pool_name << dendl;
+	  } else {
+	    ldout(m_image_ctx.cct, 5) << "Not removing pool file: " << m_log_pool_name << dendl;
 	  }
 	}
 	if (m_perfcounter) {
