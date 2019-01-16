@@ -52,6 +52,8 @@
       group snap remove (... rm)        Remove a snapshot from a group.
       group snap rename                 Rename group's snapshot.
       group snap rollback               Rollback group to snapshot.
+      image-cache discard-dirty         Discard existing / dirty image cache
+      image-cache show                  Show image cache config
       image-meta get                    Image metadata get the value associated
                                         with the key.
       image-meta list (image-meta ls)   Image metadata list keys with values.
@@ -150,7 +152,7 @@
   usage: rbd bench [--pool <pool>] [--namespace <namespace>] [--image <image>] 
                    [--io-size <io-size>] [--io-threads <io-threads>] 
                    [--io-total <io-total>] [--io-pattern <io-pattern>] 
-                   [--rw-mix-read <rw-mix-read>] --io-type <io-type> 
+                   [--rw-mix-read <rw-mix-read>] [--no-flush] --io-type <io-type> 
                    <image-spec> 
   
   Simple benchmark.
@@ -168,7 +170,8 @@
     --io-total arg       total size for IO (in B/K/M/G/T) [default: 1G]
     --io-pattern arg     IO pattern (rand, seq, or full-seq) [default: seq]
     --rw-mix-read arg    read proportion in readwrite (<= 100) [default: 50]
-    --io-type arg        IO type (read, write, or readwrite(rw))
+    --no-flush           supress flush before close
+    --io-type arg        IO type (read , write, or readwrite(rw))
   
   rbd help children
   usage: rbd children [--pool <pool>] [--namespace <namespace>] 
@@ -1003,6 +1006,54 @@
     --namespace arg      namespace name
     --group arg          group name
     --snap arg           snapshot name
+  
+  rbd help image-cache discard-dirty
+  usage: rbd image-cache discard-dirty [--pool <pool>] [--namespace <namespace>] 
+                                       [--image <image>] [--snap <snap>] 
+                                       [--image-id <image-id>] 
+                                       [--format <format>] [--pretty-format] 
+                                       <image-or-snap-spec> 
+  
+  Discard existing / dirty image cache
+  
+  Positional arguments
+    <image-or-snap-spec>  image or snapshot specification
+                          (example:
+                          [<pool-name>/[<namespace-name>/]]<image-name>[@<snap-nam
+                          e>])
+  
+  Optional arguments
+    -p [ --pool ] arg     pool name
+    --namespace arg       namespace name
+    --image arg           image name
+    --snap arg            snapshot name
+    --image-id arg        image id
+    --format arg          output format (plain, json, or xml) [default: plain]
+    --pretty-format       pretty formatting (json and xml)
+  
+  rbd help image-cache show
+  usage: rbd image-cache show [--pool <pool>] [--namespace <namespace>] 
+                              [--image <image>] [--snap <snap>] 
+                              [--image-id <image-id>] [--format <format>] 
+                              [--pretty-format] 
+                              <image-or-snap-spec> 
+  
+  Show image cache config
+  
+  Positional arguments
+    <image-or-snap-spec>  image or snapshot specification
+                          (example:
+                          [<pool-name>/[<namespace-name>/]]<image-name>[@<snap-nam
+                          e>])
+  
+  Optional arguments
+    -p [ --pool ] arg     pool name
+    --namespace arg       namespace name
+    --image arg           image name
+    --snap arg            snapshot name
+    --image-id arg        image id
+    --format arg          output format (plain, json, or xml) [default: plain]
+    --pretty-format       pretty formatting (json and xml)
   
   rbd help image-meta get
   usage: rbd image-meta get [--pool <pool>] [--namespace <namespace>] 
@@ -2287,3 +2338,12 @@
     --namespace arg      namespace name
     --image arg          image name
   
+
+
+
+
+
+
+
+
+
