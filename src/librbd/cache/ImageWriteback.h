@@ -37,6 +37,7 @@ public:
   void aio_discard(uint64_t offset, uint64_t length,
                    uint32_t discard_granularity_bytes, Context *on_finish);
   void aio_flush(Context *on_finish);
+  void aio_flush(Context *on_finish, io::FlushSource flush_source) override {aio_flush(on_finish);};
   void aio_writesame(uint64_t offset, uint64_t length,
                      ceph::bufferlist&& bl,
                      int fadvise_flags, Context *on_finish);

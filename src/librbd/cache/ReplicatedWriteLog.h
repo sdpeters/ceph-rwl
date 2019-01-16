@@ -619,7 +619,7 @@ public:
 		 int fadvise_flags, Context *on_finish) override;
   void aio_discard(uint64_t offset, uint64_t length,
 		   bool skip_partial_discard, Context *on_finish);
-  void aio_flush(Context *on_finish) override;
+  void aio_flush(Context *on_finish, io::FlushSource flush_source = io::FLUSH_SOURCE_USER) override;
   void aio_writesame(uint64_t offset, uint64_t length,
 		     ceph::bufferlist&& bl,
 		     int fadvise_flags, Context *on_finish) override;

@@ -28,14 +28,20 @@ namespace io {
 namespace {
 
 template <typename I>
-void flush_image(I& image_ctx, Context* on_finish) {
+#pragma push_macro("dout_prefix")
+#undef dout_prefix
+#define dout_prefix *_dout << __func__ << ": "
+void flush_image(I& image_ctx, Context* on_finish,
+		 librbd::io::FlushSource flush_source = librbd::io::FLUSH_SOURCE_INTERNAL) {
+  ldout(image_ctx.cct, 5) << "ictx=" << &image_ctx << " flush_source=" << flush_source << dendl;
   auto aio_comp = librbd::io::AioCompletion::create_and_start(
     on_finish, util::get_image_ctx(&image_ctx), librbd::io::AIO_TYPE_FLUSH);
   auto req = librbd::io::ImageDispatchSpec<I>::create_flush_request(
-    image_ctx, aio_comp, librbd::io::FLUSH_SOURCE_INTERNAL, {});
+    image_ctx, aio_comp, flush_source, {});
   req->send();
   delete req;
 }
+#pragma pop_macro("dout_prefix")
 
 } // anonymous namespace
 
@@ -510,7 +516,7 @@ void ImageRequestWQ<I>::shut_down(Context *on_shutdown) {
   }
 
   // ensure that all in-flight IO is flushed
-  flush_image(m_image_ctx, on_shutdown);
+  flush_image(m_image_ctx, on_shutdown, io::FLUSH_SOURCE_SHUTDOWN);
 }
 
 template <typename I>
@@ -521,7 +527,7 @@ int ImageRequestWQ<I>::block_writes() {
 }
 
 template <typename I>
-void ImageRequestWQ<I>::block_writes(Context *on_blocked) {
+void ImageRequestWQ<I>::block_writes(Context *on_blocked, io::FlushSource flush_source) {
   ceph_assert(m_image_ctx.owner_lock.is_locked());
   CephContext *cct = m_image_ctx.cct;
 
@@ -537,7 +543,7 @@ void ImageRequestWQ<I>::block_writes(Context *on_blocked) {
   }
 
   // ensure that all in-flight IO is flushed
-  flush_image(m_image_ctx, on_blocked);
+  flush_image(m_image_ctx, on_blocked, flush_source);
 }
 
 template <typename I>
@@ -862,7 +868,7 @@ void ImageRequestWQ<I>::finish_in_flight_io() {
   ldout(cct, 5) << "completing shut down" << dendl;
 
   ceph_assert(on_shutdown != nullptr);
-  flush_image(m_image_ctx, on_shutdown);
+  flush_image(m_image_ctx, on_shutdown, io::FLUSH_SOURCE_SHUTDOWN);
 }
 
 template <typename I>

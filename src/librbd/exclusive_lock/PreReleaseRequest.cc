@@ -118,7 +118,7 @@ void PreReleaseRequest<I>::send_block_writes() {
     } else {
       m_image_ctx.io_work_queue->set_require_lock(io::DIRECTION_WRITE, true);
     }
-    m_image_ctx.io_work_queue->block_writes(ctx);
+    m_image_ctx.io_work_queue->block_writes(ctx, io::FLUSH_SOURCE_SHUTDOWN);
   }
 }
 

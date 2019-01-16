@@ -3164,10 +3164,32 @@ void ReplicatedWriteLog<I>::flush_new_sync_point_if_needed(C_FlushRequestT *flus
  * in the block guard.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::aio_flush(Context *on_finish) {
+void ReplicatedWriteLog<I>::aio_flush(Context *on_finish, io::FlushSource flush_source) {
   CephContext *cct = m_image_ctx.cct;
-  if (RWL_VERBOSE_LOGGING) {
-    ldout(cct, 20) << "on_finish=" << on_finish << dendl;
+  if (1/*RWL_VERBOSE_LOGGING*/) {
+    ldout(cct, 2) << "on_finish=" << on_finish << " flush_source=" << flush_source << dendl;
+  }
+
+  switch (flush_source) {
+  case io::FLUSH_SOURCE_SHUTDOWN:
+    if (m_flush_on_close) {
+      /* Normally we flush RWL to the cache below on close */
+      internal_flush(on_finish, false, false);
+      return;
+    } else {
+      /* If flushing to RADOS on close is disabled, do a USER flush
+	 and complete on another thread. */
+      ldout(cct, 2) << "flush on close supressed" << dendl;
+      on_finish = new FunctionContext([this, on_finish](int r) {
+	  m_image_ctx.op_work_queue->queue(on_finish, r);
+	});
+      break;
+    }
+  case io::FLUSH_SOURCE_INTERNAL:
+    internal_flush(on_finish, false, false);
+    return;
+  case io::FLUSH_SOURCE_USER:
+    break;
   }
   m_perfcounter->inc(l_librbd_rwl_aio_flush, 1);
 
@@ -4215,6 +4237,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    ctx->complete(r);
 	  });
       }
+      periodic_stats();
       if (m_retire_on_close) {
 	ldout(m_image_ctx.cct, 6) << "retiring entries" << dendl;
 	while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
@@ -4244,19 +4267,20 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    ctx->complete(r);
 	  });
       }
-      m_shutting_down = true;
-      if (m_flush_on_close) {
-	// flush all writes to OSDs
-	ldout(m_image_ctx.cct, 6) << "flushing" << dendl;
-	flush_dirty_entries(next_ctx);
-      } else {
-	{
-	  Mutex::Locker locker(m_lock);
+      {
+	/* Sync with process_writeback_dirty_entries() */
+	RWLock::WLocker entry_reader_wlocker(m_entry_reader_lock);
+	m_shutting_down = true;
+	/* Flush all writes to OSDs (unless disabled) and wait for all
+	   in-progress flush writes to complete */
+	if (m_flush_on_close) {
+	  ldout(m_image_ctx.cct, 6) << "flushing" << dendl;
+	} else {
 	  ldout(m_image_ctx.cct, 1) << "Not flushing " << m_dirty_log_entries.size() << " dirty entries" << dendl;
 	}
-	next_ctx->complete(0);
+	periodic_stats();
       }
-
+      flush_dirty_entries(next_ctx);
     });
   ctx = new FunctionContext(
     [this, ctx](int r) {
@@ -4679,11 +4703,16 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
     RWLock::RLocker entry_reader_locker(m_entry_reader_lock);
     while (flushed < IN_FLIGHT_FLUSH_WRITE_LIMIT) {
       Mutex::Locker locker(m_lock);
+      if (m_shutting_down && !m_flush_on_close) {
+	ldout(cct, 5) << "Flush during shutdown supressed" << dendl;
+	/* Do flush complete only when all flush ops are finished */
+	all_clean = !m_flush_ops_in_flight;
+	break;
+      }
       if (m_dirty_log_entries.empty()) {
 	ldout(cct, 20) << "Nothing new to flush" << dendl;
-
-	/* Check if we should take flush complete actions */
-	all_clean = !m_flush_ops_in_flight; // and m_dirty_log_entries is empty
+	/* Do flush complete only when all flush ops are finished */
+	all_clean = !m_flush_ops_in_flight;
 	break;
       }
       auto candidate = m_dirty_log_entries.front();
@@ -4881,7 +4910,7 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
 */
 template <typename I>
 void ReplicatedWriteLog<I>::flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
-  ldout(m_image_ctx.cct, 20) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
+  ldout(m_image_ctx.cct, 5/*20*/) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
 			     << "invalidate=" << invalidate
 			     << " discard_unflushed_writes=" << discard_unflushed_writes << dendl;
   if (m_perfcounter) {
@@ -4915,7 +4944,7 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
 
 template <typename I>
 void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
-  ldout(m_image_ctx.cct, 20) << "invalidate=" << invalidate
+  ldout(m_image_ctx.cct, 5/*20*/) << "invalidate=" << invalidate
 			     << " discard_unflushed_writes=" << discard_unflushed_writes << dendl;
   if (discard_unflushed_writes) {
     assert(invalidate);
@@ -5049,20 +5078,31 @@ void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, 
 template <typename I>
 void ReplicatedWriteLog<I>::flush_dirty_entries(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  bool all_clean = false;
+  bool all_clean;
+  bool flushing;
+  bool stop_flushing;
 
   {
     Mutex::Locker locker(m_lock);
-    all_clean = (0 == m_flush_ops_in_flight &&
-		 m_dirty_log_entries.empty());
+    flushing = (0 != m_flush_ops_in_flight);
+    all_clean = m_dirty_log_entries.empty();
+    stop_flushing = (m_shutting_down && !m_flush_on_close);
   }
 
-  if (all_clean) {
+  if (!flushing && (all_clean || stop_flushing)) {
     /* Complete without holding m_lock */
-    ldout(cct, 20) << "no dirty entries" << dendl;
+    if (all_clean) {
+      ldout(cct, 20) << "no dirty entries" << dendl;
+    } else {
+      ldout(cct, 5) << "flush during shutdown suppressed" << dendl;
+    }
     on_finish->complete(0);
   } else {
-    ldout(cct, 20) << "dirty entries remain" << dendl;
+    if (all_clean) {
+      ldout(cct, 5) << "flush ops still in progress" << dendl;
+    } else {
+      ldout(cct, 20) << "dirty entries remain" << dendl;
+    }
     Mutex::Locker locker(m_lock);
     /* on_finish can't be completed yet */
     m_flush_complete_contexts.push_back(new FunctionContext(

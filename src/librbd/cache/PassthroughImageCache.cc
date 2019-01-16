@@ -57,11 +57,11 @@ void PassthroughImageCache<I>::aio_discard(uint64_t offset, uint64_t length,
 }
 
 template <typename I>
-void PassthroughImageCache<I>::aio_flush(Context *on_finish) {
+void PassthroughImageCache<I>::aio_flush(Context *on_finish, librbd::io::FlushSource flush_source) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "on_finish=" << on_finish << dendl;
 
-  m_image_writeback.aio_flush(on_finish);
+  m_image_writeback.aio_flush(on_finish, flush_source);
 }
 
 template <typename I>

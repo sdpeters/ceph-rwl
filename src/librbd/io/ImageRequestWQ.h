@@ -68,7 +68,7 @@ public:
   }
 
   int block_writes();
-  void block_writes(Context *on_blocked);
+  void block_writes(Context *on_blocked, io::FlushSource flush_source = io::FLUSH_SOURCE_INTERNAL);
   void unblock_writes();
 
   void wait_on_writes_unblocked(Context *on_unblocked);
