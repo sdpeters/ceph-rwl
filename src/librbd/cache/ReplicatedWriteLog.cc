@@ -3166,7 +3166,7 @@ void ReplicatedWriteLog<I>::flush_new_sync_point_if_needed(C_FlushRequestT *flus
 template <typename I>
 void ReplicatedWriteLog<I>::aio_flush(Context *on_finish, io::FlushSource flush_source) {
   CephContext *cct = m_image_ctx.cct;
-  if (1/*RWL_VERBOSE_LOGGING*/) {
+  if (RWL_VERBOSE_LOGGING) {
     ldout(cct, 2) << "on_finish=" << on_finish << " flush_source=" << flush_source << dendl;
   }
 
@@ -4144,6 +4144,9 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	log_perf();
       }
       {
+	/* Much, but not all, of what's happening here is verifying
+	   things are shut down as expected, and to make it visible
+	   early (during testing) if they're not. */
 	ldout(m_image_ctx.cct, 15) << "acquiring locks that shouldn't still be held" << dendl;
 	Mutex::Locker timer_locker(m_timer_lock);
 	Mutex::Locker retire_locker(m_log_retire_lock);
@@ -4237,7 +4240,9 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    ctx->complete(r);
 	  });
       }
-      periodic_stats();
+      if (m_periodic_stats_enabled) {
+	periodic_stats();
+      }
       if (m_retire_on_close) {
 	ldout(m_image_ctx.cct, 6) << "retiring entries" << dendl;
 	while (retire_entries(MAX_ALLOC_PER_TRANSACTION)) { }
@@ -4278,7 +4283,9 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	} else {
 	  ldout(m_image_ctx.cct, 1) << "Not flushing " << m_dirty_log_entries.size() << " dirty entries" << dendl;
 	}
-	periodic_stats();
+	if (m_periodic_stats_enabled) {
+	  periodic_stats();
+	}
       }
       flush_dirty_entries(next_ctx);
     });
@@ -4910,7 +4917,7 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
 */
 template <typename I>
 void ReplicatedWriteLog<I>::flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
-  ldout(m_image_ctx.cct, 5/*20*/) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
+  ldout(m_image_ctx.cct, 20) << "name: " << m_image_ctx.name << " id: " << m_image_ctx.id
 			     << "invalidate=" << invalidate
 			     << " discard_unflushed_writes=" << discard_unflushed_writes << dendl;
   if (m_perfcounter) {
@@ -4944,7 +4951,7 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
 
 template <typename I>
 void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
-  ldout(m_image_ctx.cct, 5/*20*/) << "invalidate=" << invalidate
+  ldout(m_image_ctx.cct, 20) << "invalidate=" << invalidate
 			     << " discard_unflushed_writes=" << discard_unflushed_writes << dendl;
   if (discard_unflushed_writes) {
     assert(invalidate);

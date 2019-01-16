@@ -33,7 +33,7 @@ template <typename I>
 #define dout_prefix *_dout << __func__ << ": "
 void flush_image(I& image_ctx, Context* on_finish,
 		 librbd::io::FlushSource flush_source = librbd::io::FLUSH_SOURCE_INTERNAL) {
-  ldout(image_ctx.cct, 5) << "ictx=" << &image_ctx << " flush_source=" << flush_source << dendl;
+  ldout(image_ctx.cct, 20) << "ictx=" << &image_ctx << " flush_source=" << flush_source << dendl;
   auto aio_comp = librbd::io::AioCompletion::create_and_start(
     on_finish, util::get_image_ctx(&image_ctx), librbd::io::AIO_TYPE_FLUSH);
   auto req = librbd::io::ImageDispatchSpec<I>::create_flush_request(
