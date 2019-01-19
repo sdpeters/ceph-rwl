@@ -852,9 +852,20 @@ Context *RefreshRequest<I>::handle_v2_refresh_parent(int *result) {
 
 template <typename I>
 void RefreshRequest<I>::send_v2_init_exclusive_lock() {
-  if ((m_features & RBD_FEATURE_EXCLUSIVE_LOCK) == 0 ||
-      m_image_ctx.read_only || !m_image_ctx.snap_name.empty() ||
-      m_image_ctx.exclusive_lock != nullptr) {
+  /* Never init lock if it's already initialized */
+  bool skip_lock_init = (m_image_ctx.exclusive_lock != nullptr);
+  /* Don't init lock for snapshots */
+  skip_lock_init |= !m_image_ctx.snap_name.empty();
+  /* If there's no image cache, don't init lock if the lock feature is
+     off, or the image is read only */
+  skip_lock_init |= (((m_features & RBD_FEATURE_IMAGE_CACHE) == 0) &&
+		     (((m_features & RBD_FEATURE_EXCLUSIVE_LOCK) == 0) ||
+		      m_image_ctx.read_only));
+  /* This should already be enforced by feature bit config */
+  ceph_assert(!((m_features & RBD_FEATURE_IMAGE_CACHE) && !(m_features & RBD_FEATURE_EXCLUSIVE_LOCK)));
+  /* We must have an exclusive lock if there's an image cache */
+  ceph_assert(!(skip_lock_init && (m_features & RBD_FEATURE_IMAGE_CACHE)));
+  if (skip_lock_init) {
     send_v2_open_object_map();
     return;
   }

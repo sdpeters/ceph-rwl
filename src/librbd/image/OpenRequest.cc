@@ -573,7 +573,7 @@ Context *OpenRequest<I>::handle_refresh(int *result) {
 
 template <typename I>
 Context *OpenRequest<I>::send_init_cache(int *result) {
-  // cache is disabled or parent image context
+  // cache is disabled or this is a parent image context
   if (!m_image_ctx->cache || m_image_ctx->child != nullptr) {
     return send_register_watch(result);
   }
@@ -611,7 +611,7 @@ Context *OpenRequest<I>::send_init_cache(int *result) {
 
 template <typename I>
 Context *OpenRequest<I>::send_register_watch(int *result) {
-  if (m_image_ctx->read_only) {
+  if (!m_image_ctx->test_features(RBD_FEATURE_IMAGE_CACHE) && (m_image_ctx->read_only)) {
     return send_set_snap(result);
   }
 
