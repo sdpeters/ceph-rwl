@@ -861,10 +861,6 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
   skip_lock_init |= (((m_features & RBD_FEATURE_IMAGE_CACHE) == 0) &&
 		     (((m_features & RBD_FEATURE_EXCLUSIVE_LOCK) == 0) ||
 		      m_image_ctx.read_only));
-  /* This should already be enforced by feature bit config */
-  ceph_assert(!((m_features & RBD_FEATURE_IMAGE_CACHE) && !(m_features & RBD_FEATURE_EXCLUSIVE_LOCK)));
-  /* We must have an exclusive lock if there's an image cache */
-  ceph_assert(!(skip_lock_init && (m_features & RBD_FEATURE_IMAGE_CACHE)));
   if (skip_lock_init) {
     send_v2_open_object_map();
     return;
