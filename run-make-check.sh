@@ -152,7 +152,7 @@ EOM
     # limit while running seastar tests and bluestore tests.
     $DRY_RUN sudo sysctl -q -w fs.aio-max-nr=$((65536 * 16))
 
-    if ! $DRY_RUN ctest $CHECK_MAKEOPTS --output-on-failure; then
+    if ! $DRY_RUN ctest $CHECK_MAKEOPTS --output-on-failure $CTEST_OPTS; then
         rm -fr ${TMPDIR:-/tmp}/ceph-asok.*
         return 1
     fi
