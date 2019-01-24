@@ -1,0 +1,10 @@
+before_script:
+  #- ./do_cmake.sh
+
+build:
+  script:
+    #- cd build
+    #- cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DWITH_CCACHE=ON -BOOST_J=32 -DWITH_MGR_DASHBOARD_FRONTEND=OFF -DWITH_SEASTAR=OFF ..
+    #- make -j librbd unittest_librbd all
+    #- ./run-make-check.sh -DWITH_CCACHE=ON -DWITH_MGR_DASHBOARD_FRONTEND=OFF -DWITH_SEASTAR=OFF ..
+    - CTEST_OPTS="-E tox-mgr" ./run-make-check.sh -j4 -DWITH_CCACHE=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DWITH_MGR_DASHBOARD_FRONTEND=OFF -DWITH_SEASTAR=OFF
