@@ -5,11 +5,13 @@
 #include "tools/rbd/Shell.h"
 #include "tools/rbd/Utils.h"
 #include "include/types.h"
+#include "include/rbd_types.h"
 #include "include/stringify.h"
 #include "common/errno.h"
 #include "common/Formatter.h"
 #include <iostream>
 #include <boost/program_options.hpp>
+#include "cls/rbd/cls_rbd_client.h"
 
 #include "common/Clock.h"
 
@@ -119,6 +121,13 @@ static int do_show_info(librados::IoCtx &io_ctx, librbd::Image& image,
       return r;
   }
 
+  std::string header_oid;
+  if (old_format != 0) {
+    header_oid = imgname + RBD_SUFFIX;
+  } else {
+    header_oid = RBD_HEADER_PREFIX + imgid;
+  }
+ 
   std::string data_pool;
   if (!old_format) {
     int64_t data_pool_id = image.get_data_pool_id();
@@ -293,103 +302,18 @@ static int do_show_info(librados::IoCtx &io_ctx, librbd::Image& image,
     }
   }
 
-  // snapshot info, if present
-  if (!snapname.empty()) {
-    if (f) {
-      f->dump_string("protected", snap_protected ? "true" : "false");
-    } else {
-      std::cout << "\tprotected: " << (snap_protected ? "True" : "False")
-                << std::endl;
-    }
+  int lock_result = image.lock_acquire(RBD_LOCK_MODE_EXCLUSIVE);
+  if (lock_result) {
+    std::cerr << "rbd: error locking image " << imgname << ": "
+              << cpp_strerror(lock_result) << std::endl;
+    return r;
   }
-
-  if (snap_limit < UINT64_MAX) {
-    if (f) {
-      f->dump_unsigned("snapshot_limit", snap_limit);
-    } else {
-      std::cout << "\tsnapshot_limit: " << snap_limit << std::endl;
-    }
-  }
-
-  // parent info, if present
-  std::string parent_pool, parent_name, parent_id, parent_snapname;
-  if ((image.parent_info2(&parent_pool, &parent_name, &parent_id,
-                          &parent_snapname) == 0) &&
-      parent_name.length() > 0) {
-
-    librbd::trash_image_info_t trash_image_info;
-    librbd::RBD rbd;
-    r = rbd.trash_get(io_ctx, parent_id.c_str(), &trash_image_info);
-    bool trash_image_info_valid = (r == 0);
-
-    if (f) {
-      f->open_object_section("parent");
-      f->dump_string("pool", parent_pool);
-      f->dump_string("image", parent_name);
-      f->dump_string("snapshot", parent_snapname);
-      if (trash_image_info_valid) {
-        f->dump_string("trash", parent_id);
-      }
-      if ((features & RBD_FEATURE_MIGRATING) != 0) {
-        f->dump_bool("migration_source", true);
-      }
-      f->dump_unsigned("overlap", overlap);
-      f->close_section();
-    } else {
-      std::cout << "\tparent: " << parent_pool << "/" << parent_name
-                << (parent_snapname.empty() ? "" : "@") << parent_snapname;
-      if (trash_image_info_valid) {
-        std::cout << " (trash " << parent_id << ")";
-      }
-      if ((features & RBD_FEATURE_MIGRATING) != 0) {
-        std::cout << " (migration source)";
-      }
-      std::cout << std::endl;
-      std::cout << "\toverlap: " << byte_u_t(overlap) << std::endl;
-    }
-  }
-
-  // striping info, if feature is set
-  if (features & RBD_FEATURE_STRIPINGV2) {
-    if (f) {
-      f->dump_unsigned("stripe_unit", image.get_stripe_unit());
-      f->dump_unsigned("stripe_count", image.get_stripe_count());
-    } else {
-      std::cout << "\tstripe unit: " << byte_u_t(image.get_stripe_unit())
-                << std::endl
-                << "\tstripe count: " << image.get_stripe_count() << std::endl;
-    }
-  }
-
-  if (features & RBD_FEATURE_JOURNALING) {
-    if (f) {
-      f->dump_string("journal", utils::image_id(image));
-    } else {
-      std::cout << "\tjournal: " << utils::image_id(image) << std::endl;
-    }
-  }
-
-  if (features & RBD_FEATURE_JOURNALING) {
-    if (f) {
-      f->open_object_section("mirroring");
-      f->dump_string("state",
-          utils::mirror_image_state(mirror_image.state));
-      if (mirror_image.state != RBD_MIRROR_IMAGE_DISABLED) {
-        f->dump_string("global_id", mirror_image.global_id);
-        f->dump_bool("primary", mirror_image.primary);
-      }
-      f->close_section();
-    } else {
-      std::cout << "\tmirroring state: "
-                << utils::mirror_image_state(mirror_image.state) << std::endl;
-      if (mirror_image.state != RBD_MIRROR_IMAGE_DISABLED) {
-        std::cout << "\tmirroring global id: " << mirror_image.global_id
-                  << std::endl
-                  << "\tmirroring primary: "
-                  << (mirror_image.primary ? "true" : "false") <<std::endl;
-      }
-    }
-  }
+  cls::rbd::ImageCacheState ics;
+  std::cout << "header_oid=" << header_oid << std::endl;
+  librbd::cls_client::get_image_cache_state(&io_ctx, header_oid, &ics);
+  int layers = ics.layers.size();
+  std::cout << "image cache layers:" << layers << "\n"
+	    << ics << std::endl;
 
   if (f) {
     f->close_section();
@@ -401,9 +325,10 @@ static int do_show_info(librados::IoCtx &io_ctx, librbd::Image& image,
 
 void get_arguments(po::options_description *positional,
                    po::options_description *options) {
-  at::add_image_or_snap_spec_options(positional, options,
-                                     at::ARGUMENT_MODIFIER_NONE);
+  at::add_image_spec_options(positional, options,
+				at::ARGUMENT_MODIFIER_NONE);
   at::add_image_id_option(options);
+  /* We'd need encoders for each image cache spec to do this */
   at::add_format_options(options);
 }
 
