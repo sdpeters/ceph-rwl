@@ -1009,51 +1009,43 @@
   
   rbd help image-cache discard-dirty
   usage: rbd image-cache discard-dirty [--pool <pool>] [--namespace <namespace>] 
-                                       [--image <image>] [--snap <snap>] 
-                                       [--image-id <image-id>] 
+                                       [--image <image>] [--image-id <image-id>] 
                                        [--format <format>] [--pretty-format] 
-                                       <image-or-snap-spec> 
+                                       <image-spec> 
   
   Discard existing / dirty image cache
   
   Positional arguments
-    <image-or-snap-spec>  image or snapshot specification
-                          (example:
-                          [<pool-name>/[<namespace-name>/]]<image-name>[@<snap-nam
-                          e>])
+    <image-spec>         image specification
+                         (example: [<pool-name>/[<namespace-name>/]]<image-name>)
   
   Optional arguments
-    -p [ --pool ] arg     pool name
-    --namespace arg       namespace name
-    --image arg           image name
-    --snap arg            snapshot name
-    --image-id arg        image id
-    --format arg          output format (plain, json, or xml) [default: plain]
-    --pretty-format       pretty formatting (json and xml)
+    -p [ --pool ] arg    pool name
+    --namespace arg      namespace name
+    --image arg          image name
+    --image-id arg       image id
+    --format arg         output format (plain, json, or xml) [default: plain]
+    --pretty-format      pretty formatting (json and xml)
   
   rbd help image-cache show
   usage: rbd image-cache show [--pool <pool>] [--namespace <namespace>] 
-                              [--image <image>] [--snap <snap>] 
-                              [--image-id <image-id>] [--format <format>] 
-                              [--pretty-format] 
-                              <image-or-snap-spec> 
+                              [--image <image>] [--image-id <image-id>] 
+                              [--format <format>] [--pretty-format] 
+                              <image-spec> 
   
   Show image cache config
   
   Positional arguments
-    <image-or-snap-spec>  image or snapshot specification
-                          (example:
-                          [<pool-name>/[<namespace-name>/]]<image-name>[@<snap-nam
-                          e>])
+    <image-spec>         image specification
+                         (example: [<pool-name>/[<namespace-name>/]]<image-name>)
   
   Optional arguments
-    -p [ --pool ] arg     pool name
-    --namespace arg       namespace name
-    --image arg           image name
-    --snap arg            snapshot name
-    --image-id arg        image id
-    --format arg          output format (plain, json, or xml) [default: plain]
-    --pretty-format       pretty formatting (json and xml)
+    -p [ --pool ] arg    pool name
+    --namespace arg      namespace name
+    --image arg          image name
+    --image-id arg       image id
+    --format arg         output format (plain, json, or xml) [default: plain]
+    --pretty-format      pretty formatting (json and xml)
   
   rbd help image-meta get
   usage: rbd image-meta get [--pool <pool>] [--namespace <namespace>] 
