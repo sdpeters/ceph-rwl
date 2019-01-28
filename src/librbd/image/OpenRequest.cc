@@ -573,7 +573,7 @@ Context *OpenRequest<I>::handle_refresh(int *result) {
 
 template <typename I>
 Context *OpenRequest<I>::send_init_cache(int *result) {
-  // cache is disabled or parent image context
+  // cache is disabled or this is a parent image context
   if (!m_image_ctx->cache || m_image_ctx->child != nullptr) {
     return send_register_watch(result);
   }
