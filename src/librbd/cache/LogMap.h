@@ -381,7 +381,7 @@ bool LogMap<T, T_S>::LogMapEntryCompare::operator()(const LogMapEntry<T> &lhs,
 
 template <typename T, typename T_S>
 LogMapEntry<T> LogMap<T, T_S>::block_extent_to_map_key(const BlockExtent &block_extent) {
-  return LogMapEntry(block_extent);
+  return LogMapEntry<T>(block_extent);
 }
 
 } //namespace rwl

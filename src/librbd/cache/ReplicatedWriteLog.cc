@@ -462,7 +462,7 @@ public:
 };
 
 template <typename T>
-SyncPoint<T>::SyncPoint(T &rwl, uint64_t sync_gen_num)
+SyncPoint<T>::SyncPoint(T &rwl, const uint64_t sync_gen_num)
   : rwl(rwl), log_entry(std::make_shared<SyncPointLogEntry>(sync_gen_num)) {
   m_prior_log_entries_persisted = new C_Gather(rwl.m_image_ctx.cct, nullptr);
   m_sync_point_persist = new C_Gather(rwl.m_image_ctx.cct, nullptr);

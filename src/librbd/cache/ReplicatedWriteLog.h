@@ -303,9 +303,6 @@ public:
 };
 
 template <typename T>
-class SyncPointLogOperation;
-
-template <typename T>
 class SyncPointLogOperation : public GenericLogOperation<T> {
 public:
   using GenericLogOperation<T>::rwl;
@@ -336,7 +333,7 @@ public:
 
 template <typename T>
 class GeneralWriteLogOperation : public GenericLogOperation<T> {
-private:
+protected:
   friend class WriteLogOperation<T>;
   friend class DiscardLogOperation<T>;
   Mutex m_lock;
@@ -618,7 +615,7 @@ public:
   void aio_write(Extents&& image_extents, ceph::bufferlist&& bl,
 		 int fadvise_flags, Context *on_finish) override;
   void aio_discard(uint64_t offset, uint64_t length,
-		   bool skip_partial_discard, Context *on_finish);
+		   bool skip_partial_discard, Context *on_finish) override;
   void aio_flush(Context *on_finish, io::FlushSource flush_source = io::FLUSH_SOURCE_USER) override;
   void aio_writesame(uint64_t offset, uint64_t length,
 		     ceph::bufferlist&& bl,
@@ -648,13 +645,13 @@ private:
   friend class rwl::DiscardLogOperation<This>;
   friend class rwl::WriteSameLogOperation<This>;
   friend class rwl::SyncPointLogOperation<This>;
-  friend class rwl::C_GuardedBlockIORequest<This>;
-  friend class C_BlockIORequest<This>;
-  friend class C_WriteRequest<This>;
-  friend class C_FlushRequest<This>;
-  friend class C_DiscardRequest<This>;
-  friend class C_WriteSameRequest<This>;
-  friend class C_CompAndWriteRequest<This>;
+  friend struct rwl::C_GuardedBlockIORequest<This>;
+  friend struct C_BlockIORequest<This>;
+  friend struct C_WriteRequest<This>;
+  friend struct C_FlushRequest<This>;
+  friend struct C_DiscardRequest<This>;
+  friend struct C_WriteSameRequest<This>;
+  friend struct C_CompAndWriteRequest<This>;
   typedef std::list<C_WriteRequest<This> *> C_WriteRequests;
   typedef std::list<C_BlockIORequest<This> *> C_BlockIORequests;
 
@@ -794,7 +791,7 @@ private:
   std::atomic<bool> m_empty = {false};
   std::atomic<bool> m_present = {true};
 
-  const Extent whole_volume_extent(void);
+  const typename ImageCache<ImageCtxT>::Extent whole_volume_extent(void);
   void perf_start(const std::string name);
   void perf_stop();
   void log_perf();
