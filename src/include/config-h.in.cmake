@@ -111,8 +111,11 @@
 /* DPDK conditional compilation */
 #cmakedefine HAVE_DPDK
 
-/* PMEM conditional compilation */
-#cmakedefine HAVE_PMEM
+/* PMDK conditional compilation */
+#cmakedefine HAVE_PMDK
+
+/* PMEM_DEVICE (OSD) conditional compilation */
+#cmakedefine HAVE_PMEM_DEVICE
 
 /* Defined if LevelDB supports bloom filters */
 #cmakedefine HAVE_LEVELDB_FILTER_POLICY

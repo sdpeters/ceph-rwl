@@ -147,61 +147,32 @@ if(WITH_RWL)
     cache/ReplicatedWriteLog.cc)
 endif(WITH_RWL)
 
-if(WITH_PMEM)
-  if(WITH_PMEM_PKG)
-    # Use installed libpmem-dev and libpmemobj-dev. This will make
-    # libpmem1 and libpmemobj1 install dependencies for librbd.
-    find_package(libpmem-dev)
-    list(APPEND EXTRALIBS "pmem")
-    find_package(libpmemobj-dev)
-    list(APPEND EXTRALIBS "pmemobj")
-  else(WITH_PMEM_PKG)
-    # Use locally built and statically linked libpmem and libpmemobj
-
-    # ExternalProject nvml_ext already declared in src/os
-
-    set(PMDK_ROOT "${CMAKE_BINARY_DIR}/src/nvml")
-    set(PMDK_SRC "${PMDK_ROOT}/src")
-    set(PMDK_INCLUDE "${PMDK_SRC}/include")
-
-    # Use debug PMDK libs in debug librbd builds
-    if(NOT CMAKE_BUILD_TYPE STREQUAL Debug)
-      set(PMDK_LIB_DIR "nondebug")
-    else()
-      set(PMDK_LIB_DIR "debug")
-    endif()
-
-    set(PMDK_LIB "${PMDK_SRC}/${PMDK_LIB_DIR}")
-
-    #target_include_directories(os SYSTEM PRIVATE "${PMDK_SRC}/include")
-
-    # libpmem
-    add_dependencies(pmem nvml_ext)
-    # Already declared imported in src/os
-    #add_library(pmem STATIC IMPORTED GLOBAL)
-    set_target_properties(pmem PROPERTIES
-      IMPORTED_LOCATION "${PMDK_LIB}/libpmem.a"
-      INTERFACE_LINK_LIBRARIES ${CMAKE_THREAD_LIBS_INIT})
-
-    # libpmemobj
-    add_library(pmemobj STATIC IMPORTED GLOBAL)
-    add_dependencies(pmemobj nvml_ext)
-    set_target_properties(pmemobj PROPERTIES
-      IMPORTED_LOCATION "${PMDK_LIB}/libpmemobj.a"
-      INTERFACE_LINK_LIBRARIES ${CMAKE_THREAD_LIBS_INIT})
-
-    set(RBD_STATIC_LIBS pmemobj pmem)
-  endif(WITH_PMEM_PKG)
-endif(WITH_PMEM)
+if(WITH_PMDK)
+  if(WITH_PMDK_PKG)
+    # # Use installed libpmem-dev and libpmemobj-dev. This will make
+    # # libpmem1 and libpmemobj1 install dependencies for librbd.
+    # find_package(libpmem-dev)
+    # list(APPEND EXTRALIBS "pmem")
+    # find_package(libpmemobj-dev)
+    # list(APPEND EXTRALIBS "pmemobj")
+    #
+    # Here's where you'd make the installed PMDK a dependency
+    # for just librbd (afer removing it from the outer CMakeLists)
+  else(WITH_PMDK_PKG)
+    # pmem and pmemobj libraries already created in outer CMakeLists.txt
+    # via WITH_PMDK
+  endif(WITH_PMDK_PKG)
+endif(WITH_PMDK)
 
 add_library(rbd_api STATIC librbd.cc)
 add_library(rbd_internal STATIC
   ${librbd_internal_srcs}
   $<TARGET_OBJECTS:rados_snap_set_diff_obj>)
 
-if(WITH_PMEM AND NOT WITH_PMEM_PKG)
-  add_dependencies(rbd_internal ${RBD_STATIC_LIBS})
-  message(STATUS "Adding include directory: ${PMDK_SRC}/include")
+if(WITH_PMDK AND NOT WITH_PMDK_PKG)
+  # static PMDK libs, built here
+  add_dependencies(rbd_internal ${PMDK_STATIC_LIBS})
+  #message(STATUS "Adding include directory: ${PMDK_SRC}/include")
   target_include_directories(rbd_internal SYSTEM PRIVATE "${PMDK_SRC}/include")
 endif()
 
@@ -217,8 +188,8 @@ endif()
 target_link_libraries(rbd_internal PRIVATE
   osdc)
 
-if(WITH_PMEM AND NOT WITH_PMEM_PKG)
-  target_link_libraries(rbd_internal PRIVATE ${RBD_STATIC_LIBS})
+if(WITH_PMDK AND NOT WITH_PMDK_PKG)
+  target_link_libraries(rbd_internal PRIVATE ${PMDK_STATIC_LIBS})
 endif()
 
 add_library(librbd ${CEPH_SHARED}

@@ -46,10 +46,10 @@ if(WITH_FUSE)
     FuseStore.cc)
 endif(WITH_FUSE)
 
-if(WITH_PMEM)
+if(WITH_PMEM_DEVICE)
   list(APPEND libos_srcs
     bluestore/PMEMDevice.cc)
-endif(WITH_PMEM)
+endif(WITH_PMEM_DEVICE)
 
 if(HAVE_LIBXFS)
   list(APPEND libos_srcs
@@ -123,36 +123,15 @@ if(WITH_BLUESTORE)
     DESTINATION bin)
 endif()
 
-if(WITH_PMEM)
-  # also used in src/librbd/CMakeLists.txt
-  include(ExternalProject)
-  ExternalProject_Add(nvml_ext
-    DOWNLOAD_DIR ${CMAKE_BINARY_DIR}/src/
-    GIT_REPOSITORY "https://github.com/ceph/nvml.git"
-    GIT_TAG "dd622819dd4ee97d3920f913c70be"
-    SOURCE_DIR ${CMAKE_BINARY_DIR}/src/nvml
-    CONFIGURE_COMMAND ""
-    # Explicitly built w/o NDCTL, otherwise if ndtcl is present on the
-    # build system tests statically linking to librbd (which uses
-    # libpmemobj) will not link (because we don't build the ndctl
-    # static library here).
-    BUILD_COMMAND $(MAKE) NDCTL_ENABLE=n
-    BUILD_IN_SOURCE 1
-    INSTALL_COMMAND "true")
-
-  ExternalProject_Add_Step(nvml_ext forcebuild
-    DEPENDEES configure
-    DEPENDERS build
-    COMMAND "true"
-    ALWAYS 1)
-  add_library(pmem STATIC IMPORTED GLOBAL)
-  add_dependencies(pmem nvml_ext)
-  set_target_properties(pmem PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/src/nvml/src/nondebug/libpmem.a"
-    INTERFACE_LINK_LIBRARIES ${CMAKE_THREAD_LIBS_INIT})
-  target_link_libraries(os pmem)
-  target_include_directories(os SYSTEM PRIVATE "${CMAKE_BINARY_DIR}/src/nvml/src/include")
-endif(WITH_PMEM)
+if(WITH_PMEM_DEVICE)
+  # libpmem dependency defined in outer CMakeLists.txt
+  # via WITH_PMDK
+  if(WITH_PMDK AND NOT WITH_PMDK_PKG)
+    # static pmdk libs, built here
+    target_link_libraries(os pmem)
+    target_include_directories(os SYSTEM PRIVATE "${PMDK_SRC}/include")
+  endif()
+endif(WITH_PMEM_DEVICE)
 
 if(WITH_LTTNG AND WITH_EVENTTRACE)
   add_dependencies(os eventtrace_tp)
