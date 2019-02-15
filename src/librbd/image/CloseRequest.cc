@@ -141,10 +141,8 @@ void CloseRequest<I>::handle_shut_down_exclusive_lock(int r) {
 
     // object map and journal closed during exclusive lock shutdown
     RWLock::RLocker image_locker(m_image_ctx->image_lock);
-    if (r >= 0) {
-      ceph_assert(m_image_ctx->journal == nullptr);
-      ceph_assert(m_image_ctx->object_map == nullptr);
-    }
+    ceph_assert(m_image_ctx->journal == nullptr);
+    ceph_assert(m_image_ctx->object_map == nullptr);
   }
 
   delete m_exclusive_lock;
