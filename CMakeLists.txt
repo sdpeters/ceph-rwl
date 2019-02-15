@@ -778,4 +778,10 @@ add_tags(ctags
   TAG_FILE tags
   EXCLUDE_OPTS ${CTAG_EXCLUDES}
   EXCLUDES "*.js" "*.css")
-add_custom_target(tags DEPENDS ctags)
+add_tags(etags
+  EXECUTABLE_OPTIONS "-e"
+  SRC_DIR src
+  TAG_FILE TAGS
+  EXCLUDE_OPTS ${CTAG_EXCLUDES}
+  EXCLUDES "*.js" "*.css")
+add_custom_target(tags DEPENDS ctags etags)
