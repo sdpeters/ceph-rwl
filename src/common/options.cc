@@ -7420,7 +7420,7 @@ static std::vector<Option> get_rbd_options() {
 
     Option("rbd_rwl_size", Option::TYPE_UINT, Option::LEVEL_ADVANCED)
     .set_default(1073741824)
-    .set_min(1073741824)
+    .set_min(1048576)
     .set_description("size of the persistent write back cache for this volume"),
 
     Option("rbd_rwl_path", Option::TYPE_STR, Option::LEVEL_ADVANCED)

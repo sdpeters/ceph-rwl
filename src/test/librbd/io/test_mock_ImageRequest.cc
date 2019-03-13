@@ -393,7 +393,7 @@ TEST_F(TestMockIoImageRequest, AioFlushJournalAppendDisabled) {
 
   InSequence seq;
   expect_is_journal_appending(mock_journal, false);
-  expect_flush_async_operations(mock_image_ctx, io::FLUSH_SOURCE_WRITEBACK, 0);
+  expect_flush_async_operations(mock_image_ctx, io::FLUSH_SOURCE_USER, 0);
   expect_object_request_send(mock_image_ctx, 0);
 
   C_SaferCond aio_comp_ctx;
