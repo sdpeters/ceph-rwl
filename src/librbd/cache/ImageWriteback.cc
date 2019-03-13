@@ -83,7 +83,7 @@ void ImageWriteback<I>::aio_flush(Context *on_finish) {
 
   auto aio_comp = io::AioCompletion::create_and_start(on_finish, &m_image_ctx,
                                                       io::AIO_TYPE_FLUSH);
-  io::ImageFlushRequest<I> req(m_image_ctx, aio_comp, io::FLUSH_SOURCE_INTERNAL,
+  io::ImageFlushRequest<I> req(m_image_ctx, aio_comp, io::FLUSH_SOURCE_WRITEBACK,
                                {});
   req.set_bypass_image_cache();
   req.send();
