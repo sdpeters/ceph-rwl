@@ -213,6 +213,10 @@ void PostAcquireRequest<I>::handle_open_image_cache(int r) {
 
 template <typename I>
 void PostAcquireRequest<I>::send_close_journal() {
+  if (m_journal == nullptr) {
+    send_close_object_map();
+    return;
+  }
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << dendl;
 
