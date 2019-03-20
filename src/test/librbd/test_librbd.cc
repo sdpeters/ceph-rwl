@@ -8019,17 +8019,6 @@ TEST_F(TestLibRBD, DISABLED_TestSeqWriteAIOPP)
 TEST_F(TestLibRBD, RWLCacheFull)
 {
   REQUIRE(is_rbd_rwl_enabled());
-  uint32_t new_rbd_rwl_size = 1 << 22;
-  std::string orig_rbd_rwl_size;
-  ASSERT_EQ(0, _rados.conf_get("rbd_rwl_size", orig_rbd_rwl_size));
-  ASSERT_EQ(0, _rados.conf_set("rbd_rwl_size",
-                               stringify(new_rbd_rwl_size).c_str()));
-  std::string config_value;
-  ASSERT_EQ(0, _rados.conf_get("rbd_rwl_size", config_value));
-  ASSERT_EQ(stringify(new_rbd_rwl_size), config_value);
-  BOOST_SCOPE_EXIT( (orig_rbd_rwl_size) ) {
-    ASSERT_EQ(0, _rados.conf_set("rbd_cache_size", orig_rbd_rwl_size.c_str()));
-  } BOOST_SCOPE_EXIT_END;
   int order = 21;
   std::string name = get_temp_image_name();
   uint64_t size = 1 << 30;
