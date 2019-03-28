@@ -2346,8 +2346,9 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
     ldout(cct,5) << "NOT retiring on close" << dendl;
   }
 
-  std::string log_pool_name = rwl_path + "/rbd-rwl." + m_image_ctx.id + ".pool";
-  std::string log_poolset_name = rwl_path + "/rbd-rwl." + m_image_ctx.id + ".poolset";
+  std::string pool_name = m_image_ctx.md_ctx.get_pool_name();
+  std::string log_pool_name = rwl_path + "/rbd-rwl." + pool_name + "." + m_image_ctx.id + ".pool";
+  std::string log_poolset_name = rwl_path + "/rbd-rwl." + pool_name + "." + m_image_ctx.id + ".poolset";
   m_log_pool_config_size = max(m_image_ctx.rwl_size, MIN_POOL_SIZE);
 
   if (access(log_poolset_name.c_str(), F_OK) == 0) {
