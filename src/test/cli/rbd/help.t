@@ -1017,7 +1017,7 @@
   
   Positional arguments
     <image-spec>         image specification
-                         (example: [<pool-name>/[<namespace-name>/]]<image-name>)
+                         (example: [<pool-name>/[<namespace>/]]<image-name>)
   
   Optional arguments
     -p [ --pool ] arg    pool name
@@ -1037,7 +1037,7 @@
   
   Positional arguments
     <image-spec>         image specification
-                         (example: [<pool-name>/[<namespace-name>/]]<image-name>)
+                         (example: [<pool-name>/[<namespace>/]]<image-name>)
   
   Optional arguments
     -p [ --pool ] arg    pool name
