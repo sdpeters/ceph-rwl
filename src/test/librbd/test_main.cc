@@ -27,6 +27,7 @@ extern void register_test_trash();
 #if defined(WITH_RWL)
 extern void register_test_blockguard();
 extern void register_test_write_log_map();
+#endif //defined(WITH_RWL)
 #endif // TEST_LIBRBD_INTERNALS
 
 int main(int argc, char **argv)

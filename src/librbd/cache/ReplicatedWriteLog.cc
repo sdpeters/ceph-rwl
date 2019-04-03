@@ -1045,7 +1045,7 @@ void C_DiscardRequest<T>::dispatch() {
 
 template <typename I>
 void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
-					bool skip_partial_discard, Context *on_finish) {
+					uint32_t discard_granularity_bytes, Context *on_finish) {
   utime_t now = ceph_clock_now();
   Extents discard_extents = {{offset, length}};
   m_perfcounter->inc(l_librbd_rwl_discard, 1);
@@ -1073,7 +1073,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
   }
 
   auto discard_req_sp =
-    C_DiscardRequestT::create(*this, now, std::move(discard_extents), skip_partial_discard, on_finish);
+    C_DiscardRequestT::create(*this, now, std::move(discard_extents), discard_granularity_bytes, on_finish);
   auto *discard_req = discard_req_sp.get();
   // TODO: Add discard stats
   //m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->m_image_extents_summary.total_bytes);
@@ -1311,6 +1311,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish, io::FlushSource flush_
     internal_flush(on_finish, false, false);
     return;
   case io::FLUSH_SOURCE_USER:
+  case io::FLUSH_SOURCE_WRITEBACK:
     break;
   }
   m_perfcounter->inc(l_librbd_rwl_aio_flush, 1);
@@ -1959,7 +1960,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 	       * remain consistent. */
 	      m_image_writeback->aio_discard(discard_entry->ram_entry.image_offset_bytes,
 					     discard_entry->ram_entry.write_bytes,
-					     false, ctx);
+					     1, ctx);
 	    }));
 	});
     } else {

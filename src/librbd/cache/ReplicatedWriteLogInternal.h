@@ -1675,12 +1675,12 @@ template <typename T>
 struct C_DiscardRequest : public C_BlockIORequest<T> {
   using C_BlockIORequest<T>::rwl;
   std::atomic<bool> m_log_entry_allocated = {false};
-  bool m_skip_partial_discard;
+  uint32_t m_discard_granularity_bytes;
   std::shared_ptr<DiscardLogOperation<T>> op;
   friend std::ostream &operator<<(std::ostream &os,
 				  const C_DiscardRequest<T> &req) {
     os << (C_BlockIORequest<T>&)req
-       << "m_skip_partial_discard=" << req.m_skip_partial_discard;
+       << "m_discard_granularity_bytes=" << req.m_discard_granularity_bytes;
     if (req.op) {
       os << "op=[" << *req.op << "]";
     } else {
@@ -1690,9 +1690,9 @@ struct C_DiscardRequest : public C_BlockIORequest<T> {
   };
 
   C_DiscardRequest(T &rwl, const utime_t arrived, Extents &&image_extents,
-		   const int skip_partial_discard, Context *user_req)
+		   const uint32_t discard_granularity_bytes, Context *user_req)
     : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), bufferlist(), 0, user_req),
-    m_skip_partial_discard(skip_partial_discard) {
+    m_discard_granularity_bytes(discard_granularity_bytes) {
     if (RWL_VERBOSE_LOGGING) {
       ldout(rwl.m_image_ctx.cct, 99) << this << dendl;
     }

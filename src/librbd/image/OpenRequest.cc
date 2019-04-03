@@ -692,6 +692,20 @@ Context *OpenRequest<I>::handle_set_snap(int *result) {
 }
 
 template <typename I>
+Context *OpenRequest<I>::finalize(int r) {
+  if (r == 0) {
+    auto io_scheduler_cfg =
+      m_image_ctx->config.template get_val<std::string>("rbd_io_scheduler");
+    if (io_scheduler_cfg == "simple" && !m_image_ctx->read_only) {
+      auto io_scheduler =
+	io::SimpleSchedulerObjectDispatch<I>::create(m_image_ctx);
+      io_scheduler->init();
+    }
+  }
+  return m_on_finish;
+}
+
+template <typename I>
 void OpenRequest<I>::send_close_image(int error_result) {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;

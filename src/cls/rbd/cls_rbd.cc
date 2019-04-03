@@ -7671,7 +7671,6 @@ CLS_INIT(rbd)
   cls_method_handle_t h_migration_set_state;
   cls_method_handle_t h_migration_get;
   cls_method_handle_t h_migration_remove;
-  cls_method_handle_t h_assert_snapc_seq;
   cls_method_handle_t h_image_cache_state_get;
   cls_method_handle_t h_image_cache_state_set;
   cls_method_handle_t h_old_snapshots_list;
