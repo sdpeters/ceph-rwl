@@ -7875,10 +7875,6 @@ CLS_INIT(rbd)
   cls_register_cxx_method(h_class, "migration_remove",
                           CLS_METHOD_RD | CLS_METHOD_WR,
                           migration_remove, &h_migration_remove);
-  cls_register_cxx_method(h_class, "assert_snapc_seq",
-                          CLS_METHOD_RD | CLS_METHOD_WR,
-                          assert_snapc_seq,
-                          &h_assert_snapc_seq);
   cls_register_cxx_method(h_class, "image_cache_state_get",
                           CLS_METHOD_RD,
                           image_cache_state_get, &h_image_cache_state_get);
