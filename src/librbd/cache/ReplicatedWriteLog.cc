@@ -1442,6 +1442,25 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
   m_perfcounter->inc(l_librbd_rwl_cmp, 1);
   assert(m_initialized);
 
+  unsigned int compare_bytes = ExtentsSummary<Extents>(image_extents).total_bytes;
+
+  if (0 == compare_bytes) {
+    on_finish->complete(0);
+    return;
+  }
+
+  /* Repeat compare buffer as necessary for length of read */
+  bufferlist adjusted_cmp_bl;
+  for (unsigned int i = 0; i < compare_bytes / cmp_bl.length(); i++) {
+    adjusted_cmp_bl.append(cmp_bl);
+  }
+  int trailing_partial = compare_bytes % cmp_bl.length();
+  if (trailing_partial) {
+    bufferlist trailing_cmp_bl;
+    trailing_cmp_bl.substr_of(cmp_bl, 0, trailing_partial);
+    adjusted_cmp_bl.claim_append(trailing_cmp_bl);
+  }
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
@@ -1450,16 +1469,11 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
     }
   }
 
-  if (ExtentsSummary<Extents>(image_extents).total_bytes == 0) {
-    on_finish->complete(0);
-    return;
-  }
-
   /* A compare and write request is also a write request. We only allocate
    * resources and dispatch this write request if the compare phase
    * succeeds. */
   auto *cw_req =
-    C_CompAndWriteRequestT::create(*this, now, std::move(image_extents), std::move(cmp_bl), std::move(bl),
+    C_CompAndWriteRequestT::create(*this, now, std::move(image_extents), std::move(adjusted_cmp_bl), std::move(bl),
 				   mismatch_offset, fadvise_flags, on_finish).get();
   m_perfcounter->inc(l_librbd_rwl_cmp_bytes, cw_req->m_image_extents_summary.total_bytes);
 
