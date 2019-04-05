@@ -1151,6 +1151,7 @@ TEST_F(TestMigration, CloneV1Parent)
 TEST_F(TestMigration, CloneV2Parent)
 {
   const uint32_t CLONE_FORMAT = 2;
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   test_migrate_parent(
       CLONE_FORMAT, [this](librbd::ImageCtx *) {
            migrate(m_ioctx, m_image_name);
@@ -1170,6 +1171,7 @@ TEST_F(TestMigration, CloneV1ParentAbort)
 TEST_F(TestMigration, CloneV2ParentAbort)
 {
   const uint32_t CLONE_FORMAT = 2;
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   test_migrate_parent(
       CLONE_FORMAT, [this](librbd::ImageCtx *) {
            migration_prepare(m_ioctx, m_image_name);
@@ -1258,6 +1260,7 @@ TEST_F(TestMigration, CloneV1ParentAbortRelinkNotNeeded)
 TEST_F(TestMigration, CloneV2ParentAbortFixIncompleteChildReattach)
 {
   const uint32_t CLONE_FORMAT = 2;
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   test_migrate_parent(
       CLONE_FORMAT, [this](librbd::ImageCtx *child_ictx) {
            auto src_image_id = m_ictx->id;
@@ -1281,6 +1284,7 @@ TEST_F(TestMigration, CloneV2ParentAbortFixIncompleteChildReattach)
 TEST_F(TestMigration, CloneV2ParentAbortFixParentReattach)
 {
   const uint32_t CLONE_FORMAT = 2;
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   test_migrate_parent(
       CLONE_FORMAT, [this](librbd::ImageCtx *child_ictx) {
            auto src_image_id = m_ictx->id;
@@ -1304,6 +1308,7 @@ TEST_F(TestMigration, CloneV2ParentAbortFixParentReattach)
 TEST_F(TestMigration, CloneV2ParentAbortRelinkNotNeeded)
 {
   const uint32_t CLONE_FORMAT = 2;
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_IMAGE_CACHE));
   test_migrate_parent(
       CLONE_FORMAT, [this](librbd::ImageCtx *child_ictx) {
            auto src_image_id = m_ictx->id;
