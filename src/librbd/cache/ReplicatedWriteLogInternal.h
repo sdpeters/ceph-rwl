@@ -835,6 +835,10 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(ImageCtx &image_ctx, ImageCache<I> *lo
     m_retire_on_close(m_flush_on_close && !get_env_bool("RBD_RWL_NO_RETIRE_ON_CLOSE"))
 {
   assert(lower);
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::start_workers() {
   m_thread_pool.start();
   if (use_finishers) {
     m_persist_finisher.start();
@@ -2481,6 +2485,8 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
   ldout(cct,20) << "new sync point = [" << m_current_sync_point << "]" << dendl;
 
   m_initialized = true;
+  // Start the thread
+  start_workers();
 
   m_periodic_stats_enabled = m_image_ctx.rwl_log_periodic_stats;
   /* Do these after we drop m_lock */

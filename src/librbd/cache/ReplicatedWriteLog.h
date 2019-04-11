@@ -800,6 +800,7 @@ private:
   void arm_periodic_stats();
 
   void rwl_init(Context *on_finish, DeferredContexts &later);
+  void start_workers();
   void load_existing_entries(DeferredContexts &later);
   void wake_up();
   void process_work();
