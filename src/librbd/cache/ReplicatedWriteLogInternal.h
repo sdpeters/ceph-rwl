@@ -2383,8 +2383,10 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
 			rwl_pool_layout_name,
 			m_log_pool_config_size,
 			(S_IWUSR | S_IRUSR))) == NULL) {
-      lderr(cct) << "failed to create pool (" << m_log_pool_name << ")"
-		 << pmemobj_errormsg() << dendl;
+      if (!m_image_ctx.ignore_image_cache_init_failure) {
+        lderr(cct) << "failed to create pool (" << m_log_pool_name << ")"
+                   << pmemobj_errormsg() << dendl;
+      }
       m_present = false;
       m_clean = true;
       m_empty = true;
@@ -2439,21 +2441,27 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
     if ((m_internal->m_log_pool =
 	 pmemobj_open(m_log_pool_name.c_str(),
 		      rwl_pool_layout_name)) == NULL) {
-      lderr(cct) << "failed to open pool (" << m_log_pool_name << "): "
-		 << pmemobj_errormsg() << dendl;
+      if (!m_image_ctx.ignore_image_cache_init_failure) {
+        lderr(cct) << "failed to open pool (" << m_log_pool_name << "): "
+		   << pmemobj_errormsg() << dendl;
+      }
       on_finish->complete(-errno);
       return;
     }
     pool_root = POBJ_ROOT(m_internal->m_log_pool, struct WriteLogPoolRoot);
     if (D_RO(pool_root)->header.layout_version != RWL_POOL_VERSION) {
-      lderr(cct) << "Pool layout version is " << D_RO(pool_root)->header.layout_version
-		 << " expected " << RWL_POOL_VERSION << dendl;
+      if (!m_image_ctx.ignore_image_cache_init_failure) {
+        lderr(cct) << "Pool layout version is " << D_RO(pool_root)->header.layout_version
+	           << " expected " << RWL_POOL_VERSION << dendl;
+      }
       on_finish->complete(-EINVAL);
       return;
     }
     if (D_RO(pool_root)->block_size != MIN_WRITE_ALLOC_SIZE) {
-      lderr(cct) << "Pool block size is " << D_RO(pool_root)->block_size
-		 << " expected " << MIN_WRITE_ALLOC_SIZE << dendl;
+      if (!m_image_ctx.ignore_image_cache_init_failure) {
+        lderr(cct) << "Pool block size is " << D_RO(pool_root)->block_size
+                   << " expected " << MIN_WRITE_ALLOC_SIZE << dendl;
+      }
       on_finish->complete(-EINVAL);
       return;
     }

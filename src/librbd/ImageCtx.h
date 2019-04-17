@@ -150,6 +150,8 @@ namespace librbd {
 
     cls::rbd::ImageCacheState image_cache_state;
     cache::ImageCache<ImageCtx> *image_cache = nullptr;
+    bool ignore_image_cache_init_failure = false;
+    bool image_cache_init_succeeded = false;
     std::list<cache::ImageCache<ImageCtx>*> image_cache_layers; /* front layer on top */
 
     Readahead readahead;

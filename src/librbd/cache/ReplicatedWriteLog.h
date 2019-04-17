@@ -634,8 +634,7 @@ public:
   void flush(Context *on_finish, bool invalidate=false, bool discard_unflushed_writes=false);
   void flush(Context *on_finish) override;
 
-  void invalidate(Context *on_finish, bool discard_unflushed_writes=false);
-  void invalidate(Context *on_finish) override;
+  void invalidate(Context *on_finish, bool discard_unflushed_writes) override;
 
 private:
   friend class rwl::SyncPoint<This>;

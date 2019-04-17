@@ -1098,7 +1098,7 @@ void ImageCacheState::generate_test_instances(std::list<ImageCacheState*> &o) {
 std::ostream& operator<<(std::ostream& os, const ImageCacheState& ics) {
   os << "[";
   os << "present=" << ics.present << ", ";
-  os << "empyt=" << ics.empty << ", ";
+  os << "empty=" << ics.empty << ", ";
   os << "clean=" << ics.clean << ", ";
   os << "layers=" << ics.layers;
   os << "]";

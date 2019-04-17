@@ -119,11 +119,11 @@ void PassthroughImageCache<I>::shut_down(Context *on_finish) {
 }
 
 template <typename I>
-void PassthroughImageCache<I>::invalidate(Context *on_finish) {
+void PassthroughImageCache<I>::invalidate(Context *on_finish, bool discard_unflushed_writes) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
-  m_image_writeback.invalidate(on_finish);
+  m_image_writeback.invalidate(on_finish, discard_unflushed_writes);
 }
 
 template <typename I>

@@ -2437,6 +2437,15 @@ namespace librbd {
     return r;
   }
 
+  int Image::invalidate_image_cache(bool discard)
+  {
+    ImageCtx *ictx = (ImageCtx *)ctx;
+    tracepoint(librbd, invalidate_cache_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only);
+    int r = librbd::invalidate_cache(ictx, discard);
+    tracepoint(librbd, invalidate_cache_exit, r);
+    return r;
+  }
+
   int Image::poll_io_events(RBD::AioCompletion **comps, int numcomp)
   {
     io::AioCompletion *cs[numcomp];

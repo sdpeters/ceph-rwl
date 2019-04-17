@@ -52,7 +52,7 @@ public:
   void shut_down(Context *on_finish) override {on_finish->complete(0);};
   void get_state(bool &clean, bool &empty, bool &present) override;
 
-  void invalidate(Context *on_finish) override {on_finish->complete(0);};
+  void invalidate(Context *on_finish, bool discard_unflushed_writes) override {on_finish->complete(0);};
   void flush(Context *on_finish) override {aio_flush(on_finish);};
 private:
   ImageCtxT &m_image_ctx;

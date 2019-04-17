@@ -200,6 +200,12 @@ void PostAcquireRequest<I>::handle_open_image_cache(int r) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << "r=" << r << dendl;
 
+  if (r >= 0) {
+    m_image_ctx.image_cache_init_succeeded = true;
+  }
+  if (m_image_ctx.ignore_image_cache_init_failure && r < 0) {
+    r = 0;
+  }
   save_result(r);
   if (r < 0) {
     lderr(cct) << "failed to open image cache: " << cpp_strerror(r)

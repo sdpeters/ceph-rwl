@@ -817,11 +817,12 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
     if (m_image_ctx->image_cache_state.clean) {
       cleanstring = "clean";
     }
-
-    lderr(cct) << "An image cache (RWL) remains on host " << rwl_spec->host
-	       << " which is " << cleanstring
-	       << ". Flush/close the image there to remove the image cache" << dendl;
-    on_finish->complete(-EPERM);
+    if (!m_image_ctx->ignore_image_cache_init_failure) {
+      lderr(cct) << "An image cache (RWL) remains on host " << rwl_spec->host
+                 << " which is " << cleanstring
+                 << ". Flush/close the image there to remove the image cache" << dendl;
+    }
+    on_finish->complete(-ENOENT);
     return;
   }
 

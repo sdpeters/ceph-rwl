@@ -12,6 +12,7 @@
 #include <iostream>
 #include <boost/program_options.hpp>
 #include "cls/rbd/cls_rbd_client.h"
+#include "librbd/ImageCtx.h"
 
 #include "common/Clock.h"
 
@@ -358,20 +359,44 @@ int execute(const po::variables_map &vm, bool discard) {
     return r;
   }
 
-  librados::Rados rados;
-  librados::IoCtx io_ctx;
-  librbd::Image image;
-  r = utils::init_and_open_image(pool_name, namespace_name, image_name,
-                                 image_id, snap_name, true, &rados, &io_ctx,
-                                 &image);
-  if (r < 0) {
-    return r;
-  }
+  if (discard) {
+    librados::Rados rados;
+    librados::IoCtx io_ctx;
+    librbd::Image image;
+    r = utils::init(pool_name, namespace_name, &rados, &io_ctx);
 
-  r = do_show_info(io_ctx, image, snap_name, formatter.get());
-  if (r < 0) {
-    std::cerr << "rbd: info: " << cpp_strerror(r) << std::endl;
-    return r;
+    librbd::RBD rbd;
+    r = rbd.open(io_ctx, image, image_name.c_str());
+    if (r < 0) {
+      std::cerr << "rbd: failed to open image " << image_name << ": "
+                << cpp_strerror(r) << std::endl;
+      return r;
+    }
+
+    r = image.invalidate_image_cache(true);
+    if (r < 0) {
+      std::cerr << "rbd: failed to acquire lock - image is in use."
+                   "Cannot discard dirty cache "
+                << image_name << ": " << std::endl;
+      image.close();
+      return r;
+    }
+  } else {
+    librados::Rados rados;
+    librados::IoCtx io_ctx;
+    librbd::Image image;
+    r = utils::init_and_open_image(pool_name, namespace_name, image_name,
+                                   image_id, snap_name, true, &rados, &io_ctx,
+                                   &image);
+    if (r < 0) {
+      return r;
+    }
+
+    r = do_show_info(io_ctx, image, snap_name, formatter.get());
+    if (r < 0) {
+      std::cerr << "rbd: info: " << cpp_strerror(r) << std::endl;
+      return r;
+    }
   }
   return 0;
 }

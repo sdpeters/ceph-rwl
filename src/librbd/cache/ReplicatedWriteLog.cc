@@ -2241,11 +2241,6 @@ void ReplicatedWriteLog<I>::invalidate(Context *on_finish, bool discard_unflushe
 };
 
 template <typename I>
-void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
-  invalidate(on_finish, false);
-};
-
-template <typename I>
 void ReplicatedWriteLog<I>::internal_flush(Context *on_finish, bool invalidate, bool discard_unflushed_writes) {
   ldout(m_image_ctx.cct, 20) << "invalidate=" << invalidate
 			     << " discard_unflushed_writes=" << discard_unflushed_writes << dendl;

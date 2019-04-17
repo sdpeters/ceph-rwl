@@ -45,7 +45,7 @@ public:
   void shut_down(Context *on_finish) override;
   void get_state(bool &clean, bool &empty, bool &present) override;
 
-  void invalidate(Context *on_finish) override;
+  void invalidate(Context *on_finish, bool discard_unflushed_writes) override;
   void flush(Context *on_finish) override;
 
 private:

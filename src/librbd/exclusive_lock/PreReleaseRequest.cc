@@ -166,7 +166,8 @@ void PreReleaseRequest<I>::send_shut_down_image_cache() {
   ldout(cct, 10) << dendl;
 
   /* Shut down existing image cache whether the feature bit is on or not */
-  if (!m_image_ctx.image_cache) {
+  if (!m_image_ctx.image_cache || (!m_image_ctx.image_cache_init_succeeded &&
+       m_image_ctx.ignore_image_cache_init_failure)) {
     send_invalidate_cache();
     return;
   }
