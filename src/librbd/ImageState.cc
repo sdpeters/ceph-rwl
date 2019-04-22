@@ -814,7 +814,6 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
     m_image_ctx->rwl_invalidate_on_flush = rwl_spec->invalidate_on_flush;
     /* TODO: If these are different, shut down the existing cache and re-init with new params */
   }
-
   if (m_image_ctx->image_cache_state.present &&
       (rwl_spec->host.compare(ceph_get_short_hostname()) != 0)) {
     auto cleanstring = "dirty";
@@ -829,7 +828,8 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
     return;
   }
 
-  if ((m_image_ctx->image_cache_state.empty || !cache_exists) &&
+  ldout(cct, 4) << m_image_ctx->image_cache_state << dendl;
+  if ((!cache_exists) &&
     (access(log_pool_name.c_str(), F_OK) == 0 || access(log_poolset_name.c_str(), F_OK) == 0)) {
     if (access(log_pool_name.c_str(), F_OK) == 0) {
       ldout(cct, 4) << "There's an existing pool file " << log_pool_name.c_str()
