@@ -2364,6 +2364,19 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
 		  << " not present (or can't open). Using unreplicated pool" << dendl;
   }
 
+  ldout(cct, 20) << m_image_ctx.image_cache_state << dendl;
+  if ((!m_image_ctx.image_cache_state.present) &&
+    (access(m_log_pool_name.c_str(), F_OK) == 0)) {
+      ldout(cct, 5) << "There's an existing pool/poolset file " << m_log_pool_name
+         << ", While there's no cache in the image metatata." << dendl;
+	    if (remove(m_log_pool_name.c_str()) != 0) {
+	        lderr(cct) << "Failed to remove the pool/poolset file " << m_log_pool_name
+              << dendl;
+      } else {
+        ldout(cct, 5) << "Removed the existing pool/poolset file." << dendl;
+			}
+	}
+
   if (access(m_log_pool_name.c_str(), F_OK) != 0) {
     if ((m_internal->m_log_pool =
 	 pmemobj_create(m_log_pool_name.c_str(),

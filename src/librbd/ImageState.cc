@@ -755,10 +755,6 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
   bool image_cache_state_modified = false;
   bool cache_exists = m_image_ctx->image_cache_state.present;
   bool cache_desired = m_image_ctx->test_features(RBD_FEATURE_IMAGE_CACHE) && m_image_ctx->rwl_enabled;
-  std::string rwl_path = m_image_ctx->rwl_path;
-  std::string pool_name = m_image_ctx->md_ctx.get_pool_name();
-  std::string log_pool_name = rwl_path + "/rbd-rwl." + pool_name + "." + m_image_ctx->id + ".pool";
-  std::string log_poolset_name = rwl_path + "/rbd-rwl." + pool_name + "." + m_image_ctx->id + ".poolset";
 
   /* Avoid creating a cache in certain cases */
   cache_desired &= !m_image_ctx->read_only;
@@ -814,6 +810,7 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
     m_image_ctx->rwl_invalidate_on_flush = rwl_spec->invalidate_on_flush;
     /* TODO: If these are different, shut down the existing cache and re-init with new params */
   }
+
   if (m_image_ctx->image_cache_state.present &&
       (rwl_spec->host.compare(ceph_get_short_hostname()) != 0)) {
     auto cleanstring = "dirty";
@@ -827,28 +824,6 @@ void ImageState<I>::init_image_cache(Context *on_finish) {
     on_finish->complete(-EPERM);
     return;
   }
-
-  ldout(cct, 4) << m_image_ctx->image_cache_state << dendl;
-  if ((!cache_exists) &&
-    (access(log_pool_name.c_str(), F_OK) == 0 || access(log_poolset_name.c_str(), F_OK) == 0)) {
-    if (access(log_pool_name.c_str(), F_OK) == 0) {
-      ldout(cct, 4) << "There's an existing pool file " << log_pool_name.c_str()
-         << ", While there's no cache in the image metatata." << dendl;
-	    if (remove(log_pool_name.c_str()) != 0) {
-	        lderr(cct) << "Failed to remove the pool file " << log_pool_name
-              << dendl;
-      }
-		} else {
-      ldout(cct, 4) << "There's an existing poolset file " << log_poolset_name.c_str()
-         << ", While there's no cache in the image metatata." << dendl;
-	    if (remove(log_poolset_name.c_str()) != 0) {
-	        lderr(cct) << "Failed to remove the poolset file " << log_poolset_name
-              << dendl;
-      }
-		}
-
-    ldout(cct, 4) << "Removed the existing pool/poolset file." << dendl;
-	}
 
   ceph_assert(!m_image_ctx->old_format);
   if (!cache_desired) {
