@@ -115,7 +115,7 @@ void PassthroughImageCache<I>::shut_down(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
-  on_finish->complete(0);
+  m_image_writeback.shut_down(on_finish);
 }
 
 template <typename I>
@@ -123,8 +123,7 @@ void PassthroughImageCache<I>::invalidate(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
-  // dump cache contents (don't have anything)
-  on_finish->complete(0);
+  m_image_writeback.invalidate(on_finish);
 }
 
 template <typename I>
@@ -132,9 +131,7 @@ void PassthroughImageCache<I>::flush(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
-  // internal flush -- nothing to writeback but make sure
-  // in-flight IO is flushed
-  aio_flush(on_finish);
+  m_image_writeback.flush(on_finish);
 }
 
 } // namespace cache
