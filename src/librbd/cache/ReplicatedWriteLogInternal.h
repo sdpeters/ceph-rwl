@@ -2401,9 +2401,9 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
     size_t effective_pool_size = (size_t)(m_log_pool_config_size * USABLE_SIZE);
     size_t small_write_size = MIN_WRITE_ALLOC_SIZE + BLOCK_ALLOC_OVERHEAD_BYTES + sizeof(struct WriteLogPmemEntry);
     uint64_t num_small_writes = (uint64_t)(effective_pool_size / small_write_size);
-    //if (num_small_writes > MAX_LOG_ENTRIES) {
-    //  num_small_writes = MAX_LOG_ENTRIES;
-    //}
+    if (num_small_writes > MAX_LOG_ENTRIES) {
+      num_small_writes = MAX_LOG_ENTRIES;
+    }
     assert(num_small_writes > 2);
     m_log_pool_actual_size = m_log_pool_config_size;
     m_bytes_allocated_cap = effective_pool_size;

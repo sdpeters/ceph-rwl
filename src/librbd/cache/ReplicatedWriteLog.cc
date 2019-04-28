@@ -1655,6 +1655,10 @@ void ReplicatedWriteLog<I>::process_work() {
   uint64_t aggressive_high_water_bytes = m_bytes_allocated_cap * AGGRESSIVE_RETIRE_HIGH_WATER;
   uint64_t high_water_bytes = m_bytes_allocated_cap * RETIRE_HIGH_WATER;
   uint64_t low_water_bytes = m_bytes_allocated_cap * RETIRE_LOW_WATER;
+	uint64_t aggressive_high_water_entries = m_total_log_entries * AGGRESSIVE_RETIRE_HIGH_WATER;
+	uint64_t high_water_entries = m_total_log_entries * RETIRE_HIGH_WATER;
+	uint64_t low_water_entries = m_total_log_entries * RETIRE_LOW_WATER;
+
   if (RWL_VERBOSE_LOGGING) {
     ldout(cct, 20) << dendl;
   }
@@ -1665,26 +1669,30 @@ void ReplicatedWriteLog<I>::process_work() {
       m_wake_up_requested = false;
     }
     if (m_alloc_failed_since_retire || (m_shutting_down && m_retire_on_close) || m_invalidating ||
-	m_bytes_allocated > high_water_bytes) {
+	    m_bytes_allocated > high_water_bytes || (m_log_entries.size() > high_water_entries)) {
       int retired = 0;
       utime_t started = ceph_clock_now();
       ldout(m_image_ctx.cct, 10) << "alloc_fail=" << m_alloc_failed_since_retire
 				 << ", allocated > high_water="
 				 << (m_bytes_allocated > high_water_bytes)
+				 << ", allocated_entries > high_water="
+				 << (m_log_entries.size() > high_water_entries)
 				 << dendl;
       while (m_alloc_failed_since_retire || (m_shutting_down && m_retire_on_close) || m_invalidating ||
-	     (m_bytes_allocated > high_water_bytes) ||
-	     ((m_bytes_allocated > low_water_bytes) &&
+	      (m_bytes_allocated > high_water_bytes) ||
+				(m_log_entries.size() > high_water_entries) ||
+	      (((m_bytes_allocated > low_water_bytes) || (m_log_entries.size() > low_water_entries)) &&
 	      (utime_t(ceph_clock_now() - started).to_msec() < RETIRE_BATCH_TIME_LIMIT_MS))) {
-	if (!retire_entries((m_shutting_down || m_invalidating ||
-			     (m_bytes_allocated > aggressive_high_water_bytes))
-			    ? MAX_ALLOC_PER_TRANSACTION
-			    : MAX_FREE_PER_TRANSACTION)) {
-	  break;
-	}
-	retired++;
-	dispatch_deferred_writes();
-	process_writeback_dirty_entries();
+	        if (!retire_entries((m_shutting_down || m_invalidating ||
+			      (m_bytes_allocated > aggressive_high_water_bytes) ||
+						(m_log_entries.size() > aggressive_high_water_entries))
+			      ? MAX_ALLOC_PER_TRANSACTION
+			      : MAX_FREE_PER_TRANSACTION)) {
+	            break;
+	        }
+	        retired++;
+	        dispatch_deferred_writes();
+	        process_writeback_dirty_entries();
       }
       ldout(m_image_ctx.cct, 10) << "Retired " << retired << " entries" << dendl;
     }
