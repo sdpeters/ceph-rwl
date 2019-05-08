@@ -302,22 +302,6 @@ static int do_show_info(librados::IoCtx &io_ctx, librbd::Image& image,
     }
   }
 
-  librbd::RBD rbd;
-  r = rbd.open(io_ctx, image, imgname.c_str());
-  if (r < 0) {
-    std::cerr << "rbd: failed to open image " << imgname << ": "
-              << cpp_strerror(r) << std::endl;
-    return r;
-  }
-
-  r = image.lock_acquire(RBD_LOCK_MODE_EXCLUSIVE);
-  if (r < 0) {
-    std::cout << "Warning: rbd: failed to acquire lock - image maybe in use."
-                 "Cache state displayed may not be the latest."
-              << imgname << ": " << std::endl;
-    image.close();
-  }
-
   cls::rbd::ImageCacheState ics;
   std::cout << "header_oid=" << header_oid << std::endl;
   librbd::cls_client::get_image_cache_state(&io_ctx, header_oid, &ics);
