@@ -2616,6 +2616,11 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	    assert(m_dirty_log_entries.size() == 0);
 	    m_clean = true;
 	  }
+	  else {
+	    m_empty = m_log_entries.empty();
+            m_clean = m_dirty_log_entries.empty();
+	  }
+
 	  if (m_retire_on_close) {
 	    bool empty = true;
 	    for (auto entry : m_log_entries) {
