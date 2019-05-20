@@ -2651,7 +2651,6 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 	if (m_internal->m_log_pool) {
 	  ldout(m_image_ctx.cct, 6) << "closing pmem pool" << dendl;
 	  pmemobj_close(m_internal->m_log_pool);
-	  r = -errno;
 	}
 	if (m_clean && m_retire_on_close && m_image_ctx.rwl_remove_on_close) {
 	  if (m_log_is_poolset) {
