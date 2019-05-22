@@ -863,8 +863,8 @@ struct ReplicatedWriteLogSpec {
 
   string host;
   string path;
-  uint64_t size;
-  bool invalidate_on_flush;
+  uint64_t size = 0;
+  bool invalidate_on_flush = false;
 
   void encode(bufferlist& bl) const;
   void decode(bufferlist::const_iterator& it);
