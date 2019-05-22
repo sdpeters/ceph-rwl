@@ -29,6 +29,7 @@ class MockSafeTimer;
 
 namespace librbd {
 
+namespace cache { class MockImageCache; }
 namespace operation {
 template <typename> class ResizeRequest;
 }
