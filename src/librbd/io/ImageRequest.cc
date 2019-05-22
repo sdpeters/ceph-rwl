@@ -696,9 +696,12 @@ void ImageFlushRequest<I>::send_request() {
     });
 
   // ensure all in-flight IOs are settled if non-user flush request
-  image_ctx.flush_async_operations(ctx, m_flush_source);
-  aio_comp->start_op(true);
-  aio_comp->put();
+  if (m_flush_source == FLUSH_SOURCE_WRITEBACK) {
+    ctx = librbd::util::create_async_context_callback(image_ctx, ctx);
+    ctx->complete(0);
+  } else {
+    aio_comp->async_op.flush(ctx);
+  }
 
   // might be flushing during image shutdown
   if (image_ctx.perfcounter != nullptr) {

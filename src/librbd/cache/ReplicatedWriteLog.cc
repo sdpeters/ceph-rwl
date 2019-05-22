@@ -978,7 +978,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
 
   assert(m_initialized);
   {
-    RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+    RWLock::RLocker image_locker(m_image_ctx.image_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       on_finish->complete(-EROFS);
       return;
@@ -1060,7 +1060,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
 
   assert(m_initialized);
   {
-    RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+    RWLock::RLocker image_locker(m_image_ctx.image_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       on_finish->complete(-EROFS);
       return;
@@ -1325,7 +1325,7 @@ void ReplicatedWriteLog<I>::aio_flush(Context *on_finish, io::FlushSource flush_
   }
 
   {
-    RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+    RWLock::RLocker image_locker(m_image_ctx.image_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       on_finish->complete(-EROFS);
       return;
@@ -1383,7 +1383,7 @@ void ReplicatedWriteLog<I>::aio_writesame(uint64_t offset, uint64_t length,
   m_perfcounter->inc(l_librbd_rwl_ws, 1);
   assert(m_initialized);
   {
-    RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+    RWLock::RLocker image_locker(m_image_ctx.image_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       on_finish->complete(-EROFS);
       return;
@@ -1462,7 +1462,7 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
   }
 
   {
-    RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+    RWLock::RLocker image_locker(m_image_ctx.image_lock);
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       on_finish->complete(-EROFS);
       return;
