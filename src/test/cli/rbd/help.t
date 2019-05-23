@@ -171,7 +171,7 @@
     --io-pattern arg     IO pattern (rand, seq, or full-seq) [default: seq]
     --rw-mix-read arg    read proportion in readwrite (<= 100) [default: 50]
     --no-flush           supress flush before close
-    --io-type arg        IO type (read , write, or readwrite(rw))
+    --io-type arg        IO type (read, write, or readwrite(rw))
   
   rbd help children
   usage: rbd children [--pool <pool>] [--namespace <namespace>] 
