@@ -121,7 +121,7 @@ struct TestMockIoImageRequest : public TestMockFixture {
   void expect_flush_async_operations(MockImageCtx &mock_image_ctx,
                                      io::FlushSource source, int r) {
     EXPECT_CALL(mock_image_ctx, flush_async_operations(_, source))
-      .WillOnce(CompleteContext(r, mock_image_ctx.image_ctx->op_work_queue));
+      .WillRepeatedly(CompleteContext(r, mock_image_ctx.image_ctx->op_work_queue));
   }
 };
 

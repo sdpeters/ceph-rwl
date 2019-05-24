@@ -889,11 +889,6 @@ TEST_F(TestMockImageRefreshRequest, DisableExclusiveLockWhileAcquiringLock) {
                                                    false));
   }
 
-  if (ictx->test_features(RBD_FEATURE_FAST_DIFF)) {
-    ASSERT_EQ(0, ictx->operations->update_features(RBD_FEATURE_FAST_DIFF,
-                                                   false));
-  }
-
   if (ictx->test_features(RBD_FEATURE_OBJECT_MAP)) {
     ASSERT_EQ(0, ictx->operations->update_features(RBD_FEATURE_OBJECT_MAP,
                                                    false));
