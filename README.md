@@ -2,6 +2,10 @@
 
 Please see http://ceph.com/ for current info.
 
+## This is a read-only archive of the initial version of the Intel RBD persistent write-back cache (RWL)
+
+See the wip-librbd-rwl-3 branch here. We're leaving this here because some conference presentations
+point to this repo. A much later version of this was merged into Ceph in early 2021.
 
 ## Contributing Code
 
